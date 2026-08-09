@@ -1,6 +1,6 @@
 <?php
 /**
- * intercom22lox - Videoaufzeichnung ausloesen
+ * Intercom - Videoaufzeichnung ausloesen
  *
  * Aufruf (vom Miniserver):
  *   /plugins/<ordner>/getvideo.php?token=<TOKEN>&s=20

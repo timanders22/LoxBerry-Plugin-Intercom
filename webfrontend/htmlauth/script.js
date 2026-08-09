@@ -1,15 +1,15 @@
-// intercom22lox - Oberflaechenskript
+// Intercom - Oberflaechenskript
 //
 // Die Adressen stehen NICHT mehr fest im Text. Bei einer Zweitinstallation
-// heisst der Ordner intercom22lox_01, und dann zeigten alle Aufrufe auf die
+// heisst der Ordner intercom_01, und dann zeigten alle Aufrufe auf die
 // Vorgaengerinstallation. Der Ordner kommt jetzt aus einem Datenattribut,
 // das die aufrufende Seite setzt.
-var icAdmin = (document.body && document.body.getAttribute("data-ic-admin")) || "/admin/plugins/intercom22lox";
+var icAdmin = (document.body && document.body.getAttribute("data-ic-admin")) || "/admin/plugins/intercom";
 
 $( document ).ready(function() {
 	$('.msg').text("Loading last picture...");
 		// Adresse aus dem HTML holen statt fest eintragen: bei einer
-// Zweitinstallation heisst der Ordner intercom22lox_01, und das Token
+// Zweitinstallation heisst der Ordner intercom_01, und das Token
 // gehoert nicht in eine mitgelieferte Datei.
 var icBase = (document.body.getAttribute("data-ic-picture") || "");
 if (!icBase) { return; }

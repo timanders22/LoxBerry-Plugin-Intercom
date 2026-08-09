@@ -97,7 +97,7 @@ if(file_exists(LBPCONFIGDIR.'/data.json')){
 			}
 
 			// Mehrere Ausloeser (z.B. Klingel, Briefkasten): ?trigger=NAME
-			// landet mit Namenszusatz im Archiv und im MQTT-Topic intercom22lox/trigger/NAME
+			// landet mit Namenszusatz im Archiv und im MQTT-Thema intercom/trigger/NAME
 			$trigger = "";
 			if(isset($_REQUEST['trigger'])){
 				$trigger = preg_replace('/[^A-Za-z0-9_\-]/', '', substr($_REQUEST['trigger'], 0, 32));
@@ -181,7 +181,7 @@ if(file_exists(LBPCONFIGDIR.'/data.json')){
 			'bkgcolor' => '#009688',
 			'transparency' => '0',
 			'offset' => '0',
-			'app' => 'intercom22lox',
+			'app' => 'intercom',
 			'force' => 'true',
 			'interrupt' => '0',
 			'filename' => new CURLFile($lastpicture, 'image/jpeg', 'lastpicture.jpg'),
@@ -210,12 +210,12 @@ if(file_exists(LBPCONFIGDIR.'/data.json')){
 	// MQTT-Gateway von LoxBerry ein. Das ist ohnehin die Stelle, an der er
 	// hingehoert - sonst gaebe es zwei Wahrheiten.
 	if ( isset($arr['mqtt_enable']) && $arr['mqtt_enable']=="1" ){
-		ic_mqtt_senden("intercom22lox", $json);
+		ic_mqtt_senden("intercom", $json);
 		if(isset($trigger) && $trigger !== ""){
-			ic_mqtt_senden("intercom22lox/trigger/".$trigger, $json);
+			ic_mqtt_senden("intercom/trigger/".$trigger, $json);
 		}
 		if(!empty($ai)){
-			ic_mqtt_senden("intercom22lox/ai", json_encode($ai));
+			ic_mqtt_senden("intercom/ai", json_encode($ai));
 		}
 	}// end mqtt post
 

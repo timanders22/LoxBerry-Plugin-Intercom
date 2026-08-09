@@ -1,6 +1,6 @@
 <?php
 /**
- * intercom22lox - Rueckmeldung nach abgeschlossener Videoaufzeichnung
+ * Intercom - Rueckmeldung nach abgeschlossener Videoaufzeichnung
  *
  * Wird von getvideo.php aufgerufen, sobald ffmpeg fertig ist. Meldet die
  * fertige Datei per MQTT und ueber die Webhooks weiter.
@@ -64,7 +64,7 @@ $jsonarr = json_decode($json, true);
 // Ueber das LoxBerry-Gateway (UDP) statt ueber Bluerhinos\phpMQTT - siehe
 // die ausfuehrliche Begruendung in getpicture.php.
 if (isset($arr['mqtt_enable']) && $arr['mqtt_enable'] == '1') {
-    ic_mqtt_senden('intercom22loxvideo', $json);
+    ic_mqtt_senden('intercomvideo', $json);
 }
 
 /* ---------------- Webhook 1 (POST mit JSON) ---------------- */

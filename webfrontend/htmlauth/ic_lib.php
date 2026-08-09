@@ -1,6 +1,6 @@
 <?php
 /**
- * intercom22lox - gemeinsame Grundlage (neu ab 1.6.0)
+ * Intercom - gemeinsame Grundlage (neu ab 1.6.0)
  *
  * Enthaelt die Dinge, die jedes Skript braucht: Pfade ohne fest
  * eingetragenen Ordnernamen, Zugriffstoken, unteilbares Schreiben,
@@ -15,10 +15,10 @@
  * Der eigene Plugin-Ordner - ERMITTELT, nicht geraten.
  *
  * Bis 1.5.0 stand in jedem Skript die Zeile
- *     require_once "../../../htmlauth/plugins/intercom22lox/config.php";
+ *     require_once "../../../htmlauth/plugins/<Ordner>/config.php";
  * mit dem Ordnernamen fest im Text. Ist der Ordner bei der
  * Installation schon belegt, haengt LoxBerry einen Zaehler an
- * (intercom22lox_01) - und dann zeigt jeder dieser Verweise auf die
+ * (intercom_01) - und dann zeigt jeder dieser Verweise auf die
  * VORGAENGERINSTALLATION oder ins Leere. Im ersten Fall arbeiten zwei
  * Installationen auf derselben Konfiguration, im zweiten bricht jedes
  * Skript mit einem toedlichen Fehler ab.
@@ -192,7 +192,7 @@ function ic_http_holen($url, $zeitgrenze = 5)
             CURLOPT_CONNECTTIMEOUT => min(3, $zeitgrenze),
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_MAXREDIRS => 3,
-            CURLOPT_USERAGENT => 'LoxBerry intercom22lox',
+            CURLOPT_USERAGENT => 'LoxBerry Intercom',
         ));
         $antwort = curl_exec($ch);
         curl_close($ch);
@@ -202,7 +202,7 @@ function ic_http_holen($url, $zeitgrenze = 5)
         'method' => 'GET',
         'timeout' => $zeitgrenze,
         'ignore_errors' => true,
-        'user_agent' => 'LoxBerry intercom22lox',
+        'user_agent' => 'LoxBerry Intercom',
     )));
     return @file_get_contents($url, false, $ctx);
 }

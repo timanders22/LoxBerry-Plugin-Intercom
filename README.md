@@ -1,6 +1,6 @@
 ![Logo](icons/icon_256.png)
 
-# Loxberry Plugin intercom22Lox
+# LoxBerry-Plugin Intercom
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom Version 2 ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
@@ -16,14 +16,14 @@ Aktuelle Release URL in das URL Feld bei der Loxberry Plugininstallation kopiere
 
 ## Funktionsumfang
 
-- Manuelle Bildaufname über Trigger ( http://<IP>/plugins/intercom22lox/getpicture.php )
+- Manuelle Bildaufname über Trigger ( http://<IP>/plugins/intercom/getpicture.php )
 - LoxConfig Intercom Bild an Loxberry Plugin über Virtuellen Ausgang übergeben
 - Webhook via POST-/GET-Request bzw. MQTT-Broker
 - Bilder Archiv für Bilder die über URL Trigger angestossen wurden
-- Video aufnahme durch URL Trigger mit Angabe der Videolänge (max 120 Sekunden http://<IP>/plugins/intercom22lox/getvideo.php?s=<SEKUNDEN> )
-- Videoaufnahmen mit Zeitsatempel (optional) über Trigger ( http://<IP>/plugins/intercom22lox/getpicture.php )
+- Video aufnahme durch URL Trigger mit Angabe der Videolänge (max 120 Sekunden http://<IP>/plugins/intercom/getvideo.php?s=<SEKUNDEN> )
+- Videoaufnahmen mit Zeitsatempel (optional) über Trigger ( http://<IP>/plugins/intercom/getpicture.php )
 - Video Archiv
-- Video stream Proxy ( http://<IP>/plugins/intercom22lox/mjpgproxy.php ) ohne authentifizierung
+- Video stream Proxy ( http://<IP>/plugins/intercom/mjpgproxy.php ) ohne authentifizierung
 
 ## Anwendungsfälle
 
@@ -87,6 +87,60 @@ Folgende Librarys wurden verwendet
 - AI erkennung bei getpicture.php 
 - schauen was machen andere klingeln noch so was man übernehmen kann
 
+## Umstieg auf 2.0.0
+
+Ab 2.0.0 heißt das Plugin **Intercom**, Ordner `intercom`. Es ist damit
+vollständig vom Original getrennt und kann daneben installiert werden. Dafür
+wandern die Adressen mit — **bitte vor dem Update lesen.**
+
+### In Loxone Config nachziehen
+
+Jeder virtuelle Ausgang, der auf das Plugin zeigt, muss von
+`/plugins/intercom22lox/…` auf `/plugins/intercom/…` umgestellt werden:
+
+| bisher | ab 2.0.0 |
+|---|---|
+| `http://<LoxBerry>/plugins/intercom22lox/getpicture.php` | `http://<LoxBerry>/plugins/intercom/getpicture.php` |
+| `http://<LoxBerry>/plugins/intercom22lox/getvideo.php?s=…` | `http://<LoxBerry>/plugins/intercom/getvideo.php?s=…` |
+| `http://<LoxBerry>/plugins/intercom22lox/mjpgproxy.php` | `http://<LoxBerry>/plugins/intercom/mjpgproxy.php` |
+| `http://<LoxBerry>/plugins/intercom22lox/lastpicture.jpg` | `http://<LoxBerry>/plugins/intercom/lastpicture.jpg` |
+
+Das Zugriffstoken (seit 1.6.0 Pflicht) hängt unverändert an jeder dieser
+Adressen. Die fertigen Adressen samt Token stehen im Reiter **Anleitung**.
+
+### Im MQTT-Gateway nachziehen
+
+Die Themen heißen ebenfalls neu. Das Abo `intercom22lox/#` ist auf `intercom/#`
+zu ändern, und die Bausteine, die auf die Themen hören, entsprechend:
+
+| bisher | ab 2.0.0 |
+|---|---|
+| `intercom22lox` | `intercom` |
+| `intercom22loxvideo` | `intercomvideo` |
+| `intercom22lox/trigger/NAME` | `intercom/trigger/NAME` |
+| `intercom22lox/ai` | `intercom/ai` |
+
+### Was von selbst passiert
+
+- **Das Bild- und Videoarchiv wird übernommen.** `postinstall.sh` verschiebt
+  `webfrontend/legacy/intercom22lox_data` nach `…/intercom_data`. Verschoben
+  wird nur, wenn der neue Ordner noch nicht existiert — ein vorhandenes Archiv
+  wird unter keinen Umständen überschrieben. Klappt das Verschieben nicht, steht
+  der Befehl für die Hand in der Installationsausgabe.
+- **Die Protokollansicht findet auch den alten Bestand.** Gesucht werden
+  `intercom.log` und `intercom22lox.log`.
+- **Der Speicherort auf externem Medium** wird jetzt aus dem Ordnernamen
+  abgeleitet statt fest eingetragen. Wer einen Pfad hinterlegt hat, bekommt dort
+  einen Ordner `intercom_data`; der alte `intercom22lox_data` bleibt liegen und
+  kann nach dem Umstieg von Hand entfernt werden.
+
+### Was Sie selbst tun müssen
+
+Die Konfiguration (Adresse der Intercom, Webhooks, Speicherort, KI-Einstellungen)
+wandert **nicht** mit, weil LoxBerry das Plugin als neues führt. Sie ist einmal
+neu einzutragen. Ein Blick in die alte Oberfläche vor der Deinstallation lohnt
+sich.
+
 ## Änderungen in 1.6.0
 
 ### Sicherheit — bitte zeitnah aktualisieren
@@ -128,9 +182,9 @@ noch über die Kommandozeile (Cron) und weisen HTTP-Aufrufe ab.
 - **Halbe JPEGs.** `file_put_contents("lastpicture.jpg", ...)` schrieb unmittelbar
   in die Zieldatei. Klingel und Bewegungsmelder gleichzeitig, und beide Prozesse
   schrieben ineinander. Jetzt Zwischendatei und `rename()`.
-- **Fest eingetragener Ordnername.** `require_once "../../../htmlauth/plugins/intercom22lox/config.php"`
+- **Fest eingetragener Ordnername.** `require_once "../../../htmlauth/plugins/<Ordner>/config.php"`
   stand in sechs Dateien, dazu in `script.js`, `live.php` und `videoarchive.php`.
-  Bei einer Zweitinstallation heißt der Ordner `intercom22lox_01` — dann zeigten
+  Bei einer Zweitinstallation heißt der Ordner `intercom_01` — dann zeigten
   alle Verweise auf die Vorgängerinstallation oder ins Leere. Der Ordnername wird
   jetzt ermittelt.
 - **Ungeprüfter Dateiname** in `videowebhook.php`: jetzt `basename()`, ein Muster
@@ -182,22 +236,16 @@ nächsten Update-Lauf durch die ältere Originalfassung ersetzt. Die
 urheberrechtliche Nennung steht jetzt dort, wo sie hingehört: in `NOTICE`, hier
 im README und auf der Hilfeseite.
 
-**`NAME` und `FOLDER` bleiben `intercom22lox`.** Sie bestimmen den
-Installationsordner und damit die Adressen, unter denen Loxone Bilder und Videos
-abruft. Wer sie ändert, muss jeden virtuellen Ein- und Ausgang im Miniserver
-nachziehen. Für eine parallele Installation neben dem Original ist diese Fassung
-damit nicht gedacht — sie ersetzt es.
+**`NAME` und `FOLDER` heißen seit 2.0.0 `intercom`.** Damit ist die Trennung vom
+Original vollständig: eigene Kennung, eigener Ordner, eigener Name. Beide
+Fassungen lassen sich nebeneinander installieren, ohne sich in die Quere zu
+kommen. Der Preis steht unten unter [Umstieg auf 2.0.0](#umstieg-auf-200) — die
+Adressen wandern mit.
 
 **`AUTOMATIC_UPDATES` steht wieder auf `true`**, jetzt aber auf das eigene
 Repository gerichtet. Die frühere Begründung für das Abschalten — ein Downgrade
 auf das Repository des ursprünglichen Entwicklers — ist damit gegenstandslos
 geworden, nicht widerlegt.
-
-**Für eine bestehende Installation heißt das:** LoxBerry sieht ab 1.6.0 ein
-anderes Plugin, weil sich die Kennung geändert hat. Ein vorhandenes 1.3.6
-bekommt dieses Update deshalb *nicht* angeboten. Der Weg ist: einmal neu
-installieren, dann läuft das Auto-Update wieder von selbst. Die Loxone-Seite
-bleibt unberührt, weil Ordner und Adressen gleich bleiben.
 
 ### Herkunft und Lizenz
 

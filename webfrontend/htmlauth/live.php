@@ -8,7 +8,7 @@ $L = LBSystem::readlanguage("language.ini");
 
 // ic_host() beschraenkt HTTP_HOST auf unbedenkliche Zeichen; der
 // Ordnername wird ermittelt, nicht eingetragen (Zweitinstallation heisst
-// intercom22lox_01). Der Livestrom verlangt seit 1.6.0 das Token.
+// intercom_01). Der Livestrom verlangt seit 1.6.0 das Token.
 $loxberryip = ic_host();
 $icp        = ic_plugin_ordner();
 $ictok      = '?token=' . rawurlencode((string) (ic_config()['aktionstoken'] ?? ''));

@@ -28,7 +28,7 @@ $ic_datei   = ic_paths()['config'] . '/data.json';
 // kommt aus der Host-Kopfzeile und ist damit fremdbestimmt.
 $ic_host    = ic_host();
 // Der Ordnername wird ermittelt, nicht eingetragen: bei einer
-// Zweitinstallation heisst er intercom22lox_01.
+// Zweitinstallation heisst er intercom_01.
 $ic_plugin  = ic_plugin_ordner();
 $ic_log     = '';
 $ic_meldung = '';
@@ -167,8 +167,14 @@ rsort($ic_videos);
 
 // Protokoll
 $ic_logdatei = '';
-$ic_kandidaten = array('/opt/loxberry/log/plugins/' . $ic_plugin . '/intercom22lox.log');
-if (defined('LBPLOGDIR')) { array_unshift($ic_kandidaten, LBPLOGDIR . '/intercom22lox.log'); }
+// Der Name der Protokolldatei folgt dem Ordner; bis 1.6.0 hiess sie
+// intercom22lox.log. Beide werden gesucht, damit ein alter Bestand nach
+// der Umbenennung nicht unsichtbar wird.
+$ic_kandidaten = array();
+foreach (array($ic_plugin . '.log', 'intercom22lox.log') as $ic_dn) {
+    if (defined('LBPLOGDIR')) { $ic_kandidaten[] = LBPLOGDIR . '/' . $ic_dn; }
+    $ic_kandidaten[] = '/opt/loxberry/log/plugins/' . $ic_plugin . '/' . $ic_dn;
+}
 foreach ($ic_kandidaten as $ic_p) {
     if (@is_file($ic_p)) { $ic_logdatei = $ic_p; break; }
 }
@@ -327,10 +333,10 @@ nimmt den Haken heraus und f&uuml;llt die folgenden Felder aus.</p>
 <input type="password" data-role="none" name="mqtt_password" value="<?= ic_e($ic_cfg['mqtt_password']) ?>">
 <table>
 <tr><th>Thema</th><th>Wird gesendet</th></tr>
-<tr><td><span class="ic-mono">intercom22lox</span></td><td>nach jedem Bild</td></tr>
-<tr><td><span class="ic-mono">intercom22loxvideo</span></td><td>nach jedem Video</td></tr>
-<tr><td><span class="ic-mono">intercom22lox/trigger/NAME</span></td><td>bei Aufruf mit <span class="ic-mono">?trigger=NAME</span></td></tr>
-<tr><td><span class="ic-mono">intercom22lox/ai</span></td><td>nur bei eingeschalteter Objekterkennung</td></tr>
+<tr><td><span class="ic-mono">intercom</span></td><td>nach jedem Bild</td></tr>
+<tr><td><span class="ic-mono">intercomvideo</span></td><td>nach jedem Video</td></tr>
+<tr><td><span class="ic-mono">intercom/trigger/NAME</span></td><td>bei Aufruf mit <span class="ic-mono">?trigger=NAME</span></td></tr>
+<tr><td><span class="ic-mono">intercom/ai</span></td><td>nur bei eingeschalteter Objekterkennung</td></tr>
 </table>
 
 <h2>Webhooks</h2>
@@ -437,7 +443,7 @@ Aufbewahrt wird <?= ((int) $ic_cfg['cleanup_days'] === 0) ? 'unbegrenzt' : ((int
 <div class="ic-gal">
 <?php foreach (array_slice($ic_bilder, 0, 8) as $ic_f) { $ic_n = basename($ic_f); ?>
 <figure>
-    <img src="/legacy/intercom22lox_data/img_archive/<?= rawurlencode($ic_n) ?>" alt="">
+    <img src="/legacy/<?= rawurlencode(ic_plugin_ordner()) ?>_data/img_archive/<?= rawurlencode($ic_n) ?>" alt="">
     <figcaption><?= ic_e($ic_n) ?></figcaption>
 </figure>
 <?php } ?>

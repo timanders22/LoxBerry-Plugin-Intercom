@@ -1,12 +1,12 @@
 #!/bin/bash
-# intercom22lox - preupgrade (laeuft als Benutzer loxberry)
+# Intercom - preupgrade (laeuft als Benutzer loxberry)
 
 ARGV1=$1   # Temporaerer Ordner waehrend der Installation
 ARGV3=$3   # Installationsordner des Plugins
 ARGV5=$5   # Wurzelverzeichnis des LoxBerry
 
 BASE="${ARGV5:-$LBHOMEDIR}"
-PDIR="${ARGV3:-intercom22lox}"
+PDIR="${ARGV3:-intercom}"
 
 # Geschweifte Klammern statt Rueckstrich.
 #

@@ -1,12 +1,12 @@
 #!/bin/bash
-# intercom22lox - postupgrade (laeuft als Benutzer loxberry)
+# Intercom - postupgrade (laeuft als Benutzer loxberry)
 
 ARGV1=$1
 ARGV3=$3
 ARGV5=$5
 
 BASE="${ARGV5:-$LBHOMEDIR}"
-PDIR="${ARGV3:-intercom22lox}"
+PDIR="${ARGV3:-intercom}"
 SICHER="$BASE/data/plugins/$PDIR/upgrade_sicherung"
 
 mkdir -p "$BASE/config/plugins/$PDIR" 2>/dev/null

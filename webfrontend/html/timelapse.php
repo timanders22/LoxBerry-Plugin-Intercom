@@ -1,6 +1,6 @@
 <?php
 /**
- * intercom22lox - Timelapse: jeden Tag ein Foto zu einer festen Uhrzeit.
+ * Intercom - Timelapse: jeden Tag ein Foto zu einer festen Uhrzeit.
  *
  * Wird minuetlich per Cron aufgerufen und beendet sich sofort, wenn die
  * Funktion deaktiviert ist oder die konfigurierte Uhrzeit (HH:MM) nicht der

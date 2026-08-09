@@ -46,19 +46,34 @@ Die Aenderungen wurden dem Originalautor zuerst als Pull Request angeboten
        Ruecknahme aller Korrekturen. Fehlerberichte waeren zudem beim
        Originalautor gelandet, der mit dieser Fassung nichts zu tun hat.
 
-       ABSICHTLICH NICHT GEAENDERT: [PLUGIN] NAME und FOLDER bleiben
-       "intercom22lox". Sie bestimmen den Installationsordner und damit die
-       Adressen, unter denen Loxone Bilder und Videos abruft. Wer sie aendert,
-       muss jeden virtuellen Ein- und Ausgang im Miniserver nachziehen. Fuer
-       eine parallele Installation neben dem Original ist diese Fassung damit
-       nicht gedacht - sie ersetzt es.
-
        Das Auto-Update zeigt seit 1.6.0 auf das Repository dieser
        Fortfuehrung.
 
        Die Hilfe-Verweise in der Oberflaeche zeigen ebenfalls hierher: die in
        dieser Fassung hinzugekommenen Funktionen sind im Original nicht
        beschrieben.
+
+2.0.0  Eigener Name und eigener Ordner: [PLUGIN] NAME und FOLDER lauten
+       "intercom" statt "intercom22lox", TITLE "Intercom".
+
+       Damit ist die Trennung vollstaendig. Bis 1.6.0 trug diese Fortfuehrung
+       zwar eine eigene Kennung, benutzte aber weiter den Ordner des Originals -
+       beide konnten deshalb nicht nebeneinander bestehen, und die HTTP-Adressen
+       trugen einen Namen, der auf ein fremdes Projekt zeigte. Jetzt sind es
+       zwei getrennte Entwicklungslinien mit unterscheidbaren Namen.
+
+       WAS DAS KOSTET: die Adressen wandern von /plugins/intercom22lox/... auf
+       /plugins/intercom/..., und die MQTT-Themen von intercom22lox... auf
+       intercom... Jeder virtuelle Ausgang und jedes MQTT-Abo im Miniserver muss
+       nachgezogen werden. Die Anleitung dazu steht im README unter "Umstieg auf
+       2.0.0", die fertigen Adressen im Reiter "Anleitung".
+
+       Das Bild- und Videoarchiv wird bei der Installation uebernommen -
+       verschoben, aber nur, wenn am neuen Ort noch keines liegt.
+
+       Der Speicherort auf einem externen Medium wird jetzt aus dem Ordnernamen
+       abgeleitet statt fest eingetragen; bei einer Zweitinstallation
+       (intercom_01) zeigten sonst beide auf dasselbe Archiv.
 
 Die inhaltlichen Aenderungen der Fassungen 1.4.0 bis 1.6.0 sind im README
 aufgefuehrt.

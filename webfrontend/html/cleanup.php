@@ -1,6 +1,6 @@
 <?php
 /**
- * intercom22lox - automatische Archiv-Bereinigung.
+ * Intercom - automatische Archiv-Bereinigung.
  *
  * Wird taeglich per Cron aufgerufen. Loescht in den Archiven (Bilder, Videos,
  * Timelapse) Dateien, die aelter als "cleanup_days" Tage sind, und behaelt

@@ -7,16 +7,16 @@ require_once __DIR__ . "/ic_lib.php";
 
 // Der Ordnername wird ERMITTELT, nicht eingetragen.
 //
-// Bis 1.5.0 stand hier "/opt/loxberry/webfrontend/legacy/intercom22lox_data/"
+// Bis 1.5.0 stand hier "/opt/loxberry/webfrontend/legacy/<Ordner>_data/"
 // mit festem Namen. Haengt LoxBerry bei der Installation einen Zaehler an
-// (intercom22lox_01, weil der Ordner schon belegt war), zeigten beide
+// (intercom_01, weil der Ordner schon belegt war), zeigten beide
 // Installationen auf dasselbe Archiv - und die Verweise in den Skripten
 // zusaetzlich auf die falsche Konfiguration.
 $legacyfolder = ic_paths()['legacy'];
 
 // Konfigurierbarer Speicherort (z.B. externer USB-Speicher):
 // Ist in den Einstellungen ein Pfad hinterlegt und beschreibbar, wird
-// /webfrontend/legacy/intercom22lox_data als Symlink dorthin gefuehrt -
+// /webfrontend/legacy/<Ordner>_data als Symlink dorthin gefuehrt -
 // alle Archiv-URLs funktionieren dadurch unveraendert weiter.
 $icfg = array();
 if (defined('LBPCONFIGDIR') && file_exists(LBPCONFIGDIR.'/data.json')) {
@@ -25,7 +25,9 @@ if (defined('LBPCONFIGDIR') && file_exists(LBPCONFIGDIR.'/data.json')) {
 }
 $storage = isset($icfg['storage_path']) ? rtrim(trim($icfg['storage_path']), '/') : '';
 if ($storage !== '' && is_dir($storage) && is_writable($storage)) {
-	$target = $storage . '/intercom22lox_data';
+	// Aus dem ORDNERNAMEN abgeleitet, nicht fest eingetragen: sonst zeigt
+	// eine Zweitinstallation (intercom_01) auf dasselbe Archiv.
+	$target = $storage . '/' . ic_plugin_ordner() . '_data';
 	if (!file_exists($target)) { @mkdir($target, 0775, true); }
 	$linkbase = rtrim($legacyfolder, '/');
 	if (is_link($linkbase)) {
