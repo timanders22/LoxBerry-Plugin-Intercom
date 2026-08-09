@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" version="1.1" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bg-grad" cx="50%" cy="50%" r="50%" fx="35%" fy="35%">
+      <stop offset="0%" stop-color="#7dc424" />
+      <stop offset="65%" stop-color="#6dac20" />
+      <stop offset="100%" stop-color="#568819" />
+    </radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Outer Badge Ring -->
+  <circle cx="256" cy="256" r="246" fill="url(#bg-grad)" />
+  <circle cx="256" cy="256" r="232" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3" />
+
+  <g filter="url(#shadow)" fill="#ffffff">
+    <!-- Main Intercom Door Station Unit (Intercom / Intercom XL) -->
+    <!-- Outer Frame Panel -->
+    <rect x="186" y="70" width="140" height="225" rx="16" fill="#ffffff" />
+
+    <!-- Top Area: Camera Screen / Glass Housing Cutout -->
+    <rect x="202" y="86" width="108" height="60" rx="10" fill="#6dac20" />
+    <!-- Camera Lens Outer Ring -->
+    <circle cx="256" cy="116" r="18" fill="#ffffff" />
+    <!-- Camera Lens Glass Cutout -->
+    <circle cx="256" cy="116" r="10" fill="#6dac20" />
+    <!-- Lens Reflection -->
+    <circle cx="253" cy="113" r="3" fill="#ffffff" />
+    <!-- IR / Status LEDs Flanking Lens -->
+    <circle cx="218" cy="116" r="3.5" fill="#ffffff" />
+    <circle cx="294" cy="116" r="3.5" fill="#ffffff" />
+
+    <!-- Middle Area: Speaker / Microphone Grille Slots -->
+    <rect x="212" y="158" width="88" height="6" rx="3" fill="#6dac20" />
+    <rect x="212" y="170" width="88" height="6" rx="3" fill="#6dac20" />
+    <rect x="212" y="182" width="88" height="6" rx="3" fill="#6dac20" />
+
+    <!-- Bottom Area: Large Bell Button -->
+    <circle cx="256" cy="238" r="24" fill="#6dac20" />
+    <!-- Bell Icon inside Button Cutout -->
+    <path d="M 256 224 C 251 224 247 228 247 233 L 245 242 L 267 242 L 265 233 C 265 228 261 224 256 224 Z" fill="#ffffff" />
+    <circle cx="256" cy="245" r="2.5" fill="#ffffff" />
+
+    <!-- Flanking Left Symbol: Snapshot / Video Camera -->
+    <g transform="translate(126, 165)">
+      <circle cx="0" cy="0" r="22" fill="#ffffff" />
+      <path d="M -10 -4 L -6 -4 L -4 -7 L 4 -7 L 6 -4 L 10 -4 C 11 -4 12 -3 12 -2 L 12 8 C 12 9 11 10 10 10 L -10 10 C -11 10 -12 9 -12 8 L -12 -2 C -12 -3 -11 -4 -10 -4 Z" fill="#6dac20" />
+      <circle cx="0" cy="3" r="4.5" fill="#ffffff" />
+    </g>
+
+    <!-- Flanking Right Symbol: Door Unlock / Smart Lock -->
+    <g transform="translate(386, 165)">
+      <circle cx="0" cy="0" r="22" fill="#ffffff" />
+      <rect x="-8" y="-1" width="16" height="11" rx="3" fill="#6dac20" />
+      <path d="M -5 -1 L -5 -5 C -5 -8 -3 -10 0 -10 C 3 -10 5 -8 5 -5 L 5 -1" fill="none" stroke="#6dac20" stroke-width="3" stroke-linecap="round" />
+      <circle cx="0" cy="4" r="2" fill="#ffffff" />
+    </g>
+
+    <!-- Dashed Line -->
+    <path d="M 150 345 L 362 345" stroke="#ffffff" stroke-width="4" stroke-dasharray="6 8" opacity="0.8" />
+  </g>
+
+  <!-- Typography -->
+  <text x="256" y="388" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-weight="900" font-size="29" letter-spacing="0.5">Intercom</text>
+  <text x="256" y="424" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-weight="bold" font-size="20" letter-spacing="3">LOXBERRY</text>
+</svg>

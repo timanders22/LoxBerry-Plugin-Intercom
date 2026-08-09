@@ -1,76 +1,90 @@
 <?php
+/**
+ * intercom22lox - Rueckmeldung nach abgeschlossener Videoaufzeichnung
+ *
+ * Wird von getvideo.php aufgerufen, sobald ffmpeg fertig ist. Meldet die
+ * fertige Datei per MQTT und ueber die Webhooks weiter.
+ *
+ * Aufruf: /plugins/<ordner>/videowebhook.php?token=<TOKEN>&file=<Dateiname>
+ */
 
-require_once "../../../htmlauth/plugins/intercom22lox/config.php";
-require_once "phpMQTT/phpMQTT.php";
+require_once dirname(dirname(__DIR__)) . '/htmlauth/plugins/'
+           . basename(__DIR__) . '/config.php';
 
+ini_set('display_errors', '0');
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 
-$miniserver_config = LBSystem::get_miniservers();
+ic_token_pruefen();
 
-if(isset($_REQUEST['file'])){
-	$file = $_REQUEST['file'];
-}else{
-	exit;
+header('Content-type:application/json;charset=utf-8');
+
+/*
+ * Der Dateiname wird GEPRUEFT, nicht uebernommen.
+ *
+ * Bis 1.5.0 stand hier schlicht $file = $_REQUEST['file']; und der Wert
+ * ging unveraendert in die JSON-Antwort, in die MQTT-Meldung und in die
+ * Adresse des zweiten Webhooks. Damit liess sich alles einschleusen, was
+ * der Empfaenger dieser Meldung fuer eine Dateiadresse hielt - eine
+ * fremde Adresse etwa, auf die dann geklickt wird.
+ *
+ * Drei Stufen:
+ *   1. basename() entfernt jeden Pfadanteil (../../ und /etc/passwd),
+ *   2. ein Muster laesst nur die Zeichen zu, die getvideo.php selbst
+ *      vergibt: Ziffern, Bindestrich, Unterstrich, Punkt,
+ *   3. und zuletzt muss die Datei im Archiv WIRKLICH EXISTIEREN. Damit
+ *      ist ausgeschlossen, dass eine Meldung ueber etwas verschickt wird,
+ *      das es gar nicht gibt.
+ */
+$file = isset($_REQUEST['file']) ? basename((string) $_REQUEST['file']) : '';
+if ($file === '' || !preg_match('/^[A-Za-z0-9._-]{1,128}$/', $file)) {
+    header('HTTP/1.1 400 Bad Request');
+    echo json_encode(array('success' => false, 'error' => 'Ungueltiger Dateiname.'));
+    exit;
 }
-	
-if(file_exists(LBPCONFIGDIR.'/data.json')){
+if (!is_file($folder_video_archive . $file)) {
+    header('HTTP/1.1 404 Not Found');
+    echo json_encode(array('success' => false, 'error' => 'Datei nicht im Archiv.'));
+    exit;
+}
 
-	header('Content-type:application/json;charset=utf-8');
-	$arr = json_decode(file_get_contents(LBPCONFIGDIR.'/data.json'),true);
+$arr = ic_config();
 
+$www_folder = str_replace(ic_paths()['home'] . '/webfrontend', '', $folder_video_archive);
+$dateiurl = 'http://' . ic_host() . $www_folder . rawurlencode($file);
 
-	$www_folder = str_replace("/opt/loxberry/webfrontend","",$folder_video_archive);
+$json = json_encode(array(
+    'success'   => true,
+    'timestamp' => date('d.m.Y-H:i:s'),
+    'file'      => $dateiurl,
+));
+echo $json;
+$jsonarr = json_decode($json, true);
 
-	$url = $www_folder;
+/* ---------------- MQTT ---------------- */
+// Ueber das LoxBerry-Gateway (UDP) statt ueber Bluerhinos\phpMQTT - siehe
+// die ausfuehrliche Begruendung in getpicture.php.
+if (isset($arr['mqtt_enable']) && $arr['mqtt_enable'] == '1') {
+    ic_mqtt_senden('intercom22loxvideo', $json);
+}
 
-	$json = json_encode(array("success"=>true,"timestamp"=>date("d.m.Y-H:i:s"),"file"=>'http://'.$_SERVER['HTTP_HOST'].$url.$file));
-	echo $json;
-	$jsonarr = json_decode($json,true);
+/* ---------------- Webhook 1 (POST mit JSON) ---------------- */
+if (!empty($arr['videowebhook1']) && function_exists('curl_init')) {
+    $ch = curl_init($arr['videowebhook1']);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Zeitgrenzen: ohne sie wartet cURL unbegrenzt.
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    @curl_exec($ch);
+    curl_close($ch);
+}
 
-
-	// TODO abfrage wenn credentials noch nicht gestezt ueberspringen
-	if ( isset($arr['mqtt_enable']) ){
-		if ( $arr['mqtt_enable']=="1" ){
-			//MQTT parameter
-			if (!isset($arr['mqtt_uselocal']) || $arr['mqtt_uselocal']=="1") {
-			    $creds = mqtt_connectiondetails();
-			} else {
-			    $creds['brokerhost'] = $arr['mqtt_server'];
-			    $creds['brokerport'] = $arr['mqtt_port'];
-			    $creds['brokeruser'] = $arr['mqtt_user'];
-			    $creds['brokerpass'] = $arr['mqtt_password'];
-			}	
-			$client_id = uniqid(gethostname()."_client");
-			$mqtt = new Bluerhinos\phpMQTT($creds['brokerhost'],  $creds['brokerport'], $client_id);
-			if( $mqtt->connect(true, NULL, $creds['brokeruser'], $creds['brokerpass'] ) ) {
-			    $mqtt->publish("intercom22loxvideo", $json, 0, 1);
-			    $mqtt->close();
-			} else {
-			    echo "MQTT connection error Please set custom Credentials or choose default MQTT Broker from Loxberry";
-			}
-		} 
-	}// end mqtt post
-
-
-	if(isset($arr["videowebhook1"])){
-		if($arr["videowebhook1"]!=""){
-			$url = $arr["videowebhook1"];
-			$ch = curl_init($url);
-			curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
-			curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));
-			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-			$result = curl_exec($ch);
-			curl_close($ch);
-		}
-	} // end webhook 1
-
-	if(isset($arr["videowebhook2"])){
-		if($arr["videowebhook2"]!=""){
-			$url = $arr["videowebhook2"];
-			$url = str_replace("<fileurl>", urlencode($jsonarr['file']) , $url);
-			file_get_contents($url);
-		}
-	} // end webhook2
-
-
-
-} // end json data exists
+/* ---------------- Webhook 2 (Adresse mit Platzhalter) ---------------- */
+if (!empty($arr['videowebhook2'])) {
+    $url = str_replace('<fileurl>', urlencode($jsonarr['file']), $arr['videowebhook2']);
+    // MIT Zeitgrenze - bis 1.5.0 stand hier file_get_contents($url) ohne
+    // Zusammenhang, und ein nicht antwortender Empfaenger hielt den
+    // Aufruf bis zu einer Minute fest.
+    ic_http_holen($url, 5);
+}

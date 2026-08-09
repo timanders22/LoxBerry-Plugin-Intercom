@@ -1,0 +1,14 @@
+# Uebersetzte Python-Zwischenstaende und Editorreste gehoeren nicht ins Paket.
+__pycache__/
+*.pyc
+*.pyo
+
+# Laufzeitdaten, die im Paket nichts verloren haben.
+webfrontend/html/lastpicture.jpg
+*.tmp
+
+# Betriebssystem- und Editorreste
+.DS_Store
+Thumbs.db
+*~
+*.swp

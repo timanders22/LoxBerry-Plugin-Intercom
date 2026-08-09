@@ -4,7 +4,7 @@ require_once "config.php";
 $L = LBSystem::readlanguage("language.ini");
 
 $template_title = "intercom22Lox";
-$helplink = "https://github.com/bladerb/intercom22lox/";
+$helplink = "https://github.com/timanders22/LoxBerry-Plugin-Intercom/";
 $helptemplate = "help.html";
 
 $www_folder = str_replace("/opt/loxberry/webfrontend","",$folder_video_archive);
@@ -57,12 +57,18 @@ function getDateFromFilename($filename){
 
 
 ?>
+<script>
+// Adressen fuer script.js - Ordnername und Token stehen nur HIER, nicht in
+// der mitgelieferten .js-Datei.
+document.body.setAttribute('data-ic-admin', '/admin/plugins/<?= ic_plugin_ordner() ?>');
+document.body.setAttribute('data-ic-picture', '/plugins/<?= ic_plugin_ordner() ?>/getpicture.php?hook=false&token=<?= rawurlencode((string)(ic_config()['aktionstoken'] ?? '')) ?>');
+</script>
 <script type="text/javascript" src="script.js"></script>
 <div style="display:none;" id="DELALLCONFIRM"><?=$L['COMMON.DELALLCONFIRM']?></div>
 <h1><?=$L['COMMON.HELLO']?></h1>
 <h2><?=$L['COMMON.BACKUPVIDEO']?></h2>
 <p><?=$L['COMMON.BACKUPVIDEOTXT']?></p>
-<p><a href="http://<?= $loxberryip; ?>/plugins/intercom22lox/getvideo.php?s=10" target="_blank">http://<?= $loxberryip; ?>/plugins/intercom22lox/getvideo.php?s=10</a></p>
+<p><a href="http://<?= $loxberryip; ?>/plugins/<?= ic_plugin_ordner() ?>/getvideo.php?s=10&amp;token=<?= rawurlencode((string)(ic_config()['aktionstoken'] ?? '')) ?>" target="_blank">http://<?= $loxberryip; ?>/plugins/<?= ic_plugin_ordner() ?>/getvideo.php?s=10&amp;token=<?= rawurlencode((string)(ic_config()['aktionstoken'] ?? '')) ?></a></p>
 <p>Optional Param ?s=SECONDS</p>
 <p><?=$L['COMMON.BACKUPVIDEOTXT2']?></p>
 
