@@ -4,11 +4,11 @@ require_once "config.php";
 // This will read your language files to the array $L
 $L = LBSystem::readlanguage("language.ini");
 
-$template_title = "intercom22Lox";
+$template_title = ic_titel();
 $helplink = "https://github.com/timanders22/LoxBerry-Plugin-Intercom/";
 $helptemplate = "help.html";
 
-$www_folder = str_replace("/opt/loxberry/webfrontend","",$folder_img_archive);
+$www_folder = str_replace(lb_wurzel_ermitteln() . "/webfrontend", "", $folder_img_archive);
 
 require_once "menu.php";
 // Activate the first element
@@ -29,6 +29,35 @@ if(isset($_REQUEST['submit'])){
 }
 
  
+
+
+/* Den LoxBerry-Wurzelordner ohne festen Systempfad bestimmen.
+ *
+ * Vom eigenen Ablageort aufwaerts, bis ein Verzeichnis gefunden ist, das
+ * config/plugins UND webfrontend enthaelt. Das trifft die uebliche
+ * Installation genauso wie eine an einem anderen Ort - und es trifft auch
+ * den Fall, dass das Plugin noch als entpacktes Archiv daliegt (dann findet
+ * es nichts und gibt einen Leerstring zurueck, was der Aufrufer ohnehin
+ * abfangen muss).
+ *
+ * Der Name traegt kein Plugin-Kuerzel und ist deshalb abgesichert: zwei
+ * Bibliotheken landen nie im selben Prozess, aber die Pruefung kostet nichts.
+ */
+if (!function_exists('lb_wurzel_ermitteln')) {
+    function lb_wurzel_ermitteln()
+    {
+        $d = __DIR__;
+        for ($i = 0; $i < 8; $i++) {
+            if (is_dir($d . '/config/plugins') && is_dir($d . '/webfrontend')) {
+                return $d;
+            }
+            $eltern = dirname($d);
+            if ($eltern === $d) { break; }
+            $d = $eltern;
+        }
+        return '';
+    }
+}
 
 function show_pagination($current_page, $last_page){
     global $L;

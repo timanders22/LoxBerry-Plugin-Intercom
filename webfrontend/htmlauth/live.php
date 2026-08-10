@@ -13,7 +13,7 @@ $loxberryip = ic_host();
 $icp        = ic_plugin_ordner();
 $ictok      = '?token=' . rawurlencode((string) (ic_config()['aktionstoken'] ?? ''));
 
-$template_title = "intercom22Lox";
+$template_title = ic_titel();
 $helplink = "https://github.com/timanders22/LoxBerry-Plugin-Intercom/";
 $helptemplate = "help.html";
 

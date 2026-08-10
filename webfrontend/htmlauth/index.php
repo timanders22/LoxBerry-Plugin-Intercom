@@ -1,6 +1,6 @@
 <?php
 /**
- * intercom22Lox - Bedienoberflaeche
+ * Intercom - Bedienoberflaeche
  *
  * Eine Seite mit fuenf Reitern statt fuenf Einzelseiten:
  * Einstellungen | Einbindung in Loxone | Archiv | Test | Protokoll
@@ -8,14 +8,15 @@
  * Alle Variablen tragen das Praefix ic_, weil LBWeb::lbheader() eigene
  * globale Variablen setzt und es sonst zu Namenskollisionen kommt.
  *
- * (c) intercom22Lox Plugin Authors - MIT-Lizenz
+ * (c) Intercom LoxBerry Plugin Authors - MIT-Lizenz
+ * Fortfuehrung von bladerb/intercom22lox, siehe NOTICE.
  */
 
 require_once "config.php";
 
 $L = LBSystem::readlanguage("language.ini");
 
-$ic_titel   = "intercom22Lox";
+$ic_titel   = ic_titel();
 $ic_hilfe   = "https://github.com/timanders22/LoxBerry-Plugin-Intercom/";
 $ic_hilfetp = "help.html";
 
@@ -32,6 +33,35 @@ $ic_host    = ic_host();
 $ic_plugin  = ic_plugin_ordner();
 $ic_log     = '';
 $ic_meldung = '';
+
+
+/* Den LoxBerry-Wurzelordner ohne festen Systempfad bestimmen.
+ *
+ * Vom eigenen Ablageort aufwaerts, bis ein Verzeichnis gefunden ist, das
+ * config/plugins UND webfrontend enthaelt. Das trifft die uebliche
+ * Installation genauso wie eine an einem anderen Ort - und es trifft auch
+ * den Fall, dass das Plugin noch als entpacktes Archiv daliegt (dann findet
+ * es nichts und gibt einen Leerstring zurueck, was der Aufrufer ohnehin
+ * abfangen muss).
+ *
+ * Der Name traegt kein Plugin-Kuerzel und ist deshalb abgesichert: zwei
+ * Bibliotheken landen nie im selben Prozess, aber die Pruefung kostet nichts.
+ */
+if (!function_exists('lb_wurzel_ermitteln')) {
+    function lb_wurzel_ermitteln()
+    {
+        $d = __DIR__;
+        for ($i = 0; $i < 8; $i++) {
+            if (is_dir($d . '/config/plugins') && is_dir($d . '/webfrontend')) {
+                return $d;
+            }
+            $eltern = dirname($d);
+            if ($eltern === $d) { break; }
+            $d = $eltern;
+        }
+        return '';
+    }
+}
 
 function ic_e($wert) { return htmlspecialchars((string) $wert, ENT_QUOTES, 'UTF-8'); }
 
@@ -179,7 +209,7 @@ $ic_logdatei = '';
 $ic_kandidaten = array();
 foreach (array($ic_plugin . '.log', 'intercom22lox.log') as $ic_dn) {
     if (defined('LBPLOGDIR')) { $ic_kandidaten[] = LBPLOGDIR . '/' . $ic_dn; }
-    $ic_kandidaten[] = '/opt/loxberry/log/plugins/' . $ic_plugin . '/' . $ic_dn;
+    $ic_kandidaten[] = lb_wurzel_ermitteln() . '/log/plugins/' . $ic_plugin . '/' . $ic_dn;
 }
 foreach ($ic_kandidaten as $ic_p) {
     if (@is_file($ic_p)) { $ic_logdatei = $ic_p; break; }

@@ -26,6 +26,61 @@
  * Der Ordnername steckt im Ablageort dieser Datei - von dort wird er
  * genommen.
  */
+
+/* Den LoxBerry-Wurzelordner ohne festen Systempfad bestimmen.
+ *
+ * Vom eigenen Ablageort aufwaerts, bis ein Verzeichnis gefunden ist, das
+ * config/plugins UND webfrontend enthaelt. Das trifft die uebliche
+ * Installation genauso wie eine an einem anderen Ort - und es trifft auch
+ * den Fall, dass das Plugin noch als entpacktes Archiv daliegt (dann findet
+ * es nichts und gibt einen Leerstring zurueck, was der Aufrufer ohnehin
+ * abfangen muss).
+ *
+ * Der Name traegt kein Plugin-Kuerzel und ist deshalb abgesichert: zwei
+ * Bibliotheken landen nie im selben Prozess, aber die Pruefung kostet nichts.
+ */
+if (!function_exists('lb_wurzel_ermitteln')) {
+    function lb_wurzel_ermitteln()
+    {
+        $d = __DIR__;
+        for ($i = 0; $i < 8; $i++) {
+            if (is_dir($d . '/config/plugins') && is_dir($d . '/webfrontend')) {
+                return $d;
+            }
+            $eltern = dirname($d);
+            if ($eltern === $d) { break; }
+            $d = $eltern;
+        }
+        return '';
+    }
+}
+
+
+/**
+ * Der Titel fuer die Kopfzeile - aus der plugin.cfg, nicht fest im Quelltext.
+ *
+ * Bis 2.1.0 stand hier woertlich der Name der Originalfassung. Ein Titel, den
+ * man an vier Stellen pflegen muss, laeuft irgendwann auseinander; die
+ * plugin.cfg ist ohnehin die Stelle, an der LoxBerry ihn liest.
+ */
+if (!function_exists('ic_titel')) {
+    function ic_titel()
+    {
+        $vorgabe = 'Intercom';
+        $cfg = dirname(dirname(__DIR__)) . '/plugin.cfg';
+        if (!is_file($cfg)) {
+            $cfg = dirname(__DIR__) . '/plugin.cfg';
+        }
+        if (is_file($cfg)) {
+            $d = @parse_ini_file($cfg, true, INI_SCANNER_RAW);
+            if (isset($d['PLUGIN']['TITLE']) && trim($d['PLUGIN']['TITLE']) !== '') {
+                return trim($d['PLUGIN']['TITLE'], " \t\"'");
+            }
+        }
+        return $vorgabe;
+    }
+}
+
 function ic_plugin_ordner()
 {
     // .../webfrontend/htmlauth/plugins/<ordner>/ic_lib.php
@@ -40,11 +95,11 @@ function ic_paths()
     }
     $home = getenv('LBHOMEDIR');
     if (!$home || !is_dir($home)) {
-        foreach (array('/opt/loxberry', '/home/loxberry/loxberry') as $k) {
+        foreach (array(lb_wurzel_ermitteln(), '/home/loxberry/loxberry') as $k) {
             if (is_dir($k)) { $home = $k; break; }
         }
     }
-    if (!$home) { $home = '/opt/loxberry'; }
+    if (!$home) { $home = lb_wurzel_ermitteln(); }
     $ordner = ic_plugin_ordner();
     $p = array(
         'home'    => $home,

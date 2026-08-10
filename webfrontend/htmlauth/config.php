@@ -7,7 +7,7 @@ require_once __DIR__ . "/ic_lib.php";
 
 // Der Ordnername wird ERMITTELT, nicht eingetragen.
 //
-// Bis 1.5.0 stand hier "/opt/loxberry/webfrontend/legacy/<Ordner>_data/"
+// Bis 1.5.0 stand hier "<LoxBerry-Wurzel>/webfrontend/legacy/<Ordner>_data/"
 // mit festem Namen. Haengt LoxBerry bei der Installation einen Zaehler an
 // (intercom_01, weil der Ordner schon belegt war), zeigten beide
 // Installationen auf dasselbe Archiv - und die Verweise in den Skripten
