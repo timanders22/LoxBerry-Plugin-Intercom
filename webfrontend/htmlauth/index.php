@@ -64,6 +64,10 @@ if (isset($_POST['token_neu']) && !isset($_POST['intercomip'])) {
                                       | JSON_UNESCAPED_SLASHES);
         if ($ic_js !== false && ic_datei_ersetzen($ic_datei, $ic_js, 0600)) {
             $ic_cfg = $ic_neu;
+            // Die Tatsache gehoert ins Protokoll, der Wert nie - ein Token im
+            // Log waere ein Token auf Platte.
+            ic_log('Neues Zugriffstoken erzeugt. Alle Adressen im Miniserver muessen '
+                . 'jetzt nachgezogen werden.');
             $ic_meldung = 'Neues Zugriffstoken erzeugt. Die Adressen im Miniserver '
                         . 'muessen angepasst werden.';
         } else {
@@ -112,10 +116,12 @@ if (isset($_POST['token_neu']) && !isset($_POST['intercomip'])) {
                                   | JSON_UNESCAPED_SLASHES);
     if ($ic_js !== false && ic_datei_ersetzen($ic_datei, $ic_js, 0600)) {
         $ic_cfg = $ic_neu;
+        ic_log('Einstellungen gespeichert.');
         if ($ic_meldung === '') {
             $ic_meldung = 'Die Einstellungen wurden gespeichert.';
         }
     } else {
+        ic_log('Die Einstellungen liessen sich NICHT schreiben: ' . $ic_datei);
         $ic_meldung = 'FEHLER: Die Einstellungen konnten nicht geschrieben werden.';
     }
 }
@@ -488,12 +494,21 @@ wird das Bild <b>nicht</b> ins Archiv gelegt.</p>
 <!-- ===================== Protokoll ===================== -->
 <div class="ic-seite" id="tab-log">
 <h2>Protokoll</h2>
+<div class="ic-hinweis"><b>Das Protokoll liegt auf einer Ramdisk.</b> LoxBerry legt
+<span class="ic-mono">log/</span> im Arbeitsspeicher an, damit die Speicherkarte geschont wird.
+Diese Datei &uuml;berlebt deshalb keinen Neustart &mdash; sie ist eine Spur f&uuml;r die
+Fehlersuche im laufenden Betrieb, kein Archiv. Wer eine Meldung aufheben will, kopiert sie
+vorher heraus.</div>
+<p class="ic-klein">Protokolliert werden: geholte Bilder samt Ausl&ouml;ser, gespeicherte
+Einstellungen, ein neu erzeugtes Zugriffstoken (die Tatsache, nicht der Wert) sowie St&ouml;rungen
+bei der T&uuml;rstation, beim Archiv und bei MQTT. Wiederkehrende St&ouml;rungen werden gebremst:
+h&ouml;chstens eine gleiche Meldung je Stunde.</p>
 <?php if ($ic_log !== '') { ?>
 <p class="ic-klein">Die letzten 200 Zeilen aus <span class="ic-mono"><?= ic_e($ic_logdatei) ?></span>.</p>
 <pre><?= ic_e($ic_log) ?></pre>
 <?php } else { ?>
 <div class="ic-hinweis">Es liegt noch kein Protokoll vor. Sobald das Plugin zum ersten Mal ein Bild
-geholt hat, erscheinen hier die Eintr&auml;ge.</div>
+geholt hat oder Einstellungen gespeichert wurden, erscheinen hier die Eintr&auml;ge.</div>
 <?php } ?>
 </div>
 

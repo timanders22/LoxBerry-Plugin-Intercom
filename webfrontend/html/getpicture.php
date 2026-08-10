@@ -42,6 +42,11 @@ if(file_exists(LBPCONFIGDIR.'/data.json')){
 	$r="";
 	if(!$f)
 	{
+	    // Gebremst: bei einer ausgeschalteten Station kaeme sonst bei jedem
+	    // Klingeln eine Zeile, und log/ ist eine Ramdisk.
+	    ic_log_gebremst('station', 'Die Tuerstation war nicht erreichbar. Adresse und '
+	        . 'Zugangsdaten pruefen; die Diagnose im Reiter Einstellungen zeigt die '
+	        . 'benutzte Adresse mit maskiertem Passwort.');
 	    header('HTTP/1.1 502 Bad Gateway');
 	    echo json_encode(array("success"=>false,"error"=>"Tuerstation nicht erreichbar."));
 	    exit;
@@ -111,6 +116,8 @@ if(file_exists(LBPCONFIGDIR.'/data.json')){
 				$written = @file_put_contents($archiveimg, $frame);
 				if($written === false){
 					$archive_error = "Archivbild konnte nicht geschrieben werden: ".$archiveimg;
+					ic_log_gebremst('archiv', 'Ein Archivbild liess sich nicht schreiben: '
+					    . $archiveimg . ' - Rechte und freien Platz pruefen.');
 				}else{
 					$archived = true;
 					// add timestamp
@@ -157,6 +164,9 @@ if(file_exists(LBPCONFIGDIR.'/data.json')){
 	}
 
 	$url = str_replace(basename($_SERVER['REQUEST_URI']), "", $_SERVER['REQUEST_URI']);
+	ic_log('Bild von der Tuerstation geholt'
+	    . (isset($trigger) && $trigger !== '' ? ' (Ausloeser ' . $trigger . ')' : '')
+	    . (isset($archived) && $archived ? ', archiviert' : ''));
 	$json = json_encode(array("success"=>true,"timestamp"=>date("d.m.Y-H:i:s"),"trigger"=>(isset($trigger)?$trigger:""),"ai"=>$ai,"archived"=>(isset($archived)?$archived:false),"archive_info"=>(isset($archive_error)?$archive_error:""),"image"=>'http://'.ic_host().$url.'lastpicture.jpg'));
 	echo $json;
 	$jsonarr = json_decode($json,true);

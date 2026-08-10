@@ -277,14 +277,82 @@ function ic_mqtt_nutzlast($wert)
 function ic_mqtt_senden($thema, $wert, $retain = true)
 {
     $port = ic_mqtt_udpport();
-    if (!$port || !function_exists('socket_create')) { return false; }
+    if (!$port) {
+        ic_log_gebremst('mqtt_port', 'MQTT: in der general.json steht kein UDP-Eingangsport '
+            . 'des Gateways - es wird nichts veroeffentlicht.');
+        return false;
+    }
+    if (!function_exists('socket_create')) {
+        ic_log_gebremst('mqtt_sockets', 'MQTT: die PHP-Erweiterung sockets fehlt. '
+            . 'Abhilfe: sudo apt install php-sockets');
+        return false;
+    }
     $s = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
-    if (!$s) { return false; }
+    if (!$s) {
+        ic_log_gebremst('mqtt_socket', 'MQTT: Socket liess sich nicht anlegen.');
+        return false;
+    }
     $msg = ($retain ? 'retain ' : 'publish ') . ic_mqtt_thema($thema)
          . ' ' . ic_mqtt_nutzlast($wert);
     $ok = @socket_sendto($s, $msg, strlen($msg), 0, '127.0.0.1', $port);
     socket_close($s);
+    if ($ok === false) {
+        ic_log_gebremst('mqtt_senden', 'MQTT: das Senden an 127.0.0.1:' . $port
+            . ' ist gescheitert.');
+    }
     return $ok !== false;
+}
+
+/* ==================================================================
+ * Protokoll
+ *
+ * Bis 1.6.0 hat die Oberflaeche eine Logdatei ANGEZEIGT, die niemand
+ * geschrieben hat - der Reiter blieb dauerhaft leer, ohne dass irgendwo ein
+ * Fehler sichtbar wurde. Ein leerer Reiter sieht aus wie ein Bedienfehler des
+ * Anwenders. Aufgefallen bei der Durchsicht am 10.08.2026, nachdem derselbe
+ * Fehler in Docker NG gemeldet worden war.
+ *
+ * ACHTUNG: <home>/log/ liegt auf dem LoxBerry auf einer RAMDISK. Diese Datei
+ * ueberlebt keinen Neustart, und eine unbegrenzt wachsende Datei frisst
+ * Arbeitsspeicher - deshalb die Rotation.
+ * ================================================================== */
+
+function ic_logdatei()
+{
+    $p = ic_paths();
+    return $p['log'] . '/' . $p['plugin'] . '.log';
+}
+
+function ic_log($text)
+{
+    $p = ic_paths();
+    if (!@is_dir($p['log'])) { @mkdir($p['log'], 0775, true); }
+    $datei = ic_logdatei();
+    if (@is_file($datei) && @filesize($datei) > 262144) {
+        $rest = array_slice(@file($datei, FILE_IGNORE_NEW_LINES) ?: array(), -300);
+        @file_put_contents($datei, implode("\n", $rest) . "\n");
+    }
+    return @file_put_contents($datei,
+        '[' . date('Y-m-d H:i:s') . '] ' . $text . "\n", FILE_APPEND) !== false;
+}
+
+/**
+ * Dieselbe Meldung hoechstens einmal je Zeitfenster.
+ *
+ * Die Tuerstation wird bei jedem Klingeln abgefragt. Ohne Bremse schriebe eine
+ * Dauerstoerung - etwa eine ausgeschaltete Station - die Ramdisk voll.
+ */
+function ic_log_gebremst($schluessel, $text, $sekunden = 3600)
+{
+    $p = ic_paths();
+    if (!@is_dir($p['data'])) { @mkdir($p['data'], 0775, true); }
+    $f = $p['data'] . '/.meld_' . preg_replace('/[^a-z0-9_]/i', '', $schluessel);
+    $letzte = @is_file($f) ? (int) @file_get_contents($f) : 0;
+    if (time() - $letzte >= $sekunden) {
+        @file_put_contents($f, (string) time());
+        ic_log($text);
+    }
+    return true;
 }
 
 /* ==================================================================
