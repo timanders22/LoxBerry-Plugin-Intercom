@@ -238,214 +238,174 @@ if ($ic_logdatei !== '') {
 </style>
 
 <div class="icw">
-<h1>intercom22Lox</h1>
-<p>Holt das Kamerabild der Loxone Intercom auf den LoxBerry, legt es im Archiv ab und stellt es
-Loxone und anderen Programmen bereit &mdash; ohne dass Benutzername und Passwort der Intercom
-irgendwo sonst eingetragen werden m&uuml;ssen.</p>
+<h1><?= $L['UI.K001'] ?></h1>
+<p><?= $L['UI.K002'] ?></p>
 
 <?php if ($ic_meldung !== '') { ?>
 <div class="ic-hinweis<?= strpos($ic_meldung, 'FEHLER') === 0 ? ' ic-warn' : '' ?>"><?= ic_e($ic_meldung) ?></div>
 <?php } ?>
 <?php if (trim((string) $ic_cfg['intercomip']) === '') { ?>
-<div class="ic-hinweis ic-warn"><b>Noch nicht eingerichtet.</b> Tragen Sie im Reiter
-<b>Einstellungen</b> die Adresse der Intercom ein &mdash; ohne sie kann kein Bild geholt werden.</div>
+<div class="ic-hinweis ic-warn"><b><?= $L['UI.K003'] ?></b><?= $L['UI.K004'] ?><b><?= $L['UI.K005'] ?></b><?= $L['UI.K006'] ?></div>
 <?php } ?>
 
 <div class="ic-reiter">
-    <div class="aktiv" data-seite="tab-settings">Einstellungen</div>
-    <div data-seite="tab-loxone">Einbindung in Loxone</div>
-    <div data-seite="tab-archiv">Archiv</div>
-    <div data-seite="tab-test">Test</div>
-    <div data-seite="tab-log">Protokoll</div>
+    <div class="aktiv" data-seite="tab-settings"><?= $L['UI.K007'] ?></div>
+    <div data-seite="tab-loxone"><?= $L['UI.K008'] ?></div>
+    <div data-seite="tab-archiv"><?= $L['UI.K009'] ?></div>
+    <div data-seite="tab-test"><?= $L['UI.K010'] ?></div>
+    <div data-seite="tab-log"><?= $L['UI.K011'] ?></div>
 </div>
 
 <!-- ===================== Einstellungen ===================== -->
 <div class="ic-seite aktiv" id="tab-settings">
 <form method="post" action="index.php">
 
-<h2>Intercom</h2>
-<label>Adresse der Intercom</label>
+<h2><?= $L['UI.K012'] ?></h2>
+<label><?= $L['UI.K013'] ?></label>
 <input type="text" data-role="none" name="intercomip" value="<?= ic_e($ic_cfg['intercomip']) ?>" placeholder="192.168.1.50">
-<p class="ic-klein">IP-Adresse der Intercom, bei Bedarf mit Port (<span class="ic-mono">192.168.1.50:8080</span>).
-Benutzername und Passwort holt sich das Plugin automatisch aus den Miniserver-Daten des LoxBerry &mdash;
-Sie m&uuml;ssen sie hier nicht eintragen.</p>
+<p class="ic-klein"><?= $L['UI.K014'] ?><span class="ic-mono">192.168.1.50:8080</span><?= $L['UI.K015'] ?></p>
 
-<h2>Speicherort</h2>
-<label>Eigener Speicherpfad (optional)</label>
+<h2><?= $L['UI.K016'] ?></h2>
+<label><?= $L['UI.K017'] ?></label>
 <input type="text" data-role="none" name="storage_path" value="<?= ic_e($ic_cfg['storage_path']) ?>" placeholder="/media/usbstick">
-<p class="ic-klein">Leer lassen, dann liegt alles auf der SD-Karte des LoxBerry. Wer viele Bilder und
-Videos aufbewahrt, sollte hier eine USB-Festplatte angeben &mdash; das schont die SD-Karte.
-Vorhandene Aufnahmen werden beim ersten Speichern einmalig mit umgezogen.</p>
+<p class="ic-klein"><?= $L['UI.K018'] ?></p>
 
-<h2>Aufbewahrung</h2>
-<label>Aufnahmen l&ouml;schen nach (Tagen)</label>
+<h2><?= $L['UI.K019'] ?></h2>
+<label><?= $L['UI.K020'] ?></label>
 <input type="number" data-role="none" name="cleanup_days" min="0" max="3650" value="<?= ic_e($ic_cfg['cleanup_days']) ?>">
-<p class="ic-klein">0 bedeutet: nie automatisch l&ouml;schen. Voreingestellt sind 90 Tage.</p>
-<label>H&ouml;chstzahl aufbewahrter Aufnahmen (optional)</label>
+<p class="ic-klein"><?= $L['UI.K021'] ?></p>
+<label><?= $L['UI.K022'] ?></label>
 <input type="number" data-role="none" name="cleanup_count" min="0" value="<?= ic_e($ic_cfg['cleanup_count']) ?>">
-<p class="ic-klein">Zus&auml;tzliche Obergrenze. Sind mehr Dateien vorhanden, werden die &auml;ltesten
-entfernt &mdash; auch wenn sie noch nicht alt genug sind.</p>
+<p class="ic-klein"><?= $L['UI.K023'] ?></p>
 
-<h2>Zeitstempel im Bild</h2>
-<label><input type="checkbox" data-role="none" name="timestamp_image"<?= ic_haken($ic_cfg, 'timestamp_image') ?>> Datum und Uhrzeit in archivierte Bilder schreiben</label>
-<label><input type="checkbox" data-role="none" name="timestamp_video"<?= ic_haken($ic_cfg, 'timestamp_video') ?>> Datum und Uhrzeit in Videos schreiben</label>
-<p class="ic-klein">Der Stempel wird links oben ins Bild gesetzt. Daf&uuml;r wird das PHP-Modul
-<span class="ic-mono">php-gd</span> ben&ouml;tigt; fehlt es, bleibt das Bild einfach ohne Stempel.</p>
+<h2><?= $L['UI.K024'] ?></h2>
+<label><input type="checkbox" data-role="none" name="timestamp_image"<?= ic_haken($ic_cfg, 'timestamp_image') ?>><?= $L['UI.K025'] ?></label>
+<label><input type="checkbox" data-role="none" name="timestamp_video"<?= ic_haken($ic_cfg, 'timestamp_video') ?>><?= $L['UI.K026'] ?></label>
+<p class="ic-klein"><?= $L['UI.K027'] ?><span class="ic-mono"><?= $L['UI.K028'] ?></span><?= $L['UI.K029'] ?></p>
 
-<h2>Zeitraffer</h2>
-<label><input type="checkbox" data-role="none" name="timelapse_enable"<?= ic_haken($ic_cfg, 'timelapse_enable') ?>> T&auml;glich ein Zeitrafferbild aufnehmen</label>
-<label>Uhrzeit</label>
+<h2><?= $L['UI.K030'] ?></h2>
+<label><input type="checkbox" data-role="none" name="timelapse_enable"<?= ic_haken($ic_cfg, 'timelapse_enable') ?>><?= $L['UI.K031'] ?></label>
+<label><?= $L['UI.K032'] ?></label>
 <input type="text" data-role="none" name="timelapse_time" value="<?= ic_e($ic_cfg['timelapse_time']) ?>" placeholder="12:00">
-<label><input type="checkbox" data-role="none" name="timelapse_video"<?= ic_haken($ic_cfg, 'timelapse_video') ?>> Nach jeder Aufnahme ein Video aus allen Bildern erzeugen</label>
-<p class="ic-klein">Ergibt &uuml;ber Wochen einen Film, der den Jahreslauf vor der Haust&uuml;r zeigt.
-F&uuml;r das Video wird <span class="ic-mono">ffmpeg</span> ben&ouml;tigt
-(nachinstallieren mit <span class="ic-mono">sudo apt-get install -y ffmpeg</span>).</p>
+<label><input type="checkbox" data-role="none" name="timelapse_video"<?= ic_haken($ic_cfg, 'timelapse_video') ?>><?= $L['UI.K033'] ?></label>
+<p class="ic-klein"><?= $L['UI.K034'] ?><span class="ic-mono"><?= $L['UI.K035'] ?></span><?= $L['UI.K036'] ?><span class="ic-mono"><?= $L['UI.K037'] ?></span>).</p>
 
-<h2>Bild auf einen Bildschirm schicken</h2>
-<label><input type="checkbox" data-role="none" name="tv_enable"<?= ic_haken($ic_cfg, 'tv_enable') ?>> Beim Klingeln das Bild an ein Anzeigeger&auml;t senden</label>
-<label>Adresse des Ger&auml;ts</label>
+<h2><?= $L['UI.K038'] ?></h2>
+<label><input type="checkbox" data-role="none" name="tv_enable"<?= ic_haken($ic_cfg, 'tv_enable') ?>><?= $L['UI.K039'] ?></label>
+<label><?= $L['UI.K040'] ?></label>
 <input type="text" data-role="none" name="tv_ip" value="<?= ic_e($ic_cfg['tv_ip']) ?>">
-<label>Port</label>
+<label><?= $L['UI.K041'] ?></label>
 <input type="text" data-role="none" name="tv_port" value="<?= ic_e($ic_cfg['tv_port']) ?>">
-<p class="ic-klein">Gedacht f&uuml;r Ger&auml;te, die Bilder per HTTP entgegennehmen &mdash; etwa ein
-Fernseher oder Tablet mit passender Anzeige-Software. Bleiben die Felder leer, passiert nichts.</p>
+<p class="ic-klein"><?= $L['UI.K042'] ?></p>
 
-<h2>Objekterkennung (optional)</h2>
-<label><input type="checkbox" data-role="none" name="ai_enable"<?= ic_haken($ic_cfg, 'ai_enable') ?>> Erkennen, was auf dem Bild zu sehen ist</label>
-<label>Adresse des Erkennungsdienstes</label>
+<h2><?= $L['UI.K043'] ?></h2>
+<label><input type="checkbox" data-role="none" name="ai_enable"<?= ic_haken($ic_cfg, 'ai_enable') ?>><?= $L['UI.K044'] ?></label>
+<label><?= $L['UI.K045'] ?></label>
 <input type="text" data-role="none" name="ai_url" value="<?= ic_e($ic_cfg['ai_url']) ?>" placeholder="http://192.168.1.60:32168/v1/vision/detection">
-<label>Mindestsicherheit in Prozent</label>
+<label><?= $L['UI.K046'] ?></label>
 <input type="number" data-role="none" name="ai_minconf" min="1" max="99" value="<?= ic_e($ic_cfg['ai_minconf']) ?>">
-<p class="ic-klein">Das Bild wird an einen selbst betriebenen Dienst geschickt (CodeProject.AI oder
-DeepStack), der zur&uuml;ckmeldet, ob darauf eine Person, ein Auto oder ein Paket zu sehen ist.
-Damit kann Loxone unterscheiden, ob wirklich jemand vor der T&uuml;r steht oder nur eine Katze
-vorbeigelaufen ist. Das Bild verl&auml;sst das Heimnetz dabei nicht.</p>
+<p class="ic-klein"><?= $L['UI.K047'] ?></p>
 
-<h2>MQTT</h2>
-<label><input type="checkbox" data-role="none" name="mqtt_enable"<?= ((string) $ic_cfg['mqtt_enable'] === '1') ? ' checked' : '' ?>> Meldungen per MQTT verschicken</label>
-<label><input type="checkbox" data-role="none" name="mqtt_uselocal"<?= ((string) $ic_cfg['mqtt_uselocal'] !== '0') ? ' checked' : '' ?>> Den MQTT-Dienst des LoxBerry verwenden (empfohlen)</label>
-<p class="ic-klein">Der LoxBerry bringt einen eigenen MQTT-Dienst mit
-(System-Einstellungen &rarr; MQTT Gateway). Ist der Haken gesetzt, holt sich das Plugin Adresse,
-Benutzer und Passwort automatisch von dort. Sie m&uuml;ssen unten dann nichts eintragen &mdash; und
-vor allem steht das Passwort nur an einer einzigen Stelle. Nur wer einen eigenen Broker betreibt,
-nimmt den Haken heraus und f&uuml;llt die folgenden Felder aus.</p>
-<label>Eigener Broker &mdash; Adresse</label>
+<h2><?= $L['UI.K048'] ?></h2>
+<label><input type="checkbox" data-role="none" name="mqtt_enable"<?= ((string) $ic_cfg['mqtt_enable'] === '1') ? ' checked' : '' ?>><?= $L['UI.K049'] ?></label>
+<label><input type="checkbox" data-role="none" name="mqtt_uselocal"<?= ((string) $ic_cfg['mqtt_uselocal'] !== '0') ? ' checked' : '' ?>><?= $L['UI.K050'] ?></label>
+<p class="ic-klein"><?= $L['UI.K051'] ?></p>
+<label><?= $L['UI.K052'] ?></label>
 <input type="text" data-role="none" name="mqtt_server" value="<?= ic_e($ic_cfg['mqtt_server']) ?>">
-<label>Port</label>
+<label><?= $L['UI.K053'] ?></label>
 <input type="text" data-role="none" name="mqtt_port" value="<?= ic_e($ic_cfg['mqtt_port']) ?>">
-<label>Benutzer</label>
+<label><?= $L['UI.K054'] ?></label>
 <input type="text" data-role="none" name="mqtt_user" value="<?= ic_e($ic_cfg['mqtt_user']) ?>">
-<label>Passwort</label>
+<label><?= $L['UI.K055'] ?></label>
 <input type="password" data-role="none" name="mqtt_password" value="<?= ic_e($ic_cfg['mqtt_password']) ?>">
 <table>
-<tr><th>Thema</th><th>Wird gesendet</th></tr>
-<tr><td><span class="ic-mono">intercom</span></td><td>nach jedem Bild</td></tr>
-<tr><td><span class="ic-mono">intercomvideo</span></td><td>nach jedem Video</td></tr>
-<tr><td><span class="ic-mono">intercom/trigger/NAME</span></td><td>bei Aufruf mit <span class="ic-mono">?trigger=NAME</span></td></tr>
-<tr><td><span class="ic-mono">intercom/ai</span></td><td>nur bei eingeschalteter Objekterkennung</td></tr>
+<tr><th><?= $L['UI.K056'] ?></th><th><?= $L['UI.K057'] ?></th></tr>
+<tr><td><span class="ic-mono"><?= $L['UI.K058'] ?></span></td><td><?= $L['UI.K059'] ?></td></tr>
+<tr><td><span class="ic-mono"><?= $L['UI.K060'] ?></span></td><td><?= $L['UI.K061'] ?></td></tr>
+<tr><td><span class="ic-mono">intercom/trigger/NAME</span></td><td><?= $L['UI.K062'] ?><span class="ic-mono">?trigger=NAME</span></td></tr>
+<tr><td><span class="ic-mono">intercom/ai</span></td><td><?= $L['UI.K063'] ?></td></tr>
 </table>
 
-<h2>Webhooks</h2>
-<p class="ic-klein">Ein Webhook ist eine Adresse, die das Plugin von sich aus aufruft, sobald etwas
-passiert ist &mdash; so erf&auml;hrt ein anderes Programm davon, ohne nachfragen zu m&uuml;ssen.
-Alle Felder sind freiwillig; leere Felder werden &uuml;bersprungen.</p>
-<label>Nach einem Bild &mdash; als POST mit JSON</label>
+<h2><?= $L['UI.K064'] ?></h2>
+<p class="ic-klein"><?= $L['UI.K065'] ?></p>
+<label><?= $L['UI.K066'] ?></label>
 <input type="text" data-role="none" name="webhook1" value="<?= ic_e($ic_cfg['webhook1']) ?>">
-<label>Nach einem Bild &mdash; Bildadresse als Parameter angeh&auml;ngt</label>
+<label><?= $L['UI.K067'] ?></label>
 <input type="text" data-role="none" name="webhook2" value="<?= ic_e($ic_cfg['webhook2']) ?>">
-<label>Nach einem Bild &mdash; weiterer Empf&auml;nger (POST)</label>
+<label><?= $L['UI.K068'] ?></label>
 <input type="text" data-role="none" name="webhook3" value="<?= ic_e($ic_cfg['webhook3']) ?>">
-<label>Nach einem Bild &mdash; weiterer Empf&auml;nger (Parameter)</label>
+<label><?= $L['UI.K069'] ?></label>
 <input type="text" data-role="none" name="webhook4" value="<?= ic_e($ic_cfg['webhook4']) ?>">
-<label>Nach einem Video &mdash; als POST mit JSON</label>
+<label><?= $L['UI.K070'] ?></label>
 <input type="text" data-role="none" name="videowebhook1" value="<?= ic_e($ic_cfg['videowebhook1']) ?>">
-<label>Nach einem Video &mdash; Videoadresse als Parameter angeh&auml;ngt</label>
+<label><?= $L['UI.K071'] ?></label>
 <input type="text" data-role="none" name="videowebhook2" value="<?= ic_e($ic_cfg['videowebhook2']) ?>">
 
-<div style="margin-top:16px;"><button data-role="none" class="ic-btn" type="submit" name="speichern" value="1">Speichern</button></div>
+<div style="margin-top:16px;"><button data-role="none" class="ic-btn" type="submit" name="speichern" value="1"><?= $L['UI.K072'] ?></button></div>
 </form>
 </div>
 
 <!-- ===================== Einbindung in Loxone ===================== -->
 <div class="ic-seite" id="tab-loxone">
-<h2>So kommt das Bild nach Loxone</h2>
-<p>Loxone ruft eine Adresse auf dem LoxBerry auf; der LoxBerry holt daraufhin das Bild von der
-Intercom und legt es ab. Alles, was Loxone dazu braucht, ist ein <b>virtueller Ausgang</b>.</p>
+<h2><?= $L['UI.K073'] ?></h2>
+<p><?= $L['UI.K074'] ?><b><?= $L['UI.K075'] ?></b>.</p>
 
-<div class="ic-schritt"><b>Schritt 1: Virtuellen Ausgang anlegen</b><br>
-In Loxone Config einen virtuellen Ausgang mit dieser Adresse anlegen:<br>
-<div class="ic-hinweis"><b>Alle Adressen verlangen das Zugriffstoken.</b><br>
-Bis 1.5.0 waren die Endpunkte ungesch&uuml;tzt: jedes Ger&auml;t im Netz konnte den
-Kamerastrom mitlesen, Bilder ausl&ouml;sen und Videoaufzeichnungen starten. Das Token
-ist in den Adressen unten bereits eingesetzt &ndash; es muss nur einmal in die
-Virtuellen Ausg&auml;nge &uuml;bernommen werden.</div>
+<div class="ic-schritt"><b><?= $L['UI.K076'] ?></b><br><?= $L['UI.K077'] ?><br>
+<div class="ic-hinweis"><b><?= $L['UI.K078'] ?></b><br><?= $L['UI.K079'] ?></div>
 
-<label>Zugriffstoken</label>
+<label><?= $L['UI.K080'] ?></label>
 <input type="text" data-role="none" value="<?= ic_e($ic_token) ?>" readonly onclick="this.select();">
 <div class="ic-legende">
-<span><i class="ic-punkt ic-b-aktion"></i> L&ouml;st etwas aus &mdash; sendet oder ver&auml;ndert</span>
+<span><i class="ic-punkt ic-b-aktion"></i><?= $L['UI.K081'] ?></span>
 </div>
 <div class="ic-knopfreihe">
 <form method="post" action="index.php">
   <input type="hidden" data-role="none" name="token_neu" value="1">
   <button type="submit" data-role="none" class="ic-btn ic-b-aktion"
-          onclick="return confirm('Neues Token erzeugen? Alle Adressen im Miniserver m\u00fcssen danach angepasst werden.');">Neues Token erzeugen</button>
+          onclick="return confirm('Neues Token erzeugen? Alle Adressen im Miniserver m\u00fcssen danach angepasst werden.');"><?= $L['UI.K082'] ?></button>
 </form>
 </div>
 
 <span class="ic-mono">http://<?= ic_e($ic_host) ?>/plugins/<?= ic_e($ic_plugin) ?>/getpicture.php<?= ic_tok(true) ?></span>
-<p class="ic-klein"><b>Wichtig:</b> Zwischen dem Klingeln und dem Aufruf sollten etwa
-<b>3 Sekunden</b> liegen. Vorher liefert die Intercom noch kein brauchbares Bild. In Loxone Config
-setzt man daf&uuml;r einen Einschaltverz&ouml;gerungs-Baustein davor.</p>
+<p class="ic-klein"><b><?= $L['UI.K083'] ?></b><?= $L['UI.K084'] ?><b><?= $L['UI.K085'] ?></b><?= $L['UI.K086'] ?></p>
 </div>
 
-<div class="ic-schritt"><b>Schritt 2: Bild anzeigen</b><br>
-Das jeweils neueste Bild liegt immer unter derselben Adresse &mdash; verwendbar in Loxone, in der
-App oder als Anhang einer Benachrichtigung:<br>
+<div class="ic-schritt"><b><?= $L['UI.K087'] ?></b><br><?= $L['UI.K088'] ?><br>
 <span class="ic-mono">http://<?= ic_e($ic_host) ?>/plugins/<?= ic_e($ic_plugin) ?>/lastpicture.jpg</span>
 </div>
 
-<div class="ic-schritt"><b>Schritt 3: Unterscheiden, wer ausgel&ouml;st hat</b><br>
-H&auml;ngt man <span class="ic-mono">?trigger=NAME</span> an, wandert der Name in den Dateinamen und
-wird als eigenes MQTT-Thema gemeldet. So l&auml;sst sich sp&auml;ter erkennen, ob geklingelt wurde
-oder der Bewegungsmelder ausgel&ouml;st hat:<br>
+<div class="ic-schritt"><b><?= $L['UI.K089'] ?></b><br><?= $L['UI.K090'] ?><span class="ic-mono">?trigger=NAME</span><?= $L['UI.K091'] ?><br>
 <span class="ic-mono">&hellip;/getpicture.php<?= ic_tok(true) ?>&amp;trigger=klingel</span><br>
 <span class="ic-mono">&hellip;/getpicture.php<?= ic_tok(true) ?>&amp;trigger=bewegung</span>
 </div>
 
-<div class="ic-schritt"><b>Schritt 4: Video statt Einzelbild</b><br>
+<div class="ic-schritt"><b><?= $L['UI.K092'] ?></b><br>
 <span class="ic-mono">http://<?= ic_e($ic_host) ?>/plugins/<?= ic_e($ic_plugin) ?>/getvideo.php<?= ic_tok(true) ?>&amp;s=15</span>
-<div class="ic-klein">Der Parameter heisst <span class="ic-mono">s</span> (Sekunden), nicht
-<span class="ic-mono">time</span> &ndash; in der Anleitung stand bis 1.5.0 der falsche Name,
+<div class="ic-klein"><?= $L['UI.K093'] ?><span class="ic-mono">s</span><?= $L['UI.K094'] ?><span class="ic-mono"><?= $L['UI.K095'] ?></span> &ndash; in der Anleitung stand bis 1.5.0 der falsche Name,
 weshalb jede Aufnahme die voreingestellten 20&nbsp;Sekunden lang war. Erlaubt sind 1 bis 300.</div>
-<p class="ic-klein">Nimmt 15 Sekunden auf (h&ouml;chstens 120). Die Antwort kommt sofort und
-enth&auml;lt die Adresse des Videos &mdash; herunterladen l&auml;sst es sich aber erst, wenn die
-Aufnahmezeit vorbei ist. Praktisch am Briefkasten: eine kurze Sequenz zeigt, wer die Post gebracht hat.</p>
+<p class="ic-klein"><?= $L['UI.K096'] ?></p>
 </div>
 
-<div class="ic-schritt"><b>Schritt 5: Livebild ohne Passwort</b><br>
+<div class="ic-schritt"><b><?= $L['UI.K097'] ?></b><br>
 <span class="ic-mono">http://<?= ic_e($ic_host) ?>/plugins/<?= ic_e($ic_plugin) ?>/mjpgproxy.php<?= ic_tok(true) ?></span>
-<p class="ic-klein">Der LoxBerry meldet sich bei der Intercom an und reicht den Bilderstrom weiter.
-Diese Adresse kann jedes Programm im Heimnetz &ouml;ffnen &mdash; ohne Benutzername und Passwort.
-Genau deshalb sollte sie nicht ins Internet weitergeleitet werden.</p>
+<p class="ic-klein"><?= $L['UI.K098'] ?></p>
 </div>
 </div>
 
 <!-- ===================== Archiv ===================== -->
 <div class="ic-seite" id="tab-archiv">
-<h2>Gespeicherte Aufnahmen</h2>
-<p>Gespeichert sind derzeit <b><?= count($ic_bilder) ?></b> Bilder und
-<b><?= count($ic_videos) ?></b> Videos.
+<h2><?= $L['UI.K099'] ?></h2>
+<p><?= $L['UI.K100'] ?><b><?= count($ic_bilder) ?></b><?= $L['UI.K101'] ?><b><?= count($ic_videos) ?></b> Videos.
 Aufbewahrt wird <?= ((int) $ic_cfg['cleanup_days'] === 0) ? 'unbegrenzt' : ((int) $ic_cfg['cleanup_days']) . ' Tage lang' ?>.</p>
 
 <div class="ic-knopfreihe">
-<a class="ic-btn ic-b-lesen" href="live.php">Livebild ansehen</a>
-<a class="ic-btn ic-b-lesen" href="archive.php">Bilder-Archiv &ouml;ffnen</a>
-<a class="ic-btn ic-b-lesen" href="videoarchive.php">Video-Archiv &ouml;ffnen</a>
+<a class="ic-btn ic-b-lesen" href="live.php"><?= $L['UI.K102'] ?></a>
+<a class="ic-btn ic-b-lesen" href="archive.php"><?= $L['UI.K103'] ?></a>
+<a class="ic-btn ic-b-lesen" href="videoarchive.php"><?= $L['UI.K104'] ?></a>
 </div>
 
 <?php if ($ic_bilder) { ?>
-<h2>Die neuesten Bilder</h2>
+<h2><?= $L['UI.K105'] ?></h2>
 <div class="ic-gal">
 <?php foreach (array_slice($ic_bilder, 0, 8) as $ic_f) { $ic_n = basename($ic_f); ?>
 <figure>
@@ -455,60 +415,50 @@ Aufbewahrt wird <?= ((int) $ic_cfg['cleanup_days'] === 0) ? 'unbegrenzt' : ((int
 <?php } ?>
 </div>
 <?php } else { ?>
-<div class="ic-hinweis">Noch keine Aufnahmen vorhanden. Im Reiter <b>Test</b> l&auml;sst sich sofort eine ausl&ouml;sen.</div>
+<div class="ic-hinweis"><?= $L['UI.K106'] ?><b><?= $L['UI.K107'] ?></b><?= $L['UI.K108'] ?></div>
 <?php } ?>
 </div>
 
 <!-- ===================== Test ===================== -->
 <div class="ic-seite" id="tab-test">
-<h2>Test</h2>
+<h2><?= $L['UI.K109'] ?></h2>
 <div class="ic-legende">
-<span><i class="ic-punkt ic-b-lesen"></i> Ansehen &mdash; fragt nur ab, ver&auml;ndert nichts</span>
-<span><i class="ic-punkt ic-b-technik"></i> Technische Auskunft &mdash; f&uuml;r die Fehlersuche</span>
-<span><i class="ic-punkt ic-b-aktion"></i> L&ouml;st etwas aus &mdash; nimmt auf oder verschickt</span>
+<span><i class="ic-punkt ic-b-lesen"></i><?= $L['UI.K110'] ?></span>
+<span><i class="ic-punkt ic-b-technik"></i><?= $L['UI.K111'] ?></span>
+<span><i class="ic-punkt ic-b-aktion"></i><?= $L['UI.K112'] ?></span>
 </div>
 
-<h3 class="ic-h3">Ansehen</h3>
+<h3 class="ic-h3"><?= $L['UI.K113'] ?></h3>
 <div class="ic-knopfreihe">
-<a class="ic-btn ic-b-lesen" href="/plugins/<?= ic_e($ic_plugin) ?>/lastpicture.jpg" target="_blank">Letztes Bild &ouml;ffnen</a>
-<a class="ic-btn ic-b-lesen" href="/plugins/<?= ic_e($ic_plugin) ?>/mjpgproxy.php<?= ic_tok(true) ?>" target="_blank">Livebild &ouml;ffnen</a>
+<a class="ic-btn ic-b-lesen" href="/plugins/<?= ic_e($ic_plugin) ?>/lastpicture.jpg" target="_blank"><?= $L['UI.K114'] ?></a>
+<a class="ic-btn ic-b-lesen" href="/plugins/<?= ic_e($ic_plugin) ?>/mjpgproxy.php<?= ic_tok(true) ?>" target="_blank"><?= $L['UI.K115'] ?></a>
 </div>
 
-<h3 class="ic-h3">Technische Auskunft</h3>
+<h3 class="ic-h3"><?= $L['UI.K116'] ?></h3>
 <div class="ic-knopfreihe">
-<a class="ic-btn ic-b-technik" href="/plugins/<?= ic_e($ic_plugin) ?>/getpicture.php?hook=false<?= ic_tok() ?>" target="_blank">Bildabruf pr&uuml;fen (JSON)</a>
+<a class="ic-btn ic-b-technik" href="/plugins/<?= ic_e($ic_plugin) ?>/getpicture.php?hook=false<?= ic_tok() ?>" target="_blank"><?= $L['UI.K117'] ?></a>
 </div>
-<p class="ic-klein">Holt ein Bild und zeigt die Antwort im Klartext &mdash; einschliesslich
-Fehlermeldung, falls die Intercom nicht antwortet. Mit <span class="ic-mono">?hook=false</span>
-wird das Bild <b>nicht</b> ins Archiv gelegt.</p>
+<p class="ic-klein"><?= $L['UI.K118'] ?><span class="ic-mono">?hook=false</span><?= $L['UI.K119'] ?><b><?= $L['UI.K120'] ?></b><?= $L['UI.K121'] ?></p>
 
-<h3 class="ic-h3">L&ouml;st etwas aus</h3>
+<h3 class="ic-h3"><?= $L['UI.K122'] ?></h3>
 <div class="ic-knopfreihe">
-<a class="ic-btn ic-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/getpicture.php?trigger=test<?= ic_tok() ?>" target="_blank">Jetzt ein Bild aufnehmen</a>
-<a class="ic-btn ic-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/getvideo.php?s=10<?= ic_tok() ?>" target="_blank">10 Sekunden Video aufnehmen</a>
-<a class="ic-btn ic-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/timelapse.php" target="_blank">Zeitrafferbild aufnehmen</a>
-<a class="ic-btn ic-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/cleanup.php" target="_blank">Alte Aufnahmen jetzt aufr&auml;umen</a>
+<a class="ic-btn ic-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/getpicture.php?trigger=test<?= ic_tok() ?>" target="_blank"><?= $L['UI.K123'] ?></a>
+<a class="ic-btn ic-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/getvideo.php?s=10<?= ic_tok() ?>" target="_blank"><?= $L['UI.K124'] ?></a>
+<a class="ic-btn ic-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/timelapse.php" target="_blank"><?= $L['UI.K125'] ?></a>
+<a class="ic-btn ic-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/cleanup.php" target="_blank"><?= $L['UI.K126'] ?></a>
 </div>
 </div>
 
 <!-- ===================== Protokoll ===================== -->
 <div class="ic-seite" id="tab-log">
-<h2>Protokoll</h2>
-<div class="ic-hinweis"><b>Das Protokoll liegt auf einer Ramdisk.</b> LoxBerry legt
-<span class="ic-mono">log/</span> im Arbeitsspeicher an, damit die Speicherkarte geschont wird.
-Diese Datei &uuml;berlebt deshalb keinen Neustart &mdash; sie ist eine Spur f&uuml;r die
-Fehlersuche im laufenden Betrieb, kein Archiv. Wer eine Meldung aufheben will, kopiert sie
-vorher heraus.</div>
-<p class="ic-klein">Protokolliert werden: geholte Bilder samt Ausl&ouml;ser, gespeicherte
-Einstellungen, ein neu erzeugtes Zugriffstoken (die Tatsache, nicht der Wert) sowie St&ouml;rungen
-bei der T&uuml;rstation, beim Archiv und bei MQTT. Wiederkehrende St&ouml;rungen werden gebremst:
-h&ouml;chstens eine gleiche Meldung je Stunde.</p>
+<h2><?= $L['UI.K127'] ?></h2>
+<div class="ic-hinweis"><b><?= $L['UI.K128'] ?></b><?= $L['UI.K129'] ?><span class="ic-mono">log/</span><?= $L['UI.K130'] ?></div>
+<p class="ic-klein"><?= $L['UI.K131'] ?></p>
 <?php if ($ic_log !== '') { ?>
-<p class="ic-klein">Die letzten 200 Zeilen aus <span class="ic-mono"><?= ic_e($ic_logdatei) ?></span>.</p>
+<p class="ic-klein"><?= $L['UI.K132'] ?><span class="ic-mono"><?= ic_e($ic_logdatei) ?></span>.</p>
 <pre><?= ic_e($ic_log) ?></pre>
 <?php } else { ?>
-<div class="ic-hinweis">Es liegt noch kein Protokoll vor. Sobald das Plugin zum ersten Mal ein Bild
-geholt hat oder Einstellungen gespeichert wurden, erscheinen hier die Eintr&auml;ge.</div>
+<div class="ic-hinweis"><?= $L['UI.K133'] ?></div>
 <?php } ?>
 </div>
 
