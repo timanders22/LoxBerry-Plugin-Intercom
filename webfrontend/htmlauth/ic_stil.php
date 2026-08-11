@@ -16,7 +16,7 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
 ?>
 <style>
 .icw, .icw * { text-shadow: none !important; }
-.icw { max-width: 1100px; }
+.icw { max-width: 1100px; margin-top: -55px; }
 .icw h1 { color: #6dac20; font-size: 1.5em; margin: 0 0 4px; }
 .icw h2 { color: #6dac20; margin: 18px 0 6px; font-size: 1.15em; }
 .icw p, .icw li { line-height: 1.5; }
@@ -66,7 +66,11 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
    ist am laufenden LoxBerry nachgemessen (Kette a.vuenavbarelement ->
    div.vuenavbarcontainer -> div#vuenavbar) und die Wirkung dort geprueft:
    die Leiste ruecke um genau diesen Betrag nach unten. */
-#vuenavbar { margin-top: 14px; }
+/* 2.1.6: Nutzerwunsch 11.08.2026 - sechs Leerzeilen Luft VOR der Menueleiste
+ * (139px = 14px + 6 x 20,8px Zeilenhoehe, am Geraet gemessen), dafuer die
+ * Luecke zwischen Menueleiste und der Ueberschrift Intercom von 63px auf
+ * rund 8px zusammengezogen (margin-top -55px an .icw). */
+#vuenavbar { margin-top: 139px; }
 </style>
 <?php
 }
