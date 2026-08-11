@@ -23,6 +23,7 @@ $navbar[2]['active'] = True;
   
 // Now output the header, it will include your navigation bar
 LBWeb::lbheader($template_title, $helplink, $helptemplate);
+require_once __DIR__ . "/ic_stil.php";
  
 
 
@@ -34,7 +35,8 @@ document.body.setAttribute('data-ic-admin', '/admin/plugins/<?= ic_plugin_ordner
 document.body.setAttribute('data-ic-picture', '/plugins/<?= ic_plugin_ordner() ?>/getpicture.php?hook=false&token=<?= rawurlencode((string)(ic_config()['aktionstoken'] ?? '')) ?>');
 </script>
 <script type="text/javascript" src="script.js"></script>
-    <h1><?=$L['COMMON.HELLO']?></h1>
+<div class="icw">
+    <h1><?= $L['UI.K001'] ?></h1>
     <p><?=$L['COMMON.LIVETXT']?></p>
 
 <p></p>
@@ -46,5 +48,6 @@ document.body.setAttribute('data-ic-picture', '/plugins/<?= ic_plugin_ordner() ?
 
 <?php
 // Finally print the footer 
+echo '</div><!-- /icw -->';
 LBWeb::lbfooter();
 ?>

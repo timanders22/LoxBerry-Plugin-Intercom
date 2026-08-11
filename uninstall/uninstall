@@ -19,6 +19,17 @@ PCONFIG=$LBPCONFIG/$PDIR
 PSBIN=$LBPSBIN/$PDIR
 PBIN=$LBPBIN/$PDIR
 
-# your code goes here
+# Die Deinstallation von LoxBerry entfernt nur das VERZEICHNIS
+# config/plugins/<ordner>/. Die Zweitschrift liegt DANEBEN und bliebe
+# liegen - mit dem Zugriffstoken, der IP der Tuerstation und den
+# Zugangsdaten der Webhooks darin. Genau deshalb wird sie hier ausdruecklich
+# geloescht.
+rm -f "$PCONFIG.backup.json"
+
+# Ebenso die Sicherung, die preupgrade.sh im Datenordner anlegt. Bricht ein
+# Update ab, bleibt sie sonst stehen.
+rm -rf "$PDATA/upgrade_sicherung"
+
+echo "<OK> Zweitschrift und Upgrade-Sicherung entfernt."
 
 exit 0;

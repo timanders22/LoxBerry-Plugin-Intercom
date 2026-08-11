@@ -146,6 +146,25 @@ if (isset($_POST['token_neu']) && !isset($_POST['intercomip'])) {
                                   | JSON_UNESCAPED_SLASHES);
     if ($ic_js !== false && ic_datei_ersetzen($ic_datei, $ic_js, 0600)) {
         $ic_cfg = $ic_neu;
+        /* Zweitschrift NEBEN den Ordner - nicht hinein.
+         *
+         * Beim Update kopiert der Installer den Inhalt von config/ aus dem
+         * Archiv ueber config/plugins/intercom/, und dort liegt ein leeres
+         * data.json. Bisher haing alles daran, dass preupgrade.sh gesichert
+         * UND postupgrade.sh zurueckgestellt hat; reisst diese Kette an
+         * einer Stelle, sind saemtliche Einstellungen weg, ohne dass
+         * irgendwo ein Fehler steht. Diese Zweitschrift liegt AUSSERHALB
+         * des ueberschriebenen Ordners und wird von postinstall.sh
+         * zurueckgespielt, wenn die eigentliche Datei leer ist - sie
+         * ueberlebt also auch ein Update, bei dem die Kette reisst.
+         *
+         * 0600, weil hier Zugangsdaten und das Zugriffstoken stehen. */
+        $ic_zweit = dirname(ic_paths()['config']) . '/' . basename(ic_paths()['config']) . '.backup.json';
+        if (ic_datei_ersetzen($ic_zweit, $ic_js, 0600)) {
+            ic_log('Zweitschrift der Einstellungen geschrieben.');
+        } else {
+            ic_log('WARNUNG: Die Zweitschrift liess sich nicht schreiben: ' . $ic_zweit);
+        }
         ic_log('Einstellungen gespeichert.');
         if ($ic_meldung === '') {
             $ic_meldung = 'Die Einstellungen wurden gespeichert.';
@@ -219,53 +238,7 @@ if ($ic_logdatei !== '') {
     if (is_array($ic_zeilen)) { $ic_log = implode('', array_slice($ic_zeilen, -200)); }
 }
 ?>
-<style>
-.icw, .icw * { text-shadow: none !important; }
-.icw { max-width: 1100px; }
-.icw h1 { color: #6dac20; font-size: 1.5em; margin: 0 0 4px; }
-.icw h2 { color: #6dac20; margin: 18px 0 6px; font-size: 1.15em; }
-.icw p, .icw li { line-height: 1.5; }
-.icw .ic-reiter { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 3px solid #6dac20; margin: 14px 0 0; }
-.icw .ic-reiter div { padding: 9px 16px; background: #eee; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; color: #444; }
-.icw .ic-reiter div.aktiv { background: #6dac20; color: #fff; }
-.icw .ic-seite { display: none; padding: 14px 2px; }
-.icw .ic-seite.aktiv { display: block; }
-.icw label { display: block; font-weight: 600; margin: 12px 0 3px; }
-.icw input[type=text], .icw input[type=number], .icw input[type=password] {
-    width: 100%; max-width: 520px; padding: 7px 9px; border: 1px solid #bbb; border-radius: 6px; font-size: 1em; }
-.icw .ic-klein { font-size: 0.88em; color: #666; margin: 3px 0 0; max-width: 720px; }
-.icw .ic-mono { font-family: monospace; background: #f4f4f4; padding: 1px 5px; border-radius: 4px; }
-.icw .ic-btn { background: #6dac20; color: #fff !important; border: 0; border-radius: 8px; padding: 9px 18px;
-    cursor: pointer; text-decoration: none; font-size: 0.95em; }
-.icw .ic-hinweis { border-left: 5px solid #6dac20; background: #f4faee; padding: 10px 14px; margin: 12px 0; border-radius: 0 8px 8px 0; }
-.icw .ic-warn { border-left-color: #e0620d; background: #fff5ee; }
-.icw .ic-schritt { border: 1px solid #ddd; border-radius: 10px; padding: 12px 14px; margin: 10px 0; }
-.icw table { border-collapse: collapse; width: 100%; max-width: 900px; margin: 8px 0; }
-.icw th, .icw td { border: 1px solid #ddd; padding: 6px 9px; text-align: left; font-size: 0.93em; }
-.icw th { background: #f2f2f2; }
-.icw pre { background: #f6f6f6; border: 1px solid #ddd; border-radius: 8px; padding: 10px;
-    max-height: 460px; overflow: auto; font-size: 0.85em; }
-
-/* Hausstandard: Kachel-Raster im Reiter Test */
-.icw .ic-h3 { color: #4f7d17; font-size: 1.0em; font-weight: 700; margin: 16px 0 2px; }
-.icw .ic-knopfreihe { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 4px; align-items: stretch; }
-.icw .ic-knopfreihe form { margin: 0; display: flex; }
-.icw .ic-knopfreihe .ic-btn { flex: 0 0 auto; min-width: 250px; text-align: center;
-    display: inline-flex; align-items: center; justify-content: center; line-height: 1.25; }
-.icw .ic-legende { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0 2px; font-size: 0.86em; color: #555; }
-.icw .ic-legende span { display: inline-flex; align-items: center; gap: 6px; }
-.icw .ic-punkt { width: 13px; height: 13px; border-radius: 3px; display: inline-block; }
-.icw .ic-btn.ic-b-lesen   { background: #6dac20; }
-.icw .ic-btn.ic-b-technik { background: #546e7a; }
-.icw .ic-btn.ic-b-aktion  { background: #e0620d; }
-.icw .ic-punkt.ic-b-lesen   { background: #6dac20; }
-.icw .ic-punkt.ic-b-technik { background: #546e7a; }
-.icw .ic-punkt.ic-b-aktion  { background: #e0620d; }
-.icw .ic-gal { display: flex; flex-wrap: wrap; gap: 10px; }
-.icw .ic-gal figure { margin: 0; width: 220px; }
-.icw .ic-gal img { width: 100%; border-radius: 8px; border: 1px solid #ddd; }
-.icw .ic-gal figcaption { font-size: 0.8em; color: #666; word-break: break-all; }
-</style>
+<?php require_once __DIR__ . "/ic_stil.php"; ?>
 
 <div class="icw">
 <h1><?= $L['UI.K001'] ?></h1>
@@ -513,5 +486,6 @@ Aufbewahrt wird <?= ((int) $ic_cfg['cleanup_days'] === 0) ? 'unbegrenzt' : ((int
 </script>
 
 <?php
+echo '</div><!-- /icw -->';
 LBWeb::lbfooter();
 ?>

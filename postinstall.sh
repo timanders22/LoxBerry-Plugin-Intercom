@@ -49,6 +49,38 @@ if [ -f "$PCONFIG/data.json" ]; then
     chmod 0600 "$PCONFIG/data.json" 2>/dev/null
 fi
 
+# ---------- Zweites Netz fuer die Einstellungen ----------
+#
+# Beim Update kopiert der Installer config/ aus dem Archiv ueber
+# config/plugins/<ordner>/ - und dort liegt ein LEERES data.json. Bisher
+# haing alles daran, dass preupgrade.sh gesichert und postupgrade.sh
+# zurueckgestellt hat. Reisst diese Kette an einer Stelle - ein Neustart
+# mittendrin, ein abgebrochener Lauf, ein anderer Ordnername -, sind
+# saemtliche Einstellungen weg, und es steht nirgends ein Fehler.
+#
+# Die Oberflaeche schreibt deshalb bei jedem Speichern eine
+# Zweitschrift NEBEN den Ordner: config/plugins/<ordner>.backup.json. Die
+# wird vom Installer nicht angefasst. Ist die eigentliche Datei leer oder
+# fehlt sie, wird von hier aus zurueckgespielt.
+#
+# Es wird NUR zurueckgespielt, wenn nichts Brauchbares dasteht. Eine
+# Sicherung, die eine gueltige Konfiguration ueberschreibt, waere schlimmer
+# als gar keine.
+ZWEIT="$BASE/config/plugins/$PDIR.backup.json"
+CF="$PCONFIG/data.json"
+if [ -f "$ZWEIT" ]; then
+    INHALT=$(tr -d ' \t\n\r' < "$CF" 2>/dev/null)
+    if [ ! -s "$CF" ] || [ "$INHALT" = "{}" ] || [ -z "$INHALT" ]; then
+        if cp -p "$ZWEIT" "$CF" 2>/dev/null; then
+            chmod 0600 "$CF" 2>/dev/null
+            echo "<OK> Einstellungen aus der Zweitschrift wiederhergestellt."
+        else
+            echo "<WARNING> Die Zweitschrift liess sich nicht zurueckspielen."
+            echo "<WARNING> Sie liegt unter $ZWEIT und kann von Hand kopiert werden."
+        fi
+    fi
+fi
+
 if command -v ffmpeg >/dev/null 2>&1; then
     echo "<OK> ffmpeg vorhanden - Videoaufzeichnung moeglich."
 else

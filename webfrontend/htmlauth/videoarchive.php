@@ -17,6 +17,7 @@ $navbar[4]['active'] = True;
   
 // Now output the header, it will include your navigation bar
 LBWeb::lbheader($template_title, $helplink, $helptemplate);
+require_once __DIR__ . "/ic_stil.php";
 
 
 
@@ -94,7 +95,8 @@ document.body.setAttribute('data-ic-picture', '/plugins/<?= ic_plugin_ordner() ?
 </script>
 <script type="text/javascript" src="script.js"></script>
 <div style="display:none;" id="DELALLCONFIRM"><?=$L['COMMON.DELALLCONFIRM']?></div>
-<h1><?=$L['COMMON.HELLO']?></h1>
+<div class="icw">
+<h1><?= $L['UI.K001'] ?></h1>
 <h2><?=$L['COMMON.BACKUPVIDEO']?></h2>
 <p><?=$L['COMMON.BACKUPVIDEOTXT']?></p>
 <p><a href="http://<?= $loxberryip; ?>/plugins/<?= ic_plugin_ordner() ?>/getvideo.php?s=10&amp;token=<?= rawurlencode((string)(ic_config()['aktionstoken'] ?? '')) ?>" target="_blank">http://<?= $loxberryip; ?>/plugins/<?= ic_plugin_ordner() ?>/getvideo.php?s=10&amp;token=<?= rawurlencode((string)(ic_config()['aktionstoken'] ?? '')) ?></a></p>
@@ -214,5 +216,6 @@ if($max>$total){
 
 
 // Finally print the footer 
+echo '</div><!-- /icw -->';
 LBWeb::lbfooter();
 ?>
