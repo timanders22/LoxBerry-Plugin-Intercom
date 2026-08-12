@@ -70,7 +70,9 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
  * (139px = 14px + 6 x 20,8px Zeilenhoehe, am Geraet gemessen), dafuer die
  * Luecke zwischen Menueleiste und der Ueberschrift Intercom von 63px auf
  * rund 8px zusammengezogen (margin-top -55px an .icw). */
-#vuenavbar { margin-top: 139px; }
+/* 139 px waren zu tief. Ein Drittel des Abstands nach oben:
+   139 - 139/3 = 93 px. */
+#vuenavbar { margin-top: 93px; }
 </style>
 <?php
 }

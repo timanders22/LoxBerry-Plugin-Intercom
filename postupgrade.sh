@@ -30,8 +30,34 @@ if [ -d "$SICHER/config" ] && [ -n "$(ls -A "$SICHER/config" 2>/dev/null)" ]; th
     chmod 0600 "$BASE/config/plugins/$PDIR/data.json" 2>/dev/null
     echo "<OK> Konfiguration zurueckgestellt."
 else
-    echo "<WARNING> Keine gesicherte Konfiguration gefunden."
-    echo "<WARNING> IP der Tuerstation und Webhooks muessen neu eingetragen werden."
+    # KEIN blinder Alarm mehr.
+    #
+    # Der Installer loescht beim Upgrade nicht nur config/plugins/<ordner>,
+    # sondern AUCH data/plugins/<ordner> - und damit die Sicherung, die
+    # preupgrade.sh eine Minute zuvor genau dorthin geschrieben hat
+    # ("Removing old installation" -> "Deleting plugin folders", belegt im
+    # Installationsprotokoll vom 12.08.2026, 01:08:23). Diese Kette KANN
+    # hier also gar nichts finden; sie ist konstruktionsbedingt tot.
+    #
+    # Gerettet wird die Konfiguration statt dessen von postinstall.sh aus
+    # der Zweitschrift NEBEN dem Ordner, und postinstall laeuft VOR
+    # postupgrade. Bevor hier gewarnt wird, wird deshalb nachgesehen, wie es
+    # wirklich steht - eine Warnung, die bei heiler Konfiguration erscheint,
+    # erschreckt den Anwender ohne Grund und verdeckt beim naechsten Mal die
+    # echte.
+    CF="$BASE/config/plugins/$PDIR/data.json"
+    # Erst pruefen, DANN lesen: sonst meldet die Shell selbst
+    # "cannot open", und im Protokoll steht ein Fehler, wo keiner ist.
+    INHALT=""
+    [ -f "$CF" ] && INHALT=$(tr -d ' \t\n\r' < "$CF" 2>/dev/null)
+    if [ -s "$CF" ] && [ "$INHALT" != "{}" ] && [ -n "$INHALT" ]; then
+        echo "<OK> Die Einstellungen sind vorhanden (aus der Zweitschrift)."
+    else
+        echo "<WARNING> Keine gesicherte Konfiguration gefunden."
+        echo "<WARNING> IP der Tuerstation und Webhooks muessen neu eingetragen werden."
+        echo "<WARNING> Die Zweitschrift liegt unter:"
+        echo "<WARNING>   $BASE/config/plugins/$PDIR.backup.data.json"
+    fi
 fi
 
 chown -R loxberry:loxberry "$BASE/config/plugins/$PDIR" 2>/dev/null
