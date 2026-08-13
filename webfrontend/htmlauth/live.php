@@ -36,7 +36,7 @@ document.body.setAttribute('data-ic-picture', '/plugins/<?= ic_plugin_ordner() ?
 </script>
 <script type="text/javascript" src="script.js"></script>
 <div class="icw">
-    <h1><?= $L['UI.K001'] ?></h1>
+    <h1><?= $L['UI.INTERCOM'] ?></h1>
     <p><?=$L['COMMON.LIVETXT']?></p>
 
 <p></p>

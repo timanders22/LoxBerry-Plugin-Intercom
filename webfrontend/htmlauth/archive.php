@@ -93,7 +93,7 @@ document.body.setAttribute('data-ic-picture', '/plugins/<?= ic_plugin_ordner() ?
 <script type="text/javascript" src="script.js"></script>
 <div style="display:none;" id="DELALLCONFIRM"><?=$L['COMMON.DELALLCONFIRM']?></div>
 <div class="icw">
-<h1><?= $L['UI.K001'] ?></h1>
+<h1><?= $L['UI.INTERCOM'] ?></h1>
 <h2><?=$L['COMMON.BACKUP']?></h2>
 <p><?=$L['COMMON.BACKUPTXT']?></p>
 
