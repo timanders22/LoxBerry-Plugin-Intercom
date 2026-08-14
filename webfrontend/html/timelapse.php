@@ -1,4 +1,18 @@
 <?php
+/* ---- Sperre gegen Parallellaeufe (Muster fer_sperre, FerienFeiertage) ----
+ *
+ * Der Bildabruf von der Kamera wartet auf ein Netz. Dauert der Lauf laenger als der Cron-Takt,
+ * startet der naechste, waehrend dieser noch laeuft: doppelte Abrufe,
+ * doppelte Meldungen, im schlimmsten Fall zwei Schreibvorgaenge auf dieselbe
+ * Datei. Die Sperre ist nicht blockierend - wer nicht drankommt, geht
+ * kommentarlos wieder (der naechste Takt kommt ohnehin gleich).
+ */
+$ic_sperrdatei = sys_get_temp_dir() . '/ic_cron.lock';
+$ic_sperre = @fopen($ic_sperrdatei, 'c');
+if ($ic_sperre === false || !flock($ic_sperre, LOCK_EX | LOCK_NB)) {
+    exit(0);
+}
+
 /**
  * Intercom - Timelapse: jeden Tag ein Foto zu einer festen Uhrzeit.
  *
