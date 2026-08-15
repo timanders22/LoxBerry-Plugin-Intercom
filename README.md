@@ -2,13 +2,49 @@
 
 # LoxBerry-Plugin Intercom
 
-Dieses Loxberry Plugin greift Fotos der Loxone Intercom Version 2 ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Unterstützte Türstationen
+
+**Loxone Intercom (Gen. 1)**, **Loxone Intercom Gen. 2** und **Loxone Intercom XL**.
+
+Das Plugin fragt bei allen dreien denselben Weg ab — den MJPEG-Strom unter
+`/mjpg/video.mjpg`, mit den Zugangsdaten aus der Miniserver-Konfiguration.
+Es gibt deshalb keine Modellauswahl und nichts modellabhängig einzustellen:
+Was zählt, ist allein, ob die Türstation diesen Strom anbietet. Der Reiter
+*Test* holt ein Bild ohne Umweg über Loxone und beantwortet das in einem Schritt.
 
 Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.1.12
+
+**Die unterstützten Türstationen stehen jetzt richtig da.** README und Hilfe
+nannten nur die *Intercom Version 2*. Tatsächlich arbeitet das Plugin
+gleichermaßen mit **Intercom (Gen. 1)**, **Intercom Gen. 2** und
+**Intercom XL** — es fragt bei allen denselben MJPEG-Strom unter
+`/mjpg/video.mjpg` ab und kennt keine Modellunterscheidung. Wer eine Gen. 1
+oder eine XL besitzt, hätte nach der alten Beschreibung angenommen, das Plugin
+sei nichts für ihn.
+
+**Der Plugin-Titel wird wieder aus der `plugin.cfg` gelesen.** `ic_titel()`
+holte ihn mit `parse_ini_file()` — die Datei kommentiert aber mit `#`, und PHPs
+INI-Zerleger kennt seit PHP 7 nur noch `;`. Er las die Kommentare als
+Zuweisungen und brach an der ersten Zeile mit einem Sonderzeichen ab.
+`parse_ini_file()` gab dann `false` zurück (gemessen unter 7.4.33 und 8.4.24,
+beide gleich), das vorangestellte `@` verschluckte die Warnung, und die
+Funktion lieferte still ihren Vorgabewert.
+
+Aufgefallen war es nie, weil der Vorgabewert zufällig derselbe Titel ist. Wer
+die `plugin.cfg` änderte, hätte sich aber gewundert, warum die Kopfzeile
+stehen bleibt — und genau dagegen war die Funktion gebaut.
+
+Jetzt werden die `#`-Kommentarzeilen vor dem Zerlegen entfernt. Nur ganze
+Zeilen, deren erstes sichtbares Zeichen `#` ist — ein `#` **innerhalb** eines
+Wertes bleibt erhalten.
 
 ## Installation
 

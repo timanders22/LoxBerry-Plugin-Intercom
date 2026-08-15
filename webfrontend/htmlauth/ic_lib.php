@@ -72,9 +72,34 @@ if (!function_exists('ic_titel')) {
             $cfg = dirname(__DIR__) . '/plugin.cfg';
         }
         if (is_file($cfg)) {
-            $d = @parse_ini_file($cfg, true, INI_SCANNER_RAW);
-            if (isset($d['PLUGIN']['TITLE']) && trim($d['PLUGIN']['TITLE']) !== '') {
-                return trim($d['PLUGIN']['TITLE'], " \t\"'");
+            /* Die #-Kommentarzeilen muessen raus, sonst liest hier niemand
+             * etwas.
+             *
+             * Die plugin.cfg kommentiert mit '#'. PHPs INI-Zerleger kennt als
+             * Kommentarzeichen aber nur ';' - '#' wurde mit PHP 7 entfernt. Er
+             * versucht die Kommentare deshalb als Zuweisungen zu lesen und
+             * bricht an der ersten Zeile mit einem Sonderzeichen ab:
+             *
+             *     # ... BUT NEVER CHANGE this information ...
+             *                                          ^ syntax error
+             *
+             * parse_ini_file() gibt dann false zurueck - gemessen am 15.08.2026
+             * unter PHP 7.4.33 und 8.4.24, beide gleich. Das '@' verschluckte
+             * die Warnung, $d wurde false, und die Funktion lieferte still
+             * ihren Vorgabewert. Aufgefallen ist es nie, weil der Vorgabewert
+             * zufaellig derselbe Titel ist - wer die plugin.cfg aendert, haette
+             * sich aber gewundert, warum die Kopfzeile stehen bleibt.
+             *
+             * Entfernt werden nur Zeilen, deren erstes sichtbares Zeichen '#'
+             * ist. Ein '#' INNERHALB eines Wertes bleibt damit erhalten.
+             */
+            $roh = @file_get_contents($cfg);
+            if ($roh !== false) {
+                $d = @parse_ini_string(preg_replace('/^[ \t]*#.*$/m', '', $roh),
+                                       true, INI_SCANNER_RAW);
+                if (isset($d['PLUGIN']['TITLE']) && trim($d['PLUGIN']['TITLE']) !== '') {
+                    return trim($d['PLUGIN']['TITLE'], " \t\"'");
+                }
             }
         }
         return $vorgabe;
