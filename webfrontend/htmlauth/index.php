@@ -549,12 +549,13 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 
 <h2><?= ic_txt('UI.H_BILDWEG') ?></h2>
 <label for="bildweg"><?= ic_txt('UI.L_BILDWEG') ?></label>
-<select id="bildweg" name="bildweg" data-role="none">
+<select id="bildweg" name="bildweg" class="sm-auswahl" data-role="none">
 <?php foreach (array('strom' => 'UI.WEG_STROM', 'standbild' => 'UI.WEG_STANDBILD',
                      'auto' => 'UI.WEG_AUTO') as $ic_w => $ic_s) { ?>
 <option value="<?= $ic_w ?>"<?= $ic_cfg['bildweg'] === $ic_w ? ' selected' : '' ?>><?= ic_txt($ic_s) ?></option>
 <?php } ?>
 </select>
+<p class="sm-auswahlhinweis"><?= ic_txt('UI.AUSWAHL_HINWEIS') ?></p>
 <label><?= ic_txt('UI.L_STANDBILDPFAD') ?></label>
 <input type="text" data-role="none" name="standbild_pfad" value="<?= ic_e($ic_cfg['standbild_pfad']) ?>" placeholder="/jpg/image.jpg">
 <p class="sm-klein"><?= ic_txtf('UI.BILDWEG_TEXT', ic_mono('/mjpg/video.mjpg'), ic_mono('/jpg/image.jpg')) ?></p>

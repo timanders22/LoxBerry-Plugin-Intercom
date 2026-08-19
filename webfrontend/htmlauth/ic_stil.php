@@ -46,10 +46,31 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
 .smw input[type=text], .smw input[type=number], .smw input[type=password], .smw select {
     width: 100%; max-width: 520px; padding: 7px 9px; border: 1px solid #bbb; border-radius: 6px; font-size: 1em;
     background: #fff; }
-/* Ein Auswahlfeld muss als solches erkennbar sein: ohne eigenen Rahmen und
-   ohne Pfeil sieht es aus wie ein Textfeld, und niemand ahnt, dass dahinter
-   Vorlagen stehen. */
-.smw select { border: 2px solid #6dac20; }
+/* EIN AUSWAHLFELD MUSS ALS AUSWAHLFELD ERKENNBAR SEIN.
+   Befund vom Anwender am 19.08.2026: das Feld "Weg" sah aus wie ein Textfeld -
+   kein Pfeil am Ende. Wer nicht hineinklickt, erfaehrt nie, dass drei Wege
+   dahinterstehen. Der Pfeil kommt sonst vom Thema (jQuery Mobile setzt fuer
+   Auswahlfelder appearance: none), und darauf kann sich eine Plugin-Oberflaeche
+   nicht verlassen. Deshalb: appearance selbst abschalten und den Pfeil selbst
+   zeichnen. Dann sieht das Feld ueberall gleich aus - und es kann nie zwei
+   Pfeile geben. */
+.smw select, .smw select.sm-auswahl {
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    appearance: none !important;
+    border: 2px solid #6dac20 !important;
+    background-color: #fff !important;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath d='M1 1l6 6 6-6' fill='none' stroke='%236dac20' stroke-width='2'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 12px center !important;
+    background-size: 14px 9px !important;
+    padding-right: 40px !important;
+    cursor: pointer;
+}
+.smw select:hover, .smw select:focus { border-color: #4f7d17 !important; }
+/* Der Hinweis unter dem Feld sagt dasselbe noch einmal in Worten - fuer den
+   Fall, dass ein Thema auch Hintergrundbilder unterdrueckt. */
+.smw .sm-auswahlhinweis { font-size: 0.82em; color: #4f7d17; margin: 2px 0 0; }
 .smw .sm-klein { font-size: 0.88em; color: #666; margin: 3px 0 0; max-width: 780px; }
 .smw .sm-mono { font-family: monospace; background: #f4f4f4; padding: 1px 5px; border-radius: 4px;
     word-break: break-all; }
