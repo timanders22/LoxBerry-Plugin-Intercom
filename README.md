@@ -20,6 +20,137 @@ https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-inte
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
 
+## Neu in 2.2.0
+
+Diese Fassung behebt siebzehn Befunde und baut die Oberfläche auf den
+Hausstandard um. Die drei wichtigsten Punkte zuerst.
+
+### Ein halbes Bild wurde als gültiges Bild veröffentlicht
+
+`getpicture.php` schnitt den Rahmen bisher zwischen dem ersten `\xff` und der
+Grenzmarke `\n--` heraus. Fehlt die Grenzmarke — Zeitgrenze, abgebrochene
+Verbindung, andere Kopfzeilen —, liefert `strpos()` `false`, die berechnete
+Länge wird **negativ**, und `substr()` schneidet dann nicht ab, sondern gibt
+fast den ganzen Puffer zurück. Gemessen unter PHP 7.4.33 und 8.4.24: aus 2000
+Byte Puffer wurde ein „Bild" von 1989 Byte — die Prüfung `strlen($frame) < 100`
+greift dabei **nicht**. Das Bruchstück landete als `lastpicture.jpg` im Netz,
+im Archiv und als gültige Meldung in MQTT und Webhook.
+
+Gesucht wird jetzt nach den beiden Marken, die ein JPEG selbst trägt: `FFD8`
+am Anfang, `FFD9` am Ende. Fehlt eine davon, gibt es kein Bild — und das wird
+gemeldet, nicht zurechtgebogen.
+
+### „Alle löschen" im Videoarchiv hat keine Videos gelöscht
+
+Die Schleife suchte `*.jpg`, berechnete den zugehörigen `.avi`-Namen — und
+benutzte ihn nie. Nachgebaut mit 25 Aufnahmen: hinterher 0 Vorschaubilder und
+25 unverändert daliegende Videos, über die Oberfläche nicht mehr erreichbar.
+Wer den Knopf drückte, weil die Karte voll war, hat nichts gewonnen.
+
+### Zwei Knöpfe im Reiter Test konnten nicht funktionieren
+
+Sie zeigten auf `timelapse.php` und `cleanup.php`; beide weisen HTTP-Aufrufe
+ab. Über HTTP gemessen: HTTP 403, jedes Mal. Die Arbeit steht jetzt in der
+Bibliothek, und Cron wie Knopf rufen dieselbe Funktion auf.
+
+### Was sonst behoben ist
+
+- **Die Sprachdateien waren mit dem Vorgabe-Zerleger nicht lesbar.**
+  `parse_ini_file(…, true)` gab für beide Dateien `false` zurück (vier
+  unquotierte Werte mit Klammern und Anführungszeichen). Jetzt steht jeder
+  Wert in Anführungszeichen; gemessen in allen drei Zerlegermodi und unter
+  beiden PHP-Fassungen.
+- **Zwölf Textstellen klebten im Browser zusammen** („im ReiterEinstellungendie
+  Adresse"). Die Sprachschlüssel sind keine Satzfragmente mehr, sondern ganze
+  Sätze mit Platzhaltern.
+- **Das Blättern im Archiv übersprang Aufnahmen.** Bei 40 Bildern waren vier
+  über die Oberfläche nicht erreichbar, und bei 10 Bildern stand „Seite 1/0".
+- **Die Startseite zählte Vorschaubilder als Videos** — 25 Aufnahmen wurden als
+  50 Videos angezeigt.
+- **`archive.php?submit=1` löschte auf einen bloßen GET hin das gesamte
+  Archiv.** Jedes Formular führt jetzt ein Merkmal mit, und gelöscht wird nur
+  noch per POST.
+- **`mjpgproxy.php` rief `apache_setenv()` ungeschützt auf.** Fehlt mod_php,
+  ist das ein Fatal Error — gemessen: Rückgabewert 255, leere Ausgabe, HTTP 500
+  ohne Rumpf. Damit wären Livebild und Videoaufzeichnung ausgefallen.
+- **Die Zugangsdaten stehen nicht mehr in der Adresse.** Ein Passwort mit `/`
+  oder `#` zerlegte die Kameraadresse vollständig (gemessen mit `parse_url()`:
+  danach gibt es nicht einmal mehr einen Rechnernamen). Sie gehen jetzt als
+  `Authorization`-Kopfzeile hinaus.
+- **`getvideo.php` behauptet keinen Erfolg mehr, den es nicht kennt.** Fehlt
+  `ffmpeg` oder ist das Archiv nicht beschreibbar, kommt eine Absage statt
+  `success:true`.
+- **`wget` steht jetzt in `dpkg/apt`** — es wurde aufgerufen, ohne angefordert
+  zu sein. Fehlt es trotzdem, weicht das Plugin auf `php` aus.
+- **Der Cron schreibt nicht mehr nach `/dev/null`.** Zeitraffer und Aufräumen
+  protokollieren, was sie getan haben, und der Reiter Test zeigt, wann sie
+  zuletzt gelaufen sind.
+- **Die Sperrdatei trägt den Plugin-Ordner im Namen**, ebenso das MQTT-Thema:
+  eine Zweitinstallation sperrt die erste nicht mehr aus und schreibt nicht
+  mehr auf deren Themen. Auf einer gewöhnlichen Anlage heißt der Ordner
+  `intercom`, und die Themen bleiben damit wörtlich dieselben wie in 2.1.13.
+  Nur wer das Plugin in einem anders benannten Ordner installiert hat, bekommt
+  ein anderes Präfix — im Reiter *MQTT* lässt es sich von Hand auf den alten
+  Wert stellen.
+- **Die Deinstallation räumt beide Zweitschriften weg.** Bis 2.1.13 blieb eine
+  davon mit Token und Zugangsdaten liegen.
+- **`ic_titel()` findet die `plugin.cfg` jetzt auch im installierten Zustand.**
+  Die beiden bisherigen Kandidaten zeigten auf gemeinsame LoxBerry-Ordner; die
+  Funktion fiel still auf ihren Vorgabewert zurück.
+- **Rechte vor Inhalt, und eine kurze Schreibung ist ein Fehler.** Eine volle
+  Karte meldete sich bisher nicht als solche.
+
+### Neue Funktionen
+
+- **Reiter Test mit echter Selbstprüfung.** Eine Zeile je Frage, mit Haken,
+  Kreuz oder Fragezeichen: Token, Zugangsdaten, Erreichbarkeit jeder Station,
+  der eigene Endpunkt, ffmpeg, wget, php-gd, sockets, MQTT-Gateway samt
+  Autostart, Archivgröße, freier Platz, Aufbewahrungsgrenzen, letzte
+  Cron-Läufe, Speicherort, die Reiterstruktur und die erzeugte Loxone-Vorlage.
+  Ein Punkt, der nicht geprüft werden konnte, zählt **nicht** als bestanden.
+- **Loxone-Vorlage zum Herunterladen** im Reiter *Einbindung in Loxone* — je
+  Station ein Befehl für Foto und einen für Video —, dazu die vollständige
+  Baustein-Liste zum Nachbauen.
+- **Mehrere Türstationen.** Eine Tabelle statt eines Feldes, je Zeile Name,
+  Adresse, eigene Zugangsdaten und der Miniserver, von dem die Zugangsdaten
+  kommen. Am Endpunkt wählt `&station=2` oder `&station=Haustuer` aus.
+- **`bild.php`** liefert das letzte Bild aus und verlangt dafür das Token. Das
+  offene `lastpicture.jpg` bleibt vorerst bestehen, damit bestehende Anlagen
+  nicht stehenbleiben — im Reiter *Einstellungen* lässt es sich abschalten.
+- **Befristete Bildlinks** für Mails und Meldungen: gültig für eine bestimmte
+  Zeit und für wenige Abrufe, ohne Zugriffstoken und ohne Auslösewirkung.
+- **Standbild statt Videostrom.** Viele Türstationen liefern unter
+  `/jpg/image.jpg` ein fertiges Einzelbild. Der Reiter Test misst, ob Ihre das
+  tut; umgestellt wird von Hand — ab Werk bleibt der bisherige Weg.
+- **Aufräumen nach Platz** (Megabyte), zusätzlich zu Tagen und Anzahl, mit
+  Trockenlauf.
+- **Aufnahme in festem Takt**, unabhängig von der Klingel — ab Werk aus.
+- **Endpunkt-Selbsttest** `?selftest=1`: beantwortet ohne Auslösung, ob das in
+  Loxone eingetragene Token noch stimmt.
+- **MQTT: Herzschlag und Themenpräfix.** `…/ok` trägt die Loxone-Zeit des
+  letzten Abrufs — daran erkennt Loxone einen stillstehenden Dienst. Der
+  MQTT-Reiter zeigt das einzutragende Abo und den Zustand des Gateways.
+
+### Was Sie nach dem Update tun sollten
+
+1. Die Oberfläche einmal öffnen und in den Reiter **Test** sehen. Der Knopf
+   *Jetzt vollständig prüfen* fragt auch das Netz ab.
+2. Wenn dort steht, dass Ihre Station die Standbild-Adresse beantwortet: im
+   Reiter *Einstellungen* auf **Erst das Standbild** umstellen.
+3. Wenn Sie mehrere Klingeltaster haben: an die virtuellen Ausgänge
+   `&trigger=name` anhängen — dann steht im Dateinamen und im MQTT-Thema, wer
+   geklingelt hat.
+4. Überlegen, ob das letzte Bild weiterhin ohne Token im Netz stehen soll.
+
+### Was bei der Deinstallation liegen bleibt
+
+Das Bild- und Videoarchiv unter `webfrontend/legacy/<ordner>_data` (und, falls
+eingestellt, unter `<Speicherort>/<ordner>_data`) bleibt erhalten — es sind
+Ihre Aufnahmen, und eine Deinstallation kann auch ein Umzug sein. Diese
+Aufnahmen zeigen Personen vor der Tür; wer sie nicht mehr braucht, entfernt
+den Ordner von Hand. Die Deinstallation nennt den Befehl dafür. Token,
+Zugangsdaten und beide Zweitschriften werden entfernt.
+
 ## Neu in 2.1.12
 
 **Die unterstützten Türstationen stehen jetzt richtig da.** README und Hilfe
@@ -56,7 +187,7 @@ Aktuelle Release URL in das URL Feld bei der Loxberry Plugininstallation kopiere
 - LoxConfig Intercom Bild an Loxberry Plugin über Virtuellen Ausgang übergeben
 - Webhook via POST-/GET-Request bzw. MQTT-Broker
 - Bilder Archiv für Bilder die über URL Trigger angestossen wurden
-- Video aufnahme durch URL Trigger mit Angabe der Videolänge (max 120 Sekunden http://<IP>/plugins/intercom/getvideo.php?s=<SEKUNDEN> )
+- Video aufnahme durch URL Trigger mit Angabe der Videolänge (1 bis 300 Sekunden http://<IP>/plugins/intercom/getvideo.php?s=<SEKUNDEN> )
 - Videoaufnahmen mit Zeitsatempel (optional) über Trigger ( http://<IP>/plugins/intercom/getpicture.php )
 - Video Archiv
 - Video stream Proxy ( http://<IP>/plugins/intercom/mjpgproxy.php ) ohne authentifizierung

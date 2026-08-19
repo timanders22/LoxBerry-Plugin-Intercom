@@ -4,7 +4,7 @@
 # and files in /etc/cron.d. These files also have username fields,
 # that none of the other crontabs do.
 #
-# Documentation: 
+# Documentation:
 # https://www.loxwiki.eu/pages/viewpage.action?pageId=23462653#Pluginf%C3%BCrdenLoxberryentwickeln(abVersion1.x)-Unterverzeichnis:cronYellowOptional
 #
 
@@ -12,10 +12,22 @@ MAILTO=""
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 
+# DIE AUSGABE GEHT NICHT MEHR NACH /dev/null.
+#
+# Bis 2.1.13 endeten beide Zeilen auf >/dev/null 2>&1. Beide Skripte geben ihr
+# Ergebnis per echo aus - es ging also ausnahmslos ins Nichts, und weder
+# Zeitraffer noch Bereinigung hinterliessen irgendeine Spur. Ein Cron-Dienst,
+# der schweigend nichts tut, ist schlimmer als keiner: genau daran sind im
+# Bestand acht Fassungen eines anderen Plugins vorbeigelaufen.
+#
+# Jetzt landet die Ausgabe ueber logger im Systemprotokoll, und die Skripte
+# schreiben ausserdem selbst ins Plugin-Protokoll und setzen einen Merker, den
+# der Reiter Test anzeigt ("Wann lief der Zeitraffer zuletzt?").
+
 # m h dom mon dow user  command
-# Timelapse: prueft minuetlich, ob die konfigurierte Uhrzeit erreicht ist
-# (beendet sich sofort, wenn Timelapse deaktiviert ist)
-* * * * * loxberry cd REPLACELBHOMEDIR/webfrontend/html/plugins/REPLACELBPPLUGINDIR && /usr/bin/php timelapse.php >/dev/null 2>&1
-# Archiv-Bereinigung: loescht taeglich alte/ueberzaehlige Archivdateien
-# (beendet sich sofort, wenn keine Begrenzung konfiguriert ist)
-35 3 * * * loxberry cd REPLACELBHOMEDIR/webfrontend/html/plugins/REPLACELBPPLUGINDIR && /usr/bin/php cleanup.php >/dev/null 2>&1
+# Zeitraffer und Intervallaufnahme: prueft minuetlich, ob etwas zu tun ist
+# (beendet sich sofort, wenn beides ausgeschaltet ist)
+* * * * * loxberry cd REPLACELBHOMEDIR/webfrontend/html/plugins/REPLACELBPPLUGINDIR && /usr/bin/php timelapse.php 2>&1 | logger -t REPLACELBPPLUGINDIR
+# Archiv-Bereinigung: loescht taeglich alte, ueberzaehlige und zu grosse Dateien
+# (beendet sich sofort, wenn keine Grenze eingestellt ist)
+35 3 * * * loxberry cd REPLACELBHOMEDIR/webfrontend/html/plugins/REPLACELBPPLUGINDIR && /usr/bin/php cleanup.php 2>&1 | logger -t REPLACELBPPLUGINDIR

@@ -1,300 +1,248 @@
 <?php
+/**
+ * Intercom - ein Bild von der Tuerstation holen
+ *
+ * Aufruf (vom Miniserver):
+ *   /plugins/<ordner>/getpicture.php?token=<TOKEN>
+ *   /plugins/<ordner>/getpicture.php?token=<TOKEN>&trigger=klingel
+ *   /plugins/<ordner>/getpicture.php?token=<TOKEN>&station=2
+ *   /plugins/<ordner>/getpicture.php?token=<TOKEN>&selftest=1   (loest nichts aus)
+ */
 
-/* Die Bibliothek liegt im ANGEMELDETEN Bereich, diese Datei nicht. Der Weg
- * dorthin sieht in den beiden Zustaenden verschieden aus:
- *
- *   installiert  <home>/webfrontend/html/plugins/<ordner>/diese-datei.php
- *                <home>/webfrontend/htmlauth/plugins/<ordner>/config.php
- *   Archiv       <wurzel>/webfrontend/html/diese-datei.php
- *                <wurzel>/webfrontend/htmlauth/config.php
- *
- * Bis 2.1.1 stand hier ein fester Ausdruck mit ZWEI dirname(). Installiert
- * ergab der <home>/webfrontend/html/htmlauth/plugins/<ordner>/config.php -
- * ein Verzeichnis, das es nicht gibt. require_once auf eine fehlende Datei
- * ist ein Fatal Error, und weil display_errors erst danach abgeschaltet
- * wurde, kam nicht einmal eine lesbare Meldung zurueck, sondern HTTP 500.
- *
- * Deshalb eine Kandidatenliste statt einer Rechnung: genommen wird die
- * Datei, die wirklich da ist. */
-$ic_config_gefunden = false;
-foreach (array(
-    dirname(dirname(dirname(__DIR__))) . '/htmlauth/plugins/' . basename(__DIR__) . '/config.php',
-    dirname(dirname(__DIR__)) . '/htmlauth/plugins/' . basename(__DIR__) . '/config.php',
-    dirname(__DIR__) . '/htmlauth/config.php',
-) as $ic_kandidat) {
-    if (is_file($ic_kandidat)) {
-        require_once $ic_kandidat;
-        $ic_config_gefunden = true;
-        break;
-    }
-}
-if (!$ic_config_gefunden) {
-    /* Sagen, was fehlt, statt mit 500 zu enden. Diese Datei wird von Loxone
-     * und von der Tuerstation aufgerufen - dort sieht niemand ein
-     * Apache-Protokoll. */
-    header('HTTP/1.1 500 Internal Server Error');
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "FEHLER: config.php des Plugins wurde nicht gefunden.\n";
-    echo "Gesucht ausgehend von: " . __DIR__ . "\n";
-    echo "Bitte das Plugin neu installieren.\n";
-    exit;
-}
-
-ini_set('display_errors', '0');
-error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
+require_once __DIR__ . '/ic_start.php';
 
 // Diese Datei loest etwas aus (Archivbild, MQTT, Webhooks) und liest den
 // Kamerastrom mit. Bis 1.5.0 ging das ohne jede Pruefung - sie liegt im
 // unangemeldeten Bereich.
 ic_token_pruefen();
 
-$miniserver_config = LBSystem::get_miniservers();
-$lastpicture = __DIR__ . '/lastpicture.jpg';
-
-	
-function add_text_to_jpg($jpg_file, $text) {
-    if (!function_exists('imagecreatefromjpeg')) { return; } // php-gd fehlt - Zeitstempel ueberspringen statt Fatal Error
-    $img = imagecreatefromjpeg($jpg_file);
-    $white = imagecolorallocate($img, 255, 255, 255);
-    $black = imagecolorallocate($img, 0, 0, 0);
-    imagefilledrectangle($img, 9, 29, strlen($text) * imagefontwidth(5) + 11, 45, $black);
-    imagestring($img, 5, 10, 30, $text, $white);
-    imagejpeg($img, $jpg_file);
-    imagedestroy($img);
+// Der Selbsttest steht VOR allem, was wirkt: er soll nichts ausloesen.
+if (isset($_GET['selftest'])) {
+    ic_selftest_antwort('getpicture.php');
 }
 
-if(file_exists(LBPCONFIGDIR.'/data.json')){
+header('Content-Type: application/json; charset=utf-8');
 
-	header('Content-type:application/json;charset=utf-8');
-	$arr = json_decode(file_get_contents(LBPCONFIGDIR.'/data.json'),true);
+/* ---------------- Station ---------------- */
+$ic_stationsangabe = isset($_GET['station']) && is_string($_GET['station'])
+                   ? substr($_GET['station'], 0, 32) : '';
+$station = ic_station($ic_stationsangabe);
+if ($station === null) {
+    // Abweisen, nicht zurechtbiegen: waere hier die erste Station genommen
+    // worden, haette ein Tippfehler in Loxone stillschweigend die falsche
+    // Tuer fotografiert.
+    header('HTTP/1.1 400 Bad Request');
+    echo json_encode(array('success' => false, 'error' => ic_stationen()
+        ? 'Unbekannte Station: ' . $ic_stationsangabe
+        : 'Es ist keine Tuerstation eingerichtet. Bitte im Reiter Einstellungen eintragen.'));
+    exit;
+}
 
-	$camurl="http://". $miniserver_config[1]["Admin_RAW"] .":". $miniserver_config[1]["Pass_RAW"] ."@". $arr["intercomip"]. "/mjpg/video.mjpg";
+/* ---------------- Ausloeser ---------------- */
+// is_string VOR allem anderen: ?trigger[]=x ergibt ein Feld, und substr()
+// bricht damit unter PHP 8 mit einem TypeError ab - mitten im Klingelweg,
+// nach dem Kamerazugriff und vor Archiv, MQTT und Protokoll.
+$trigger = '';
+if (isset($_GET['trigger']) && is_string($_GET['trigger'])) {
+    $trigger = preg_replace('/[^A-Za-z0-9_\-]/', '', substr($_GET['trigger'], 0, 32));
+}
 
-	$boundary="\n--";
-	// Zeitgrenze auf den Strom legen, BEVOR gelesen wird: ohne sie wartet
-	// fread beliebig lange, wenn die Tuerstation die Verbindung offen
-	// haelt, aber nichts mehr schickt.
-	$ctx = stream_context_create(array('http' => array('timeout' => 8)));
-	$f = @fopen($camurl, "r", false, $ctx);
-	$r="";
-	if(!$f)
-	{
-	    // Gebremst: bei einer ausgeschalteten Station kaeme sonst bei jedem
-	    // Klingeln eine Zeile, und log/ ist eine Ramdisk.
-	    ic_log_gebremst('station', 'Die Tuerstation war nicht erreichbar. Adresse und '
-	        . 'Zugangsdaten pruefen; die Diagnose im Reiter Einstellungen zeigt die '
-	        . 'benutzte Adresse mit maskiertem Passwort.');
-	    header('HTTP/1.1 502 Bad Gateway');
-	    echo json_encode(array("success"=>false,"error"=>"Tuerstation nicht erreichbar."));
-	    exit;
-	}else{
-			stream_set_timeout($f, 8);
-			// WAECHTER gegen die Endlosschleife.
-			//
-			// Bis 1.5.0 stand hier
-			//     while (substr_count($r,"Content-Length") != 2) $r.=fread($f,512);
-			// ohne jede Abbruchbedingung. Schickt die Tuerstation andere
-			// Kopfzeilen, bricht ein Paket weg oder haengt das Netz, dreht
-			// diese Schleife bis zur Zeitgrenze von PHP - und der Aufrufer
-			// bekommt eine 500er-Seite statt eines Bildes. In timelapse.php
-			// war dieser Waechter bereits richtig eingebaut; hier hat er
-			// gefehlt.
-			//
-			// 4000 Durchlaeufe a 512 Byte sind rund 2 MB - weit mehr als ein
-			// einzelner Rahmen, aber endlich.
-			$guard = 0;
-			while (substr_count($r, "Content-Length") != 2 && $guard++ < 4000) {
-				$teil = fread($f, 512);
-				if ($teil === false || $teil === '') {
-					$meta = stream_get_meta_data($f);
-					if (!empty($meta['timed_out']) || feof($f)) { break; }
-					continue;
-				}
-				$r .= $teil;
-			}
-			$start = strpos($r,"\xff");
-			$end   = strpos($r,$boundary,$start)-1;
-			$frame = ($start === false) ? "" : substr("$r",$start,$end - $start);
-			if ($frame === "" || strlen($frame) < 100) {
-				fclose($f);
-				header('HTTP/1.1 502 Bad Gateway');
-				echo json_encode(array("success"=>false,
-					"error"=>"Kein vollstaendiges Bild aus dem Kamerastrom gelesen."));
-				exit;
-			}
+$arr = ic_config();
+$nur_vorschau = isset($_GET['hook']);   // ?hook=false: die Oberflaeche schaut nur nach
 
-			// Unteilbar schreiben: erst Zwischendatei, dann rename().
-			// Treffen zwei Ausloeser gleichzeitig ein - Klingel und
-			// Bewegungsmelder sind genau dafuer gebaut -, schrieben bis
-			// 1.5.0 beide Prozesse ineinander, und wer die Datei in diesem
-			// Augenblick las, bekam ein halbes JPEG.
-			ic_datei_ersetzen($lastpicture, $frame);
-			
-			// add timestamp
-			if(isset($arr['timestamp_image'])){
-				if($arr['timestamp_image']=="on"){
-					$timestamp = date('d.m.Y H:i:s');
-					add_text_to_jpg($lastpicture, $timestamp);
-				}
-			}
+/* ---------------- Bild holen ---------------- */
+$r = ic_bild_holen($station);
+if (!$r['ok']) {
+    // Gebremst: bei einer ausgeschalteten Station kaeme sonst bei jedem
+    // Klingeln eine Zeile, und log/ ist eine Ramdisk.
+    ic_log_gebremst('station_' . $station['name'],
+        'Die Tuerstation "' . $station['name'] . '" lieferte kein Bild: ' . $r['fehler']);
+    header('HTTP/1.1 502 Bad Gateway');
+    echo json_encode(array('success' => false, 'station' => $station['name'],
+                           'weg' => $r['weg'], 'error' => $r['fehler']));
+    exit;
+}
+$frame = $r['bild'];
 
-			// Mehrere Ausloeser (z.B. Klingel, Briefkasten): ?trigger=NAME
-			// landet mit Namenszusatz im Archiv und im MQTT-Thema intercom/trigger/NAME
-			$trigger = "";
-			if(isset($_REQUEST['trigger'])){
-				$trigger = preg_replace('/[^A-Za-z0-9_\-]/', '', substr($_REQUEST['trigger'], 0, 32));
-			}
-			$triggerpart = ($trigger !== "") ? "-".$trigger : "";
+if (!$nur_vorschau) { ic_archiv_sicherstellen(); }
 
-			$archived = false;
-			$archive_error = "";
-         	if(!isset($_REQUEST['hook'])){ // archivieren nur bei Aufruf OHNE ?hook (Webfrontend nutzt ?hook=false)
-				$archiveimg = $folder_img_archive.date("Y.m.d-H:i:s").$triggerpart."-intercom.jpg";
-				$written = @file_put_contents($archiveimg, $frame);
-				if($written === false){
-					$archive_error = "Archivbild konnte nicht geschrieben werden: ".$archiveimg;
-					ic_log_gebremst('archiv', 'Ein Archivbild liess sich nicht schreiben: '
-					    . $archiveimg . ' - Rechte und freien Platz pruefen.');
-				}else{
-					$archived = true;
-					// add timestamp
-					if(isset($arr['timestamp_image'])){
-						if($arr['timestamp_image']=="on"){
-							$timestamp = date('d.m.Y H:i:s');
-							add_text_to_jpg($archiveimg, $timestamp);
-						}
-					}
-				}
-			}else{
-				$archive_error = "Nicht archiviert: Aufruf mit ?hook-Parameter (nur Vorschau).";
-			}
+/* ---------------- Das jeweils letzte Bild ---------------- */
+/*
+ * Es liegt an zwei Orten:
+ *
+ *   data/plugins/<ordner>/lastpicture.jpg   immer, NICHT aus dem Netz erreichbar;
+ *                                           ausgeliefert wird es von bild.php,
+ *                                           und das verlangt das Token.
+ *   webfrontend/html/plugins/<ordner>/lastpicture.jpg
+ *                                           nur, solange "bild_oeffentlich"
+ *                                           eingeschaltet ist.
+ *
+ * Warum die offene Kopie ab Werk bleibt: sie ist seit jeher dokumentiert, und
+ * bestehende Anlagen binden sie in Loxone oder in einer Mail ein. Ein
+ * Vorgabewert, der das abschaltet, wuerde bei jedem Anwender beim ersten
+ * Aufruf nach dem Update ein Bild verschwinden lassen, ohne dass er etwas
+ * angeklickt hat. Der Reiter Einstellungen sagt, was die offene Kopie
+ * bedeutet, und schaltet sie mit einem Haken ab.
+ */
+$ic_intern = ic_paths()['data'] . '/lastpicture.jpg';
+ic_datei_ersetzen($ic_intern, $frame, 0640);
+$ic_offen = !isset($arr['bild_oeffentlich']) || $arr['bild_oeffentlich'] !== '0';
+$lastpicture = __DIR__ . '/lastpicture.jpg';
+if ($ic_offen) {
+    ic_datei_ersetzen($lastpicture, $frame);
+} elseif (@is_file($lastpicture)) {
+    @unlink($lastpicture);
+}
 
-	   }
+// Zeitstempel: erst nach dem unteilbaren Schreiben, und nur wenn php-gd da ist.
+$mit_stempel = isset($arr['timestamp_image']) && $arr['timestamp_image'] === 'on';
+if ($mit_stempel) {
+    ic_zeitstempel_ins_bild($ic_intern);
+    if ($ic_offen) { ic_zeitstempel_ins_bild($lastpicture); }
+}
 
-	fclose($f);
+/* ---------------- Archiv ---------------- */
+$archiviert = false;
+$archivhinweis = '';
+$archivname = '';
+if (!$nur_vorschau) {
+    $o = ic_archivordner();
+    // Der Name traegt Datum, Uhrzeit und den Ausloeser - und KEINE
+    // Doppelpunkte: auf FAT32, exFAT und NTFS sind sie im Dateinamen
+    // unzulaessig, und genau dorthin zeigt der einstellbare Speicherort.
+    $archivname = ic_archivname(($station['name'] !== '' && count(ic_stationen()) > 1
+                                 ? preg_replace('/[^A-Za-z0-9_\-]/', '', $station['name']) . '-' : '')
+                                . $trigger);
+    $ziel = $o['bild'] . $archivname;
+    if (ic_datei_ersetzen($ziel, $frame)) {
+        $archiviert = true;
+        if ($mit_stempel) { ic_zeitstempel_ins_bild($ziel); }
+    } else {
+        $archivhinweis = 'Archivbild konnte nicht geschrieben werden: ' . $ziel;
+        ic_log_gebremst('archiv', 'Ein Archivbild liess sich nicht schreiben: ' . $ziel
+            . ' - Rechte und freien Platz pruefen.');
+    }
+} else {
+    $archivhinweis = 'Nicht archiviert: Aufruf mit ?hook-Parameter (nur Vorschau).';
+}
 
-	// KI-Objekterkennung (DeepStack / CodeProject.AI-kompatibel): Bild an
-	// /v1/vision/detection senden, erkannte Objekte in JSON/MQTT/Webhooks liefern.
-	$ai = array();
-	if(isset($arr['ai_enable']) && $arr['ai_enable']=="on" && !empty($arr['ai_url']) && function_exists('curl_init')){
-		$minconf = (isset($arr['ai_minconf']) && is_numeric($arr['ai_minconf'])) ? ((float)$arr['ai_minconf'])/100 : 0.5;
-		$ch = curl_init($arr['ai_url']);
-		curl_setopt($ch, CURLOPT_POST, true);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-		curl_setopt($ch, CURLOPT_POSTFIELDS, array(
-			'image' => new CURLFile($lastpicture, 'image/jpeg', 'lastpicture.jpg'),
-			'min_confidence' => $minconf,
-		));
-		$airesp = @curl_exec($ch);
-		curl_close($ch);
-		$aidata = @json_decode((string)$airesp, true);
-		if(is_array($aidata) && isset($aidata['predictions']) && is_array($aidata['predictions'])){
-			$labels = array();
-			foreach($aidata['predictions'] as $p){
-				if(isset($p['label'])){
-					$labels[] = $p['label'].(isset($p['confidence']) ? " (".round($p['confidence']*100)."%)" : "");
-				}
-			}
-			$ai = array("objects"=>$labels, "count"=>count($labels));
-		}
-	}
+/* ---------------- KI-Objekterkennung ---------------- */
+// Die Erkennung selbst steht in ic_lib.php: sie wird auch von der Aufnahme im
+// Takt gebraucht, und zwei Kopien derselben Auswertung laufen beim naechsten
+// Umbau auseinander.
+$ai = ic_ki_erkennen($ic_intern);
 
-	$url = str_replace(basename($_SERVER['REQUEST_URI']), "", $_SERVER['REQUEST_URI']);
-	ic_log('Bild von der Tuerstation geholt'
-	    . (isset($trigger) && $trigger !== '' ? ' (Ausloeser ' . $trigger . ')' : '')
-	    . (isset($archived) && $archived ? ', archiviert' : ''));
-	$json = json_encode(array("success"=>true,"timestamp"=>date("d.m.Y-H:i:s"),"trigger"=>(isset($trigger)?$trigger:""),"ai"=>$ai,"archived"=>(isset($archived)?$archived:false),"archive_info"=>(isset($archive_error)?$archive_error:""),"image"=>'http://'.ic_host().$url.'lastpicture.jpg'));
-	echo $json;
-	$jsonarr = json_decode($json,true);
+/* ---------------- Antwort ---------------- */
+$basis = 'http://' . ic_host() . '/plugins/' . ic_plugin_ordner() . '/';
+$token = isset($arr['aktionstoken']) ? (string) $arr['aktionstoken'] : '';
+$bildurl = $ic_offen ? $basis . 'lastpicture.jpg'
+                     : $basis . 'bild.php?token=' . rawurlencode($token);
+$json = json_encode(array(
+    'success'      => true,
+    'timestamp'    => date('d.m.Y-H:i:s'),
+    'station'      => $station['name'],
+    'weg'          => $r['weg'],
+    'dauer'        => round($r['dauer'], 2),
+    'trigger'      => $trigger,
+    'ai'           => $ai,
+    'archived'     => $archiviert,
+    'archive_file' => $archivname,
+    'archive_info' => $archivhinweis,
+    'image'        => $bildurl,
+));
+echo $json;
 
-	// Bild an Android TV senden (App "Notifications for Android TV", Port 7676)
-	if(isset($arr['tv_enable']) && $arr['tv_enable']=="on" && !empty($arr['tv_ip']) && function_exists('curl_init')){
-		$tvport = (isset($arr['tv_port']) && is_numeric($arr['tv_port'])) ? (int)$arr['tv_port'] : 7676;
-		$tvtitle = "Loxone Intercom";
-		$tvmsg = "Jemand hat geklingelt";
-		if(isset($trigger) && $trigger !== ""){ $tvmsg = "Ausloeser: ".$trigger; }
-		$ch = curl_init('http://'.$arr['tv_ip'].':'.$tvport.'/');
-		curl_setopt($ch, CURLOPT_POST, true);
-		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-		curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-		curl_setopt($ch, CURLOPT_POSTFIELDS, array(
-			'type' => '0',
-			'title' => $tvtitle,
-			'msg' => $tvmsg,
-			'duration' => '10',
-			'fontsize' => '0',
-			'position' => '0',
-			'bkgcolor' => '#009688',
-			'transparency' => '0',
-			'offset' => '0',
-			'app' => 'intercom',
-			'force' => 'true',
-			'interrupt' => '0',
-			'filename' => new CURLFile($lastpicture, 'image/jpeg', 'lastpicture.jpg'),
-		));
-		@curl_exec($ch);
-		curl_close($ch);
-	}
+/*
+ * Ab hier wartet der Miniserver nicht mehr mit.
+ *
+ * Der Klingelweg summierte bis 2.1.13 im ungünstigen Fall acht Sekunden
+ * Strom, fuenf Sekunden Anzeigegeraet und dreimal fuenf Sekunden Webhook -
+ * und die Verbindung blieb bis zum Skriptende offen. Die Antwort steht
+ * jetzt, sobald das Bild da ist; alles Weitere laeuft danach.
+ */
+if (!$nur_vorschau) {
+    @ignore_user_abort(true);
+    if (function_exists('fastcgi_finish_request')) {
+        @fastcgi_finish_request();
+    } else {
+        while (ob_get_level() > 0) { @ob_end_flush(); }
+        @flush();
+    }
+}
 
+ic_log('Bild von "' . $station['name'] . '" geholt (' . $r['weg'] . ', '
+    . ic_byte(strlen($frame)) . ')'
+    . ($trigger !== '' ? ', Ausloeser ' . $trigger : '')
+    . ($archiviert ? ', archiviert als ' . $archivname : ''));
 
-	// hook nicht aufrufen wenn aus webfrontend aufgerufen
-	if(isset($_REQUEST['hook'])){
-		exit;
-	}
+// Bei ?hook ist Schluss - die Oberflaeche wollte nur nachsehen.
+if ($nur_vorschau) { exit; }
 
-	// MQTT ueber das LoxBerry-Gateway (UDP) statt ueber Bluerhinos\phpMQTT.
-	//
-	// Die Bibliothek ist seit Jahren unveraendert, baut eine eigene
-	// TCP-Verbindung samt Anmeldung auf und war bis 1.5.0 der einzige Weg -
-	// faellt sie unter PHP 8 aus, meldet das Plugin gar nichts mehr. Das
-	// Gateway gehoert seit LoxBerry 3 zum System und nimmt eine Zeile auf
-	// einem UDP-Port entgegen. Ein Paket, keine Verbindung, keine fremde
-	// Bibliothek - und vor allem nichts, was den Aufruf aufhalten kann.
-	//
-	// Der eigene Broker aus den Einstellungen wird damit nicht mehr direkt
-	// angesprochen; wer einen fremden Broker benutzt, traegt ihn im
-	// MQTT-Gateway von LoxBerry ein. Das ist ohnehin die Stelle, an der er
-	// hingehoert - sonst gaebe es zwei Wahrheiten.
-	if ( isset($arr['mqtt_enable']) && $arr['mqtt_enable']=="1" ){
-		ic_mqtt_senden("intercom", $json);
-		if(isset($trigger) && $trigger !== ""){
-			ic_mqtt_senden("intercom/trigger/".$trigger, $json);
-		}
-		if(!empty($ai)){
-			ic_mqtt_senden("intercom/ai", json_encode($ai));
-		}
-	}// end mqtt post
+/* ---------------- Bild an ein Anzeigegeraet ---------------- */
+// App "Notifications for Android TV", Port 7676
+if (!empty($arr['tv_enable']) && $arr['tv_enable'] === 'on'
+    && !empty($arr['tv_ip']) && function_exists('curl_init')) {
+    $tvport = (isset($arr['tv_port']) && is_numeric($arr['tv_port'])) ? (int) $arr['tv_port'] : 7676;
+    $tvmsg = $trigger !== '' ? 'Ausloeser: ' . $trigger : 'Jemand hat geklingelt';
+    if (count(ic_stationen()) > 1) { $tvmsg .= ' (' . $station['name'] . ')'; }
+    $ch = curl_init('http://' . $arr['tv_ip'] . ':' . $tvport . '/');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, array(
+        'type' => '0', 'title' => 'Loxone Intercom', 'msg' => $tvmsg,
+        'duration' => '10', 'fontsize' => '0', 'position' => '0',
+        'bkgcolor' => '#009688', 'transparency' => '0', 'offset' => '0',
+        'app' => 'intercom', 'force' => 'true', 'interrupt' => '0',
+        'filename' => new CURLFile($ic_intern, 'image/jpeg', 'lastpicture.jpg'),
+    ));
+    @curl_exec($ch);
+    curl_close($ch);
+}
 
+/* ---------------- MQTT ueber das LoxBerry-Gateway (UDP) ---------------- */
+//
+// Die Bibliothek Bluerhinos\phpMQTT ist seit Jahren unveraendert, baut eine
+// eigene TCP-Verbindung samt Anmeldung auf und war bis 1.5.0 der einzige Weg -
+// faellt sie unter PHP 8 aus, meldet das Plugin gar nichts mehr. Das Gateway
+// gehoert seit LoxBerry 3 zum System und nimmt eine Zeile auf einem UDP-Port
+// entgegen. Ein Paket, keine Verbindung, keine fremde Bibliothek.
+//
+// Das Themen-Praefix kommt aus dem Ordnernamen, nicht fest aus dem Quelltext.
+if (ic_mqtt_an()) {
+    ic_mqtt_senden('', $json);
+    if ($trigger !== '') {
+        ic_mqtt_senden('trigger/' . $trigger, $json);
+    }
+    ic_ki_melden($ai);
+    ic_mqtt_herzschlag();
+}
 
-	foreach (array(1,3) as $key => $value)
-	if(isset($arr["webhook$value"])){
-		if($arr["webhook$value"]!=""){
-			$url = $arr["webhook$value"];
-			$ch = curl_init($url);
-			curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
-			curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));
-			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-			// Zeitgrenzen: ohne sie wartet cURL unbegrenzt.
-			curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-			curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-			$result = curl_exec($ch);
-			curl_close($ch);
-		}
-	} // end webhook 1
+/* ---------------- Webhooks ---------------- */
+$jsonarr = json_decode($json, true);
 
-	foreach (array(2,4) as $key => $value)
-	if(isset($arr["webhook$value"])){
-		if($arr["webhook$value"]!=""){
-			$url = $arr["webhook$value"];
-			$url = str_replace("<imgurl>", urlencode($jsonarr['image']) , $url);
-			// MIT Zeitgrenze. Bis 1.5.0 stand hier file_get_contents($url)
-			// ohne Zusammenhang - PHP nahm dann default_socket_timeout,
-			// ueblicherweise 60 Sekunden. Ein abgeschalteter Node-RED
-			// genuegte, damit der Aufruf eine Minute stillstand, und der
-			// Miniserver wartete mit.
-			ic_http_holen($url, 5);
-		}
-	} // end webhook2
+// 1 und 3: POST mit JSON
+foreach (array(1, 3) as $nr) {
+    if (empty($arr['webhook' . $nr]) || !function_exists('curl_init')) { continue; }
+    $ch = curl_init($arr['webhook' . $nr]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Zeitgrenzen: ohne sie wartet cURL unbegrenzt.
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    @curl_exec($ch);
+    curl_close($ch);
+}
 
-} // end json data exists
+// 2 und 4: Adresse mit Platzhalter <imgurl>
+foreach (array(2, 4) as $nr) {
+    if (empty($arr['webhook' . $nr])) { continue; }
+    $url = str_replace('<imgurl>', urlencode($jsonarr['image']), $arr['webhook' . $nr]);
+    // MIT Zeitgrenze. Bis 1.5.0 stand hier file_get_contents($url) ohne
+    // Zusammenhang - PHP nahm dann default_socket_timeout, ueblicherweise
+    // 60 Sekunden. Ein abgeschalteter Node-RED genuegte, damit der Aufruf
+    // eine Minute stillstand, und der Miniserver wartete mit.
+    ic_http_holen($url, 5);
+}

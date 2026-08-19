@@ -21,15 +21,38 @@ PBIN=$LBPBIN/$PDIR
 
 # Die Deinstallation von LoxBerry entfernt nur das VERZEICHNIS
 # config/plugins/<ordner>/. Die Zweitschrift liegt DANEBEN und bliebe
-# liegen - mit dem Zugriffstoken, der IP der Tuerstation und den
-# Zugangsdaten der Webhooks darin. Genau deshalb wird sie hier ausdruecklich
-# geloescht.
+# liegen - mit dem Zugriffstoken, den Adressen der Tuerstationen und den
+# Zugangsdaten der Webhooks darin.
+#
+# ES SIND ZWEI NAMEN, NICHT EINER. Bis 2.1.13 wurde hier nur der erste
+# geloescht; die zweite Datei schrieb preupgrade.sh, und sie blieb nach der
+# Deinstallation mit demselben Inhalt liegen. Seit 2.2.0 schreiben beide
+# Stellen denselben Namen - der zweite wird trotzdem weiter entfernt, weil
+# er auf jeder Anlage liegt, die von einer aelteren Fassung kommt.
 rm -f "$PCONFIG.backup.json"
+rm -f "$PCONFIG.backup.data.json"
 
 # Ebenso die Sicherung, die preupgrade.sh im Datenordner anlegt. Bricht ein
 # Update ab, bleibt sie sonst stehen.
 rm -rf "$PDATA/upgrade_sicherung"
 
-echo "<OK> Zweitschrift und Upgrade-Sicherung entfernt."
+echo "<OK> Zweitschriften und Upgrade-Sicherung entfernt."
+
+# WAS LIEGEN BLEIBT - und das ist Absicht:
+#
+#   webfrontend/legacy/<ordner>_data/   Bilder, Videos, Zeitrafferbilder
+#   <eigener Speicherort>/<ordner>_data/
+#
+# Das sind die Aufnahmen des Anwenders. Sie zu loeschen waere eine
+# Entscheidung, die dem Plugin nicht zusteht - eine Deinstallation kann auch
+# ein Umzug sein. Der Befehl zum Entfernen gehoert deshalb in die Ausgabe,
+# ausgefuehrt wird er von Hand.
+echo "<INFO> Das Bild- und Videoarchiv bleibt erhalten:"
+echo "<INFO>   $LBHOMEDIR/webfrontend/legacy/${PDIR}_data"
+echo "<INFO> Diese Aufnahmen zeigen Personen vor der Tuer. Wer sie nicht mehr"
+echo "<INFO> braucht, entfernt sie von Hand:"
+echo "<INFO>   rm -rf '$LBHOMEDIR/webfrontend/legacy/${PDIR}_data'"
+echo "<INFO> Liegt das Archiv auf einem eigenen Speicher, steht es dort unter"
+echo "<INFO> <Speicherort>/${PDIR}_data und bleibt ebenfalls liegen."
 
 exit 0;

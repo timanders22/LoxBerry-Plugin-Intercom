@@ -1,65 +1,33 @@
 <?php
+/**
+ * Intercom - gemeinsame Einbindung
+ *
+ * DIESE DATEI LEGT NICHTS MEHR AN UND VERSCHIEBT NICHTS.
+ *
+ * Bis 2.1.13 stand hier die gesamte Einrichtung des Speicherorts: bis zu vier
+ * mkdir() und - war ein eigener Pfad hinterlegt - zwei Shell-Aufrufe
+ * (cp -rn und rm -rf) samt symlink(). Eingebunden wird die Datei aber von
+ * JEDEM Endpunkt ganz oben, also VOR der Token-Pruefung. Eine Anfrage ohne
+ * Token loeste damit Arbeit im Dateisystem aus, und im Umzugsfall sogar zwei
+ * Shell-Aufrufe. Die Argumente waren durch escapeshellarg() gedeckt, die
+ * Reihenfolge blieb trotzdem falsch: der unangemeldete Endpunkt darf nichts
+ * anlegen.
+ *
+ * Angelegt wird jetzt in ic_archiv_sicherstellen() - nach der Pruefung -,
+ * und der Speicherort wird in ic_speicherort_anwenden() eingerichtet, wenn
+ * der Anwender in der Oberflaeche speichert.
+ */
 
 require_once "loxberry_io.php";
 require_once "loxberry_web.php";
 require_once "loxberry_system.php";
 require_once __DIR__ . "/ic_lib.php";
 
-// Der Ordnername wird ERMITTELT, nicht eingetragen.
+// KEINE Ordnervariablen mehr.
 //
-// Bis 1.5.0 stand hier "<LoxBerry-Wurzel>/webfrontend/legacy/<Ordner>_data/"
-// mit festem Namen. Haengt LoxBerry bei der Installation einen Zaehler an
-// (intercom_01, weil der Ordner schon belegt war), zeigten beide
-// Installationen auf dasselbe Archiv - und die Verweise in den Skripten
-// zusaetzlich auf die falsche Konfiguration.
-$legacyfolder = ic_paths()['legacy'];
-
-// Konfigurierbarer Speicherort (z.B. externer USB-Speicher):
-// Ist in den Einstellungen ein Pfad hinterlegt und beschreibbar, wird
-// /webfrontend/legacy/<Ordner>_data als Symlink dorthin gefuehrt -
-// alle Archiv-URLs funktionieren dadurch unveraendert weiter.
-$icfg = array();
-if (defined('LBPCONFIGDIR') && file_exists(LBPCONFIGDIR.'/data.json')) {
-	$icfg = json_decode(file_get_contents(LBPCONFIGDIR.'/data.json'), true);
-	if (!is_array($icfg)) { $icfg = array(); }
-}
-$storage = isset($icfg['storage_path']) ? rtrim(trim($icfg['storage_path']), '/') : '';
-if ($storage !== '' && is_dir($storage) && is_writable($storage)) {
-	// Aus dem ORDNERNAMEN abgeleitet, nicht fest eingetragen: sonst zeigt
-	// eine Zweitinstallation (intercom_01) auf dasselbe Archiv.
-	$target = $storage . '/' . ic_plugin_ordner() . '_data';
-	if (!file_exists($target)) { @mkdir($target, 0775, true); }
-	$linkbase = rtrim($legacyfolder, '/');
-	if (is_link($linkbase)) {
-		if (readlink($linkbase) !== $target) { @unlink($linkbase); @symlink($target, $linkbase); }
-	} elseif (is_dir($linkbase)) {
-		// vorhandene Daten einmalig auf den neuen Speicher uebernehmen
-		@shell_exec('cp -rn ' . escapeshellarg($linkbase) . '/. ' . escapeshellarg($target) . '/ 2>/dev/null');
-		@shell_exec('rm -rf ' . escapeshellarg($linkbase));
-		@symlink($target, $linkbase);
-	} else {
-		@symlink($target, $linkbase);
-	}
-}
-
-if (!file_exists($legacyfolder)) {
-	// 0775 statt 0777: fuer alle beschreibbar muss das Archiv nicht sein.
-	@mkdir(rtrim($legacyfolder, '/'), 0775, true);
-}
-
-$folder_img_archive = $legacyfolder."img_archive/";
-$folder_video_archive = $legacyfolder."video_archive/";
-
-if (!file_exists($folder_img_archive)) {
-	@mkdir($folder_img_archive,0775,true);
-} 
-
-if (!file_exists($folder_video_archive)) {
-	@mkdir($folder_video_archive,0775,true);
-}
-
-$folder_timelapse = $legacyfolder."timelapse/";
-if (!file_exists($folder_timelapse)) {
-	@mkdir($folder_timelapse,0775,true);
-}
-
+// Bis 2.1.13 setzte diese Datei $legacyfolder, $folder_img_archive,
+// $folder_video_archive und $folder_timelapse. Seit 2.2.0 kommen die Ordner
+// aus ic_archivordner() - einer Quelle, die auch die Selbstpruefung und das
+// Aufraeumen benutzen. Die vier Variablen blieben nach dem Umbau uebrig und
+// wurden von keiner Zeile mehr gelesen; eine Variable, die niemand benutzt,
+// ist eine falsche Faehrte fuer den naechsten Umbau.

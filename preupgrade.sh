@@ -8,42 +8,48 @@ ARGV5=$5   # Wurzelverzeichnis des LoxBerry
 BASE="${ARGV5:-$LBHOMEDIR}"
 PDIR="${ARGV3:-intercom}"
 
-# Geschweifte Klammern statt Rueckstrich.
+# ==== EINE Zweitschrift, nicht zwei ====
 #
-# Bis 1.5.0 stand hier /tmp/$ARGV1\_upgrade. Das funktioniert zwar in bash
-# (der Rueckstrich beendet den Variablennamen), ist aber genau die Sorte
-# Schreibweise, die beim naechsten Umbau kippt - etwa wenn jemand die Zeile
-# in eine POSIX-Shell uebernimmt. ${ARGV1}_upgrade ist eindeutig.
+# Der Installer kopiert config/* aus dem Archiv ueber config/plugins/<ordner>
+# (plugininstall.pl, cp -r ohne -n) und ueberschreibt dabei die Datei des
+# Nutzers. Die Rettung laeuft ueber eine Zweitschrift NEBEN dem Ordner - die
+# fasst der Installer nicht an.
 #
-# Wichtiger noch: die Sicherung liegt jetzt NICHT mehr unter /tmp.
-# /tmp ist auf dem LoxBerry eine Ramdisk. Erzwingt die Installation
-# zwischendurch einen Neustart oder faellt der Strom aus, ist sie leer -
-# und mit ihr die gesamte Konfiguration.
-SICHER="$BASE/data/plugins/$PDIR/upgrade_sicherung"
-ALT_TMP="/tmp/${ARGV1}_upgrade"
+# Bis 2.1.13 gab es dafuer ZWEI Namen: die Oberflaeche schrieb
+# <ordner>.backup.json, dieses Skript <ordner>.backup.data.json. Zwei
+# Sicherungsverfahren sind eines zu viel - und die Deinstallation raeumte nur
+# das eine weg, sodass Token und Zugangsdaten liegen blieben. Seit 2.2.0
+# schreiben beide Stellen denselben Namen.
+ZWEIT="$BASE/config/plugins/$PDIR.backup.json"
+CF="$BASE/config/plugins/$PDIR/data.json"
 
-echo "<INFO> Sichere die Konfiguration nach $SICHER"
-rm -rf "$SICHER" 2>/dev/null
-mkdir -p "$SICHER/config" 2>/dev/null
-chmod 0700 "$SICHER" 2>/dev/null
-
-if [ -d "$BASE/config/plugins/$PDIR" ]; then
-    cp -a "$BASE/config/plugins/$PDIR/." "$SICHER/config/" 2>/dev/null
-    # In data.json stehen Zugangsdaten fremder Dienste und das Zugriffstoken.
-    chmod 0600 "$SICHER/config/data.json" 2>/dev/null
-    echo "<OK> Konfiguration gesichert."
+if [ -s "$CF" ]; then
+    if cp -p "$CF" "$ZWEIT" 2>/dev/null; then
+        chmod 0600 "$ZWEIT" 2>/dev/null
+        echo "<OK> Zweitschrift der Einstellungen angelegt: $ZWEIT"
+    else
+        echo "<WARNING> Die Zweitschrift liess sich nicht anlegen: $ZWEIT"
+        echo "<WARNING> Bitte die Einstellungen nach dem Update pruefen."
+    fi
 else
     echo "<INFO> Keine Konfiguration vorhanden - offenbar eine Erstinstallation."
 fi
 
-# Die Mediendateien werden NICHT nach /tmp kopiert, sondern nur an ihren
-# dauerhaften Ort verschoben, falls sie noch im alten Plugin-Ordner liegen.
-# Ein Bild- und Videoarchiv kann viele Gigabyte gross sein - eine Kopie
-# davon in einer Ramdisk waere im besten Fall sinnlos und im schlechtesten
-# der Grund, warum der LoxBerry waehrend des Updates keinen Speicher mehr
-# hat.
+# ==== KEINE Sicherung mehr unter data/plugins/<ordner> ====
+#
+# Bis 2.1.13 legte dieses Skript dort ein upgrade_sicherung/ an und meldete
+# "<OK> Konfiguration gesichert." - postupgrade.sh beschreibt selbst, dass der
+# Installer genau dieses Verzeichnis Sekunden spaeter abraeumt ("Removing old
+# installation" vor "Deleting plugin folders", belegt im Installationsprotokoll
+# vom 12.08.2026). Die Kette war konstruktionsbedingt tot, und im Protokoll
+# stand trotzdem eine Erfolgsmeldung. Eine Meldung, die wie ein Schutz
+# aussieht und keiner ist, ist schlimmer als gar keine.
+
+# Altbestaende aus der Zeit vor 1.5.0 an ihren dauerhaften Ort holen. Kopiert
+# wird NICHT nach /tmp: das ist auf dem LoxBerry eine Ramdisk, und ein Archiv
+# kann viele Gigabyte gross sein.
 LEGACY="$BASE/webfrontend/legacy/${PDIR}_data"
-mkdir -p "$LEGACY/img_archive" "$LEGACY/video_archive" 2>/dev/null
+mkdir -p "$LEGACY/img_archive" "$LEGACY/video_archive" "$LEGACY/timelapse" 2>/dev/null
 
 for paar in "archive:img_archive" "videoarchive:video_archive"; do
     quelle="$BASE/webfrontend/html/plugins/$PDIR/${paar%%:*}"
@@ -55,23 +61,5 @@ for paar in "archive:img_archive" "videoarchive:video_archive"; do
         echo "<OK> Altbestand uebernommen."
     fi
 done
-
-
-# ==== NETZ-EINSTELLUNGEN-UPDATE (automatisch eingefuegt, nicht doppeln) ====
-# Zweitschrift NEBEN den Konfigurationsordner, zusaetzlich zur bisherigen
-# Sicherung. Grund: der Installer kopiert config/* aus dem Archiv ueber
-# config/plugins/<ordner> (plugininstall.pl Zeile 899, cp -r ohne -n) und
-# ueberschreibt dabei die Datei des Nutzers. Bisher haing die Rettung allein
-# an postupgrade.sh. Laeuft das aus irgendeinem Grund nicht durch, greift
-# jetzt postinstall.sh auf diese Zweitschrift zu - sie liegt ausserhalb des
-# ueberschriebenen Ordners und wird vom Installer nicht angefasst.
-NETZ_BASE="${5:-$LBHOMEDIR}"
-NETZ_PDIR="${3:-intercom}"
-NETZ_CFG="$NETZ_BASE/config/plugins/$NETZ_PDIR"
-if [ -s "$NETZ_CFG/data.json" ]; then
-    cp -p "$NETZ_CFG/data.json" "$NETZ_BASE/config/plugins/$NETZ_PDIR.backup.data.json" 2>/dev/null \
-        && chmod 0600 "$NETZ_BASE/config/plugins/$NETZ_PDIR.backup.data.json" 2>/dev/null
-fi
-echo "<INFO> Zweitschrift der Einstellungen angelegt."
 
 exit 0

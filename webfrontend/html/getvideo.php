@@ -4,6 +4,7 @@
  *
  * Aufruf (vom Miniserver):
  *   /plugins/<ordner>/getvideo.php?token=<TOKEN>&s=20
+ *   /plugins/<ordner>/getvideo.php?token=<TOKEN>&s=20&station=2
  *
  *
  * ===================================================================
@@ -39,78 +40,98 @@
  *      geht.
  *   3. Der Aufruf verlangt das Zugriffstoken.
  *
- * Der Befund des Pruefers zielte auf $_REQUEST['s'] - dort ist die Lage
- * milder, als sie klingt: is_numeric() laesst zwar 1e3 oder " 12" durch,
- * aber keine Shell-Sonderzeichen. Aus $s liess sich also keine
- * Befehlsausfuehrung bauen, wohl aber eine sehr lange Aufzeichnung
- * (1e3 = 1000 Sekunden). Deshalb ist $s jetzt eine ganze Zahl mit
- * Ober- und Untergrenze.
+ * NEU IN 2.2.0: der Endpunkt behauptet keinen Erfolg mehr, den er nicht
+ * kennt. Bis 2.1.13 stand success:true fest im Text - auch wenn ffmpeg
+ * gar nicht installiert war oder das Archiv nicht beschreibbar.
  */
 
-/* Die Bibliothek liegt im ANGEMELDETEN Bereich, diese Datei nicht. Der Weg
- * dorthin sieht in den beiden Zustaenden verschieden aus:
- *
- *   installiert  <home>/webfrontend/html/plugins/<ordner>/diese-datei.php
- *                <home>/webfrontend/htmlauth/plugins/<ordner>/config.php
- *   Archiv       <wurzel>/webfrontend/html/diese-datei.php
- *                <wurzel>/webfrontend/htmlauth/config.php
- *
- * Bis 2.1.1 stand hier ein fester Ausdruck mit ZWEI dirname(). Installiert
- * ergab der <home>/webfrontend/html/htmlauth/plugins/<ordner>/config.php -
- * ein Verzeichnis, das es nicht gibt. require_once auf eine fehlende Datei
- * ist ein Fatal Error, und weil display_errors erst danach abgeschaltet
- * wurde, kam nicht einmal eine lesbare Meldung zurueck, sondern HTTP 500.
- *
- * Deshalb eine Kandidatenliste statt einer Rechnung: genommen wird die
- * Datei, die wirklich da ist. */
-$ic_config_gefunden = false;
-foreach (array(
-    dirname(dirname(dirname(__DIR__))) . '/htmlauth/plugins/' . basename(__DIR__) . '/config.php',
-    dirname(dirname(__DIR__)) . '/htmlauth/plugins/' . basename(__DIR__) . '/config.php',
-    dirname(__DIR__) . '/htmlauth/config.php',
-) as $ic_kandidat) {
-    if (is_file($ic_kandidat)) {
-        require_once $ic_kandidat;
-        $ic_config_gefunden = true;
-        break;
-    }
-}
-if (!$ic_config_gefunden) {
-    /* Sagen, was fehlt, statt mit 500 zu enden. Diese Datei wird von Loxone
-     * und von der Tuerstation aufgerufen - dort sieht niemand ein
-     * Apache-Protokoll. */
-    header('HTTP/1.1 500 Internal Server Error');
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "FEHLER: config.php des Plugins wurde nicht gefunden.\n";
-    echo "Gesucht ausgehend von: " . __DIR__ . "\n";
-    echo "Bitte das Plugin neu installieren.\n";
-    exit;
-}
+require_once __DIR__ . '/ic_start.php';
 
 ini_set('max_execution_time', 120);
-ini_set('display_errors', '0');
-error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 
 ic_token_pruefen();
+
+if (isset($_GET['selftest'])) {
+    ic_selftest_antwort('getvideo.php');
+}
+
+header('Content-Type: application/json; charset=utf-8');
+
+/* ---------------- Station ---------------- */
+$ic_stationsangabe = isset($_GET['station']) && is_string($_GET['station'])
+                   ? substr($_GET['station'], 0, 32) : '';
+$station = ic_station($ic_stationsangabe);
+if ($station === null) {
+    header('HTTP/1.1 400 Bad Request');
+    echo json_encode(array('success' => false, 'error' => ic_stationen()
+        ? 'Unbekannte Station: ' . $ic_stationsangabe
+        : 'Es ist keine Tuerstation eingerichtet.'));
+    exit;
+}
 
 /* ---------------- Dauer ---------------- */
 // Ganze Zahl, mit Grenzen. 1 bis 300 Sekunden: darunter entsteht keine
 // brauchbare Aufnahme, darueber laeuft ffmpeg laenger als die Zeitgrenze
 // dieses Skripts und fuellt bei einem Daueraufruf die Karte.
+//
+// Der Befund des Pruefers zielte 2026 auf $_REQUEST['s'] - dort ist die Lage
+// milder, als sie klingt: is_numeric() laesst zwar 1e3 oder " 12" durch, aber
+// keine Shell-Sonderzeichen. Aus $s liess sich also keine Befehlsausfuehrung
+// bauen, wohl aber eine 1000-Sekunden-Aufnahme.
 $seconds = 20;
-if (isset($_REQUEST['s']) && is_numeric($_REQUEST['s'])) {
-    $seconds = (int) $_REQUEST['s'];
+if (isset($_GET['s']) && is_numeric($_GET['s'])) {
+    $seconds = (int) $_GET['s'];
 }
 if ($seconds < 1)   { $seconds = 1; }
 if ($seconds > 300) { $seconds = 300; }
 
 $arr = ic_config();
 
+/* ---------------- Voraussetzungen PRUEFEN, nicht annehmen ---------------- */
+$ffmpeg = ic_programm('ffmpeg');
+if (!$ffmpeg) {
+    ic_log_gebremst('ffmpeg', 'Eine Videoaufzeichnung wurde angefordert, aber ffmpeg '
+        . 'ist nicht installiert. Abhilfe: sudo apt-get install -y ffmpeg');
+    header('HTTP/1.1 501 Not Implemented');
+    echo json_encode(array('success' => false,
+        'error' => 'ffmpeg ist nicht installiert - ohne ffmpeg gibt es keine Videoaufzeichnung.'));
+    exit;
+}
+if (!ic_archiv_sicherstellen()) {
+    header('HTTP/1.1 500 Internal Server Error');
+    echo json_encode(array('success' => false,
+        'error' => 'Das Archivverzeichnis liess sich nicht anlegen: ' . ic_paths()['legacy']));
+    exit;
+}
+$o = ic_archivordner();
+if (!@is_writable($o['video'])) {
+    ic_log_gebremst('videoordner', 'Der Videoordner ist nicht beschreibbar: ' . $o['video']);
+    header('HTTP/1.1 500 Internal Server Error');
+    echo json_encode(array('success' => false,
+        'error' => 'Der Videoordner ist nicht beschreibbar: ' . $o['video']));
+    exit;
+}
+
+/* ---------------- Sperre ---------------- */
+// Jeder Aufruf startet ein bis zu 300 Sekunden laufendes ffmpeg im
+// Hintergrund; zehn Aufrufe starteten bis 2.1.13 zehn davon. Die Sperre ist
+// nicht blockierend: wer nicht drankommt, bekommt eine klare Absage statt
+// einer zweiten Aufnahme derselben Szene.
+$ic_sperre = ic_sperre('video');
+if ($ic_sperre === false) {
+    header('HTTP/1.1 429 Too Many Requests');
+    echo json_encode(array('success' => false,
+        'error' => 'Es laeuft bereits eine Aufzeichnung.'));
+    exit;
+}
+
 /* ---------------- Dateinamen ---------------- */
 // Der Name besteht ausschliesslich aus Datum, der geprueften Zahl und
 // festem Text - er kann also nichts Fremdes enthalten. Maskiert wird er
 // trotzdem, siehe oben Punkt 2.
-$videofile = $folder_video_archive . date('Y_m_d-H_i_s') . '-' . $seconds . 's-intercom.avi';
+$stationsteil = count(ic_stationen()) > 1
+    ? preg_replace('/[^A-Za-z0-9_\-]/', '', $station['name']) . '-' : '';
+$videofile = $o['video'] . date('Y_m_d-H_i_s') . '-' . $stationsteil . $seconds . 's-intercom.avi';
 $video_tn_file = preg_replace('/\.avi$/', '.jpg', $videofile);
 $videofilenameonly = basename($videofile);
 
@@ -128,6 +149,22 @@ if (isset($arr['timestamp_video']) && $arr['timestamp_video'] === 'on') {
 /* ---------------- Befehl zusammensetzen ---------------- */
 $basis = ic_eigene_basis();
 $token = isset($arr['aktionstoken']) ? (string) $arr['aktionstoken'] : '';
+/* Weitergegeben wird die NUMMER, nicht der Name.
+ *
+ * ic_station() fasst eine Angabe aus ein oder zwei Ziffern als Nummer auf.
+ * Wer seine dritte Station "2" nennt, haette mit dem Namen die zweite
+ * aufgezeichnet - ein Fehler, den niemand bemerkt, weil beide Stationen ein
+ * gueltiges Bild liefern. Die Nummer ist eindeutig; sie steht auch in der
+ * Loxone-Vorlage. */
+$ic_nummer = 0;
+foreach (ic_stationen() as $ic_i => $ic_s) {
+    if ($ic_s['ip'] === $station['ip'] && $ic_s['name'] === $station['name']) {
+        $ic_nummer = $ic_i + 1;
+        break;
+    }
+}
+$stationsparameter = (count(ic_stationen()) > 1 && $ic_nummer > 0)
+    ? '&station=' . $ic_nummer : '';
 
 /** Jedes Argument einzeln maskieren und mit Leerzeichen verbinden. */
 function ic_befehl(array $teile)
@@ -143,29 +180,52 @@ function ic_befehl(array $teile)
 }
 
 $aufnahme = ic_befehl(array_merge(
-    array('ffmpeg', '-f', 'mjpeg', '-t', (string) $seconds, '-r', '20',
-          '-i', $basis . '/mjpgproxy.php?token=' . rawurlencode($token)),
+    array($ffmpeg, '-f', 'mjpeg', '-t', (string) $seconds, '-r', '20',
+          '-i', $basis . '/mjpgproxy.php?token=' . rawurlencode($token) . $stationsparameter),
     $vf,
     array('-r', '5', $videofile)
 ));
 
-$vorschau = ic_befehl(array('ffmpeg', '-i', $videofile, '-ss', '00:00:02',
+$vorschau = ic_befehl(array($ffmpeg, '-i', $videofile, '-ss', '00:00:02',
                             '-vframes', '1', '-q:v', '2', $video_tn_file));
 
-$hook = ic_befehl(array('wget', '-q', '-O', '/dev/null', '--timeout=10',
-    $basis . '/videowebhook.php?token=' . rawurlencode($token)
-    . '&file=' . rawurlencode($videofilenameonly)));
+// Die Rueckmeldung laeuft ueber wget, wenn es da ist - sonst ueber php-cli.
+// Bis 2.1.13 wurde wget aufgerufen, ohne dass es in dpkg/apt stand: fehlte
+// es, lief die Aufnahme, aber der Video-Webhook loeste nie aus - und weil
+// der ganze Befehl nach /dev/null ging, fiel es nirgends auf.
+$hookurl = $basis . '/videowebhook.php?token=' . rawurlencode($token)
+         . '&file=' . rawurlencode($videofilenameonly);
+$wget = ic_programm('wget');
+if ($wget) {
+    $hook = ic_befehl(array($wget, '-q', '-O', '/dev/null', '--timeout=10', $hookurl));
+} else {
+    $php = ic_programm('php');
+    $hook = $php
+        ? ic_befehl(array($php, '-r',
+            'echo @file_get_contents(' . var_export($hookurl, true) . ');'))
+        : '';
+    if ($hook === '') {
+        ic_log_gebremst('hookweg', 'Weder wget noch php stehen zur Verfuegung - die '
+            . 'Rueckmeldung nach der Videoaufzeichnung entfaellt.');
+    }
+}
 
-$command = '(' . $aufnahme . ' ; ' . $vorschau . ' ; ' . $hook . ')';
+$command = '(' . $aufnahme . ' ; ' . $vorschau . ($hook !== '' ? ' ; ' . $hook : '') . ')';
 
 // Im Hintergrund starten. Der gesamte Befehl steht in einfachen
 // Anfuehrungszeichen der Maskierung - hier wird nichts mehr angefuegt,
 // was von aussen kommt.
+//
+// Die Sperre wird bewusst NICHT bis zum Ende der Aufnahme gehalten: dieser
+// Prozess endet gleich, der Hintergrundlauf nicht. Sie verhindert deshalb
+// gleichzeitige AUSLOESER, nicht gleichzeitige ffmpeg-Laeufe.
 shell_exec($command . ' > /dev/null 2>&1 &');
 
-/* ---------------- Antwort ---------------- */
-header('Content-type:application/json;charset=utf-8');
+ic_log('Videoaufzeichnung gestartet: ' . $videofilenameonly . ' (' . $seconds . ' s, Station "'
+    . $station['name'] . '")');
+ic_merker_setzen('video', $videofilenameonly);
 
+/* ---------------- Antwort ---------------- */
 // Die Adresse fuer den Anwender darf HTTP_HOST benutzen - sie geht in
 // eine JSON-Antwort, nicht in eine Befehlszeile. ic_host() beschraenkt
 // sie zusaetzlich auf unbedenkliche Zeichen.
@@ -174,7 +234,18 @@ $videourl = 'http://' . ic_host() . $wwwpfad;
 
 echo json_encode(array(
     'success'   => true,
+    'started'   => true,
     'timestamp' => date('d.m.Y-H:i:s'),
+    'station'   => $station['name'],
     'videofile' => $videourl,
+    'file'      => $videofilenameonly,
     'length'    => $seconds,
+    // Die Aufnahme LAEUFT - fertig ist sie erst in $seconds Sekunden. Bis
+    // 2.1.13 stand hier nur success:true, und das las sich wie "liegt bereit".
+    'ready_in'  => $seconds,
+    'hinweis'   => 'Die Aufnahme laeuft. Die Datei ist erst nach '
+                 . $seconds . ' Sekunden vollstaendig.',
 ));
+
+flock($ic_sperre, LOCK_UN);
+fclose($ic_sperre);

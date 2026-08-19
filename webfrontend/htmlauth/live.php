@@ -1,53 +1,64 @@
 <?php
+/**
+ * Intercom - Livebild
+ *
+ * Der LoxBerry meldet sich bei der Tuerstation an; wer den Strom hier sieht,
+ * braucht deren Zugangsdaten nicht. Der Strom verlangt seit 1.6.0 das
+ * Zugriffstoken.
+ */
+
 require_once "config.php";
 
-
-// This will read your language files to the array $L
 $L = LBSystem::readlanguage("language.ini");
 
-
-// ic_host() beschraenkt HTTP_HOST auf unbedenkliche Zeichen; der
-// Ordnername wird ermittelt, nicht eingetragen (Zweitinstallation heisst
-// intercom_01). Der Livestrom verlangt seit 1.6.0 das Token.
-$loxberryip = ic_host();
-$icp        = ic_plugin_ordner();
-$ictok      = '?token=' . rawurlencode((string) (ic_config()['aktionstoken'] ?? ''));
-
-$template_title = ic_titel();
-$helplink = "https://github.com/timanders22/LoxBerry-Plugin-Intercom/";
-$helptemplate = "help.html";
-
 require_once "menu.php";
-// Activate the first element
 $navbar[2]['active'] = True;
-  
-// Now output the header, it will include your navigation bar
-LBWeb::lbheader($template_title, $helplink, $helptemplate);
+LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
 require_once __DIR__ . "/ic_stil.php";
- 
 
+function ic_txt($schluessel)
+{
+    global $L;
+    return isset($L[$schluessel]) ? ic_e($L[$schluessel]) : $schluessel;
+}
 
+$ic_cfg = ic_config();
+$ic_token = isset($ic_cfg['aktionstoken']) ? (string) $ic_cfg['aktionstoken'] : '';
+$ic_st = ic_stationen();
+$ic_wahl = (isset($_GET['station']) && is_string($_GET['station'])) ? $_GET['station'] : '1';
+$ic_nr = (is_numeric($ic_wahl) && (int) $ic_wahl >= 1 && (int) $ic_wahl <= count($ic_st))
+       ? (int) $ic_wahl : 1;
 ?>
-    <script>
-// Adressen fuer script.js - Ordnername und Token stehen nur HIER, nicht in
-// der mitgelieferten .js-Datei.
-document.body.setAttribute('data-ic-admin', '/admin/plugins/<?= ic_plugin_ordner() ?>');
-document.body.setAttribute('data-ic-picture', '/plugins/<?= ic_plugin_ordner() ?>/getpicture.php?hook=false&token=<?= rawurlencode((string)(ic_config()['aktionstoken'] ?? '')) ?>');
-</script>
-<script type="text/javascript" src="script.js"></script>
-<div class="icw">
-    <h1><?= $L['UI.INTERCOM'] ?></h1>
-    <p><?=$L['COMMON.LIVETXT']?></p>
+<div class="smw">
+<h1><?= ic_txt('UI.TITEL') ?></h1>
+<p><?= ic_txt('COMMON.LIVETXT') ?></p>
 
-<p></p>
+<?php if (!$ic_st) { ?>
+<div class="sm-hinweis sm-warn"><?= ic_txt('UI.NICHT_EINGERICHTET') ?></div>
+<?php } else { ?>
 
-<p><a href="http://<?= $loxberryip; ?>/plugins/<?= $icp ?>/mjpgproxy.php<?= $ictok ?>" target="_blank">http://<?= $loxberryip; ?>/plugins/<?= $icp ?>/mjpgproxy.php<?= $ictok ?></a></p>
-
-<!-- Fix v1.4.0: MJPEG-Stream direkt als <img> einbinden (statt unvollstaendigem iframe) -->
-<img src="http://<?= $loxberryip; ?>/plugins/<?= $icp ?>/mjpgproxy.php<?= $ictok ?>" alt="Intercom Live" style="max-width: 960px; width: 75%; height: auto; display: block; margin: 0 auto;">
+<?php if (count($ic_st) > 1) { ?>
+<div class="sm-legende">
+<span><i class="sm-punkt sm-b-lesen"></i> <?= ic_txt('UI.LEG_LESEN') ?></span>
+</div>
+<div class="sm-knopfreihe">
+<?php foreach ($ic_st as $ic_i => $ic_s) { ?>
+<a class="sm-btn sm-b-lesen" href="live.php?station=<?= $ic_i + 1 ?>"><?= ic_e($ic_s['name']) ?></a>
+<?php } ?>
+</div>
+<?php } ?>
 
 <?php
-// Finally print the footer 
-echo '</div><!-- /icw -->';
-LBWeb::lbfooter();
+$ic_url = '/plugins/' . rawurlencode(ic_plugin_ordner()) . '/mjpgproxy.php?token='
+        . rawurlencode($ic_token) . '&amp;station=' . $ic_nr;
 ?>
+<p class="sm-klein"><?= ic_txt('UI.LIVE_ADRESSE') ?></p>
+<p><span class="sm-mono">http://<?= ic_e(ic_host()) ?><?= $ic_url ?></span></p>
+
+<img src="<?= $ic_url ?>" alt="<?= ic_txt('UI.LIVE_ALT') ?>"
+     style="max-width: 960px; width: 75%; height: auto; display: block; margin: 0 auto;">
+<?php } ?>
+
+</div><!-- /smw -->
+<?php
+LBWeb::lbfooter();

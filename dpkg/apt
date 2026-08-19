@@ -4,3 +4,9 @@
 # php-gd ist das versionsunabhaengige Metapaket (LB3: php7.4-gd, LB4: passend)
 php-gd
 ffmpeg
+# wget wird von getvideo.php aufgerufen, um nach der Aufnahme die Rueckmeldung
+# auszuloesen. Bis 2.1.13 stand es hier NICHT: fehlte es, lief die Aufnahme,
+# aber videowebhook.php wurde nie erreicht - und weil der gesamte Befehl nach
+# /dev/null ging, fiel es nirgends auf. Das Plugin weicht inzwischen auf php
+# aus, wenn wget fehlt; angefordert wird es trotzdem.
+wget
