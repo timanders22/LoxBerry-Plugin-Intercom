@@ -29,10 +29,58 @@ $L = LBSystem::readlanguage("language.ini");
  * enthalten keinerlei Auszeichnung, laufen also alle durch ic_e(), und was
  * eingesetzt wird, ist bewusst HTML.
  */
-function ic_txt($schluessel)
+
+/**
+ * Die Fassung des LoxBerry-MQTT-Gateways - 0 heisst "nicht feststellbar".
+ * Siehe die gleichnamige Funktion in den uebrigen Plugins.
+ */
+function ic_gateway_fassung()
+{
+    $home = getenv('LBHOMEDIR');
+    if (!$home && defined('LBHOMEDIR')) {
+        $home = LBHOMEDIR;
+    }
+    if (!$home || !is_dir($home)) {
+        return 0;
+    }
+    $d = @json_decode((string) @file_get_contents(
+        $home . '/config/system/general.json'), true);
+    if (!is_array($d)) {
+        return 0;
+    }
+    foreach (array('Mqtt', 'mqtt') as $ab) {
+        if (!isset($d[$ab]) || !is_array($d[$ab])) {
+            continue;
+        }
+        foreach (array('Gatewayversion', 'gatewayversion') as $sl) {
+            if (isset($d[$ab][$sl]) && (string) $d[$ab][$sl] !== '') {
+                return (int) $d[$ab][$sl];
+            }
+        }
+    }
+    return 0;
+}
+
+/**
+ * Der Abo-Hinweis in der Fassung, die zum Gateway passt.
+ *
+ * Gelesen wird direkt aus $L, NICHT ueber ic_txt(): die Texte tragen HTML
+ * (<b>, &#8209;), und ic_txt() maskiert. Wer sie da hindurchschickt, zeigt
+ * dem Anwender die spitzen Klammern.
+ */
+function ic_abo_text()
 {
     global $L;
-    return isset($L[$schluessel]) ? ic_e($L[$schluessel]) : $schluessel;
+    $hol = function ($k) use ($L) {
+        return isset($L[$k]) ? $L[$k] : $k;
+    };
+    $f = ic_gateway_fassung();
+    if ($f <= 0) {
+        return $hol('UI.MQTT_ABO_UNBEKANNT');
+    }
+    return $hol($f >= 2 ? 'UI.MQTT_ABO_V2' : 'UI.MQTT_ABO_PFLICHT')
+         . ' <span class="sm-mono">'
+         . sprintf($hol('UI.MQTT_ABO_GEMESSEN'), $f) . '</span>';
 }
 
 function ic_txtf($schluessel)
@@ -490,6 +538,56 @@ function ic_pz_zeile(array $z)
     $o .= '</td></tr>';
     return $o;
 }
+
+/* ---------------- Einstellungen sichern ----------------
+ *
+ * Ausgegeben wird die VOLLE Konfiguration - samt Aktionstoken. Ohne ihn
+ * stuenden nach dem Zurueckspielen alle Felder richtig, und das Plugin
+ * kaeme trotzdem nicht an die Stationen; die Datei waere wertlos. Damit
+ * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das. */
+if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
+    $ic_js = json_encode(ic_config(),
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($ic_js !== false) {
+        header('Content-Type: application/json; charset=utf-8');
+        header('Content-Disposition: attachment; filename="intercom_einstellungen_'
+               . date('Ymd_His') . '.json"');
+        echo $ic_js;
+        exit;
+    }
+    $ic_fehler[] = ic_txt('UI.SICH_SCHREIBFEHLER');
+}
+
+/* ---------------- Einstellungen zurueckspielen ----------------
+ *
+ * is_uploaded_file() ZUERST: ohne diese Pruefung liesse sich jede Datei
+ * des Servers unterschieben. Dann die Groessengrenze - eine Sicherung
+ * dieses Plugins ist wenige Kilobyte gross; alles darueber wird gar
+ * nicht erst gelesen. */
+if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
+    if (!isset($_FILES['ic_sicherung']) || !is_array($_FILES['ic_sicherung'])
+        || !isset($_FILES['ic_sicherung']['tmp_name'])
+        || !@is_uploaded_file($_FILES['ic_sicherung']['tmp_name'])) {
+        $ic_fehler[] = ic_txt('UI.SICH_KEINE_DATEI');
+    } elseif ((int) $_FILES['ic_sicherung']['size'] > 262144) {
+        $ic_fehler[] = ic_txt('UI.SICH_ZU_GROSS');
+    } else {
+        list($ic_neu_s, $ic_mangel, $ic_n) = ic_sicherung_lesen(
+            (string) @file_get_contents($_FILES['ic_sicherung']['tmp_name']));
+        if ($ic_neu_s === null) {
+            /* ALLE Beanstandungen, nicht nur die erste - und geaendert
+             * wird nichts. */
+            $ic_fehler[] = ic_txt('UI.SICH_ABGELEHNT') . ' '
+                         . implode(' ', $ic_mangel);
+        } elseif (ic_config_ablegen($ic_neu_s)) {
+            $ic_cfg = $ic_neu_s;
+            $ic_meldungen[] = sprintf(ic_txt('UI.SICH_UEBERNOMMEN'), $ic_n);
+        } else {
+            $ic_fehler[] = ic_txt('UI.SICH_SCHREIBFEHLER');
+        }
+    }
+}
+
 ?>
 
 <div class="smw">
@@ -633,11 +731,35 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 
 <div class="sm-legende">
 <span><i class="sm-punkt sm-b-aktion"></i> <?= ic_txt('UI.LEG_AKTION') ?></span>
+<span><i class="sm-punkt sm-b-lesen"></i> <?= ic_txt('UI.LEG_AKTION') ?></span>
 </div>
 <div class="sm-knopfreihe">
 <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="speichern" value="1"><?= ic_txt('UI.SPEICHERN') ?></button>
 </div>
 </form>
+
+<h2><?= ic_txt('UI.H_SICHERUNG') ?></h2>
+<div class="sm-hinweis"><?= ic_txt('UI.SICH_ERKLAERUNG') ?></div>
+<div class="sm-warnung"><?= ic_txt('UI.SICH_WARNUNG') ?></div>
+<div class="sm-knopfreihe">
+  <!-- ZWEI GETRENNTE Formulare. Das Sichern schickt einen Download und ruft
+       exit auf; das Zurueckspielen braucht enctype="multipart/form-data".
+       Wer beides in ein Formular legt, bekommt entweder keinen Upload oder
+       einen Download, der das Speichern verschluckt.
+
+       ic_formularfelder() liefert Merkmal und Reiter - dieselbe Stelle, aus
+       der sich auch die uebrigen Formulare bedienen. Ohne das Merkmal weist
+       ic_merkmal_gueltig() den POST ab. -->
+  <form method="post" action="index.php">
+    <?= ic_formularfelder('settings') ?>
+    <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="ic_sichern" value="1"><?= ic_txt('UI.K_SICHERN') ?></button>
+  </form>
+  <form method="post" action="index.php" enctype="multipart/form-data">
+    <?= ic_formularfelder('settings') ?>
+    <input data-role="none" type="file" name="ic_sicherung" accept=".json">
+    <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ic_zurueck" value="1"><?= ic_txt('UI.K_ZURUECK') ?></button>
+  </form>
+</div>
 </div>
 
 <!-- ===================== MQTT ===================== -->
@@ -655,7 +777,7 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <p class="sm-klein"><?= ic_txt('UI.MQTT_PRAEFIX_TEXT') ?></p>
 
 <h2><?= ic_txt('UI.H_MQTT_ABO') ?></h2>
-<div class="sm-hinweis"><?= ic_txtf('UI.MQTT_ABO_TEXT', ic_mono(ic_mqtt_praefix() . '/#')) ?></div>
+<div class="sm-hinweis"><?= ic_txtf('UI.MQTT_ABO_TEXT', ic_mono(ic_mqtt_praefix() . '/#')) ?> <?= ic_abo_text() ?></div>
 
 <h2><?= ic_txt('UI.H_MQTT_THEMEN') ?></h2>
 <div class="sm-tabrahmen">

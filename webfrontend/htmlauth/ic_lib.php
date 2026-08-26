@@ -2194,3 +2194,96 @@ function ic_bildlink_pruefen($code)
     if ($js !== false) { ic_datei_ersetzen(ic_bildlink_datei(), $js, 0600); }
     return true;
 }
+
+
+/**
+ * Die Schluessel, die zur Konfiguration gehoeren.
+ *
+ * Diese Linie hat KEINE Vorgabenfunktion: ic_config() gibt die data.json
+ * roh zurueck, und die Ersatzwerte stehen verstreut an den Stellen, die
+ * sie aus $_POST uebernehmen. Erfunden wird hier nichts - die Liste ist
+ * gemessen an allen Stellen, die $ic_cfg[...] oder $ic_neu[...] anfassen.
+ *
+ * Wer hier einen Schluessel ergaenzt, muss ihn auch in der Oberflaeche
+ * fuehren, sonst laesst die Sicherung etwas durch, das niemand setzt.
+ */
+function ic_sicherungsschluessel()
+{
+    return array(
+        'ai_enable', 'ai_minconf', 'ai_url', 'aktionstoken',
+        'bild_oeffentlich', 'bildweg',
+        'cleanup_count', 'cleanup_days', 'cleanup_mb',
+        'intercomip', 'intervall_min',
+        'mqtt_enable', 'mqtt_praefix',
+        'standbild_pfad', 'stationen', 'storage_path',
+        'timelapse_enable', 'timelapse_time', 'timelapse_video',
+        'timestamp_image', 'timestamp_video',
+        'tv_enable', 'tv_ip', 'tv_port',
+        'videowebhook1', 'videowebhook2',
+        'webhook1', 'webhook2', 'webhook3', 'webhook4',
+    );
+}
+
+/**
+ * Eine Sicherungsdatei einlesen - und dabei NICHTS durchgehen lassen.
+ *
+ * Grundlage ist der AKTUELLE Stand, nicht eine Vorgabenliste: Vorgabewerte
+ * gibt es hier nicht zu messen, und geraten werden sie nicht. Ein
+ * Schluessel, der in der Sicherung fehlt, behaelt damit seinen jetzigen
+ * Wert - das ist der einzige Unterschied zu den uebrigen Linien, und er
+ * ist gewollt.
+ *
+ * Der Rest ist wie ueberall: eine halb gueltige Datei ueberschreibt GAR
+ * NICHTS. Eine zur Haelfte uebernommene Konfiguration ist schlimmer als
+ * die alte, und man sieht es ihr nicht an.
+ *
+ * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte).
+ */
+function ic_sicherung_lesen($roh)
+{
+    $mangel = array();
+    $daten = json_decode((string) $roh, true);
+    if (!is_array($daten)) {
+        return array(null, array(ic_txt('UI.SICH_KEIN_JSON')), 0);
+    }
+    $neu = ic_config();
+    $bekannt = ic_sicherungsschluessel();
+    $anzahl = 0;
+    foreach ($daten as $k => $w) {
+        if (!in_array($k, $bekannt, true)) {
+            $mangel[] = sprintf(ic_txt('UI.SICH_FREMD'),
+                                 htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8'));
+            continue;
+        }
+        $neu[$k] = $w;
+        $anzahl++;
+    }
+    if ($anzahl === 0) {
+        $mangel[] = ic_txt('UI.SICH_LEER');
+    }
+    return array($mangel ? null : $neu, $mangel, $anzahl);
+}
+
+/**
+ * Ablegen und einen schlichten Wahrheitswert liefern.
+ *
+ * ic_config_speichern() gibt array($ok, $was) zurueck. Ein nicht-leeres
+ * Array ist in PHP wahr - auch wenn $ok false ist. Wer das Paar direkt in
+ * ein if schreibt, meldet jeden Schreibfehler als Erfolg.
+ */
+function ic_config_ablegen($cfg)
+{
+    $r = ic_config_speichern($cfg);
+    return is_array($r) ? (bool) $r[0] : (bool) $r;
+}
+
+/* Aus vier Oberflaechendateien hierher zusammengefuehrt. Sie trugen
+ * dieselbe Definition Wort fuer Wort - und ohne function_exists-Schutz;
+ * zwei davon gleichzeitig geladen haetten die Seite zerlegt. Solange die
+ * Uebersetzung nur in den Oberflaechen stand, liess sich ausserdem keine
+ * Bibliotheksfunktion einzeln pruefen, die sie benutzt. */
+function ic_txt($schluessel)
+{
+    global $L;
+    return isset($L[$schluessel]) ? ic_e($L[$schluessel]) : $schluessel;
+}

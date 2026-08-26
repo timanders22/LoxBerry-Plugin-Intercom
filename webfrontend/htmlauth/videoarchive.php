@@ -22,11 +22,6 @@ $navbar[4]['active'] = True;
 LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
 require_once __DIR__ . "/ic_stil.php";
 
-function ic_txt($schluessel)
-{
-    global $L;
-    return isset($L[$schluessel]) ? ic_e($L[$schluessel]) : $schluessel;
-}
 
 /** Datum, Uhrzeit und Laenge aus dem Dateinamen, verlustfrei. */
 function ic_datum_aus_videoname($name)

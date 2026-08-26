@@ -16,11 +16,6 @@ $navbar[2]['active'] = True;
 LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
 require_once __DIR__ . "/ic_stil.php";
 
-function ic_txt($schluessel)
-{
-    global $L;
-    return isset($L[$schluessel]) ? ic_e($L[$schluessel]) : $schluessel;
-}
 
 $ic_cfg = ic_config();
 $ic_token = isset($ic_cfg['aktionstoken']) ? (string) $ic_cfg['aktionstoken'] : '';
