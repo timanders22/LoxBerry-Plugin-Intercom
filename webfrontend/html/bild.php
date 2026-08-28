@@ -52,7 +52,7 @@ if ($ic_code !== '') {
 }
 
 /* ---------------- Welche Datei? ---------------- */
-$datei = ic_paths()['data'] . '/lastpicture.jpg';
+$datei = ic_paths()['datadir'] . '/lastpicture.jpg';
 $name = 'lastpicture.jpg';
 
 if ($ic_nur_letztes && isset($_GET['datei'])) {

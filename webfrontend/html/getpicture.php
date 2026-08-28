@@ -84,7 +84,7 @@ if (!$nur_vorschau) { ic_archiv_sicherstellen(); }
  * angeklickt hat. Der Reiter Einstellungen sagt, was die offene Kopie
  * bedeutet, und schaltet sie mit einem Haken ab.
  */
-$ic_intern = ic_paths()['data'] . '/lastpicture.jpg';
+$ic_intern = ic_paths()['datadir'] . '/lastpicture.jpg';
 ic_datei_ersetzen($ic_intern, $frame, 0640);
 $ic_offen = !isset($arr['bild_oeffentlich']) || $arr['bild_oeffentlich'] !== '0';
 $lastpicture = __DIR__ . '/lastpicture.jpg';

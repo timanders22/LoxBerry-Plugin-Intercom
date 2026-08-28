@@ -353,7 +353,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
         } else {
             // Umgekehrt: wer den Haken wieder wegnimmt, soll das Bild nicht
             // erst nach dem naechsten Klingeln zurueckbekommen.
-            $ic_innen = ic_paths()['data'] . '/lastpicture.jpg';
+            $ic_innen = ic_paths()['datadir'] . '/lastpicture.jpg';
             if (@is_file($ic_innen) && !@is_file($ic_offene_kopie)) {
                 ic_datei_ersetzen($ic_offene_kopie, (string) @file_get_contents($ic_innen));
             }

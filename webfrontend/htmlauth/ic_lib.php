@@ -80,7 +80,7 @@ function ic_paths()
         'home'    => $home,
         'plugin'  => $ordner,
         'config'  => $home . '/config/plugins/' . $ordner,
-        'data'    => $home . '/data/plugins/' . $ordner,
+        'datadir'    => $home . '/data/plugins/' . $ordner,
         'log'     => $home . '/log/plugins/' . $ordner,
         'html'    => $home . '/webfrontend/html/plugins/' . $ordner,
         'htmlauth' => $home . '/webfrontend/htmlauth/plugins/' . $ordner,
@@ -117,7 +117,7 @@ function ic_titel_kandidaten()
     $o = ic_plugin_ordner();
     return array(
         $p['config'] . '/plugin.cfg',
-        $p['data'] . '/plugin.cfg',
+        $p['datadir'] . '/plugin.cfg',
         $p['home'] . '/templates/plugins/' . $o . '/plugin.cfg',
         $p['htmlauth'] . '/plugin.cfg',
         $p['html'] . '/plugin.cfg',
@@ -416,7 +416,7 @@ function ic_datei_ersetzen($pfad, $inhalt, $modus = 0644)
 function ic_sperre($name)
 {
     $p = ic_paths();
-    $ordner = @is_dir($p['data']) ? $p['data'] : sys_get_temp_dir();
+    $ordner = @is_dir($p['datadir']) ? $p['datadir'] : sys_get_temp_dir();
     if (!@is_dir($ordner)) { @mkdir($ordner, 0775, true); }
     $datei = $ordner . '/.sperre_' . preg_replace('/[^a-z0-9_]/i', '', $name);
     $fh = @fopen($datei, 'c');
@@ -1029,8 +1029,8 @@ function ic_log($text)
 function ic_log_gebremst($schluessel, $text, $sekunden = 3600)
 {
     $p = ic_paths();
-    if (!@is_dir($p['data'])) { @mkdir($p['data'], 0775, true); }
-    $f = $p['data'] . '/.meld_' . preg_replace('/[^a-z0-9_]/i', '', $schluessel);
+    if (!@is_dir($p['datadir'])) { @mkdir($p['datadir'], 0775, true); }
+    $f = $p['datadir'] . '/.meld_' . preg_replace('/[^a-z0-9_]/i', '', $schluessel);
     $letzte = @is_file($f) ? (int) @file_get_contents($f) : 0;
     if (time() - $letzte >= $sekunden) {
         @file_put_contents($f, (string) time());
@@ -1050,15 +1050,15 @@ function ic_log_gebremst($schluessel, $text, $sekunden = 3600)
 function ic_merker_setzen($name, $text = '')
 {
     $p = ic_paths();
-    if (!@is_dir($p['data'])) { @mkdir($p['data'], 0775, true); }
-    $f = $p['data'] . '/.merker_' . preg_replace('/[^a-z0-9_]/i', '', $name);
+    if (!@is_dir($p['datadir'])) { @mkdir($p['datadir'], 0775, true); }
+    $f = $p['datadir'] . '/.merker_' . preg_replace('/[^a-z0-9_]/i', '', $name);
     return @file_put_contents($f, time() . "\t" . str_replace("\n", ' ', (string) $text)) !== false;
 }
 
 function ic_merker_lesen($name)
 {
     $p = ic_paths();
-    $f = $p['data'] . '/.merker_' . preg_replace('/[^a-z0-9_]/i', '', $name);
+    $f = $p['datadir'] . '/.merker_' . preg_replace('/[^a-z0-9_]/i', '', $name);
     if (!@is_file($f)) { return null; }
     $roh = (string) @file_get_contents($f);
     $teile = explode("\t", $roh, 2);
@@ -1827,7 +1827,7 @@ function ic_blaettern($gesamt, $je_seite, $wunsch)
 
 function ic_bildlink_datei()
 {
-    return ic_paths()['data'] . '/bildlinks.json';
+    return ic_paths()['datadir'] . '/bildlinks.json';
 }
 
 function ic_bildlink_liste()
