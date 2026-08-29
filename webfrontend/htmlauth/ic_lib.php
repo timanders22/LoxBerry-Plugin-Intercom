@@ -1012,6 +1012,7 @@ function ic_log($text)
     $p = ic_paths();
     if (!@is_dir($p['log'])) { @mkdir($p['log'], 0775, true); }
     $datei = ic_logdatei();
+    clearstatcache(true, $datei);
     if (@is_file($datei) && @filesize($datei) > 262144) {
         $rest = array_slice(@file($datei, FILE_IGNORE_NEW_LINES) ?: array(), -300);
         @file_put_contents($datei, implode("\n", $rest) . "\n");
