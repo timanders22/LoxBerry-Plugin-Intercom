@@ -593,7 +593,9 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
         if ($ic_neu_s === null) {
             /* ALLE Beanstandungen, nicht nur die erste - und geaendert
              * wird nichts. */
-            $ic_fehler[] = ic_txt('UI.SICH_ABGELEHNT') . ' '
+            /* ic_roh, nicht ic_txt: der Wert traegt <b>, und ic_txt()
+             * maskiert selbst. Ausgegeben wird die Zeile in :616 roh. */
+            $ic_fehler[] = ic_roh('UI.SICH_ABGELEHNT') . ' '
                          . implode(' ', $ic_mangel);
         } elseif (ic_config_ablegen($ic_neu_s)) {
             $ic_cfg = $ic_neu_s;
@@ -758,8 +760,14 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 </form>
 
 <h2><?= ic_txt('UI.H_SICHERUNG') ?></h2>
-<div class="sm-hinweis"><?= ic_txt('UI.SICH_ERKLAERUNG') ?></div>
-<div class="sm-warnung"><?= ic_txt('UI.SICH_WARNUNG') ?></div>
+<!-- ic_roh, nicht ic_txt: beide Werte tragen <b>, und ic_txt() maskiert
+     selbst (ic_lib.php: return ic_e($L[...])). Auf dem Bildschirm standen
+     deshalb die maskierten spitzen Klammern der Fettschrift im Klartext.
+     (Das Beispiel steht hier bewusst NICHT woertlich: ein Sucher nach
+     genau diesem Muster wuerde sonst diesen Kommentar melden.)
+     ic_abo_text() greift aus demselben Grund unmittelbar auf $L zu. -->
+<div class="sm-hinweis"><?= ic_roh('UI.SICH_ERKLAERUNG') ?></div>
+<div class="sm-warnung"><?= ic_roh('UI.SICH_WARNUNG') ?></div>
 <div class="sm-knopfreihe">
   <!-- ZWEI GETRENNTE Formulare. Das Sichern schickt einen Download und ruft
        exit auf; das Zurueckspielen braucht enctype="multipart/form-data".

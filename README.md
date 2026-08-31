@@ -207,7 +207,15 @@ Folgende Librarys wurden verwendet
 - https://github.com/simonwalz/php-mjpeg-proxy
 - http://www.lavrsen.dk/foswiki/bin/view/Motion/MjpegFrameGrabPHP
 
-## ChangeLog
+## Änderungen
+
+Die Freigabenotiz zu jeder Fassung steht bei den Releases:
+<https://github.com/timanders22/LoxBerry-Plugin-Intercom/releases>
+
+Die Liste darunter stammt vom Vorautor und endet bei 1.3.6. Sie bleibt stehen,
+weil es zu v1.3.5 und v1.3.6 **keine Release-Seite** gibt — nachgesehen am
+31.08.2026 über die Schnittstelle: 20 Releases, diese beiden nicht darunter.
+Für alles ab 2.0.0 gilt der Verweis oben.
 
 1.3.6
 
