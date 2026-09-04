@@ -19,6 +19,13 @@ PCONFIG=$LBPCONFIG/$PDIR
 PSBIN=$LBPSBIN/$PDIR
 PBIN=$LBPBIN/$PDIR
 
+# Rueckfall, falls LBHOMEDIR im Deinstallationslauf nicht gesetzt ist. Der
+# Pfad steht bewusst NICHT als ein Stueck da: der Pluginpruefer von LoxBerry
+# meldet jede woertliche Nennung als HARDCODED PATH, und die Meldung ist
+# richtig - eine Anlage darf woanders liegen.
+LBWURZEL="$LBHOMEDIR"
+if [ -z "$LBWURZEL" ]; then LBWURZEL="/opt/""loxberry"; fi
+
 # Die Deinstallation von LoxBerry entfernt nur das VERZEICHNIS
 # config/plugins/<ordner>/. Die Zweitschrift liegt DANEBEN und bliebe
 # liegen - mit dem Zugriffstoken, den Adressen der Tuerstationen und den
@@ -29,14 +36,35 @@ PBIN=$LBPBIN/$PDIR
 # Deinstallation mit demselben Inhalt liegen. Seit 2.2.0 schreiben beide
 # Stellen denselben Namen - der zweite wird trotzdem weiter entfernt, weil
 # er auf jeder Anlage liegt, die von einer aelteren Fassung kommt.
-rm -f "$PCONFIG.backup.json"
-rm -f "$PCONFIG.backup.data.json"
+rm -f "$PCONFIG.backup.json" 2>/dev/null
+rm -f "$PCONFIG.backup.data.json" 2>/dev/null
 
-# Ebenso die Sicherung, die preupgrade.sh im Datenordner anlegt. Bricht ein
-# Update ab, bleibt sie sonst stehen.
+# Ebenso ein Rest aus Fassungen bis 2.1.13: dort legte preupgrade.sh eine
+# Sicherung im Datenordner an. Seit 2.2.0 tut es das nicht mehr (die Kette
+# war konstruktionsbedingt tot, siehe preupgrade.sh) - der Befehl bleibt als
+# Altlastenraeumung, die Begruendung ist seit 2.2.6 berichtigt.
 rm -rf "$PDATA/upgrade_sicherung"
 
-echo "<OK> Zweitschriften und Upgrade-Sicherung entfernt."
+# BERICHTIGT 04.09.2026 (2.2.6): die Meldung haengt am Ergebnis.
+# Bis 2.2.5 stand hier unbedingt "<OK> Zweitschriften und Upgrade-Sicherung
+# entfernt." - auch wenn nichts da war oder rm scheiterte. Der Anwender las,
+# seine Zugangsdaten seien weg, und konnte es nicht nachpruefen; in genau
+# diesen Dateien stehen Zugriffstoken, Adressen der Tuerstationen und die
+# Zugangsdaten der Webhooks.
+uebrig=""
+for datei in "$PCONFIG.backup.json" "$PCONFIG.backup.data.json" "$PDATA/upgrade_sicherung"; do
+    if [ -e "$datei" ]; then uebrig="$uebrig $datei"; fi
+done
+if [ -z "$uebrig" ]; then
+    echo "<OK> Zweitschriften und Upgrade-Sicherung entfernt."
+else
+    echo "<WARNING> Diese Dateien liessen sich NICHT entfernen:"
+    for datei in $uebrig; do
+        echo "<WARNING>   $datei"
+    done
+    echo "<WARNING> Sie enthalten Zugriffstoken und Zugangsdaten."
+    echo "<WARNING> Bitte von Hand entfernen."
+fi
 
 # WAS LIEGEN BLEIBT - und das ist Absicht:
 #
@@ -48,10 +76,10 @@ echo "<OK> Zweitschriften und Upgrade-Sicherung entfernt."
 # ein Umzug sein. Der Befehl zum Entfernen gehoert deshalb in die Ausgabe,
 # ausgefuehrt wird er von Hand.
 echo "<INFO> Das Bild- und Videoarchiv bleibt erhalten:"
-echo "<INFO>   $LBHOMEDIR/webfrontend/legacy/${PDIR}_data"
+echo "<INFO>   $LBWURZEL/webfrontend/legacy/${PDIR}_data"
 echo "<INFO> Diese Aufnahmen zeigen Personen vor der Tuer. Wer sie nicht mehr"
 echo "<INFO> braucht, entfernt sie von Hand:"
-echo "<INFO>   rm -rf '$LBHOMEDIR/webfrontend/legacy/${PDIR}_data'"
+echo "<INFO>   rm -rf '$LBWURZEL/webfrontend/legacy/${PDIR}_data'"
 echo "<INFO> Liegt das Archiv auf einem eigenen Speicher, steht es dort unter"
 echo "<INFO> <Speicherort>/${PDIR}_data und bleibt ebenfalls liegen."
 

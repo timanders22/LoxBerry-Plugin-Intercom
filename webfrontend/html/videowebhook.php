@@ -77,6 +77,12 @@ if (ic_mqtt_an()) {
 }
 
 /* ---------------- Webhook 1 (POST mit JSON) ---------------- */
+if (!empty($arr['videowebhook1']) && !function_exists('curl_init')) {
+    /* BERICHTIGT 2.2.6: bis 2.2.5 sprang der Zweig kommentarlos ab. */
+    ic_log_gebremst('curl_videowebhook', 'Der Video-Webhook ist eingetragen, aber die '
+        . 'PHP-Erweiterung curl fehlt - es wird nichts aufgerufen. '
+        . 'Abhilfe: sudo apt install php-curl');
+}
 if (!empty($arr['videowebhook1']) && function_exists('curl_init')) {
     $ch = curl_init($arr['videowebhook1']);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $json);

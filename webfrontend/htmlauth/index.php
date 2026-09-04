@@ -1,4 +1,8 @@
 <?php
+/* Der Gerueststandard des Hauses. Bis 2.2.5 stand die Zeile in keiner
+ * Oberflaechendatei; welche Meldungen in der Seite landen, entschied
+ * allein die php.ini der Anlage. */
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 /**
  * Intercom - Bedienoberflaeche
  *
@@ -30,36 +34,19 @@ $L = LBSystem::readlanguage("language.ini");
  * eingesetzt wird, ist bewusst HTML.
  */
 
-/**
- * Die Fassung des LoxBerry-MQTT-Gateways - 0 heisst "nicht feststellbar".
- * Siehe die gleichnamige Funktion in den uebrigen Plugins.
+/* ic_gateway_fassung() ist am 04.09.2026 (2.2.6) nach ic_lib.php gezogen.
+ *
+ * Zwei Gruende: die Selbstpruefung im Reiter Test braucht sie (die Zeile
+ * "Welches Abo gehoert ins Gateway?" haengt seither an der Fassung), und sie
+ * suchte hier ihren Pfad ueber getenv('LBHOMEDIR') allein, waehrend
+ * ic_paths() eine Kandidatenliste fuehrt. War die Umgebungsvariable im
+ * Webkontext nicht gesetzt, meldete sie "nicht feststellbar", waehrend die
+ * Autostart- und die Portpruefung dieselbe general.json sehr wohl lasen -
+ * zwei Wahrheiten ueber denselben Dateipfad.
+ *
+ * Zwei gleichnamige Funktionen landen im selben PHP-Prozess und enden mit
+ * "Cannot redeclare"; deshalb steht hier keine Kopie.
  */
-function ic_gateway_fassung()
-{
-    $home = getenv('LBHOMEDIR');
-    if (!$home && defined('LBHOMEDIR')) {
-        $home = LBHOMEDIR;
-    }
-    if (!$home || !is_dir($home)) {
-        return 0;
-    }
-    $d = @json_decode((string) @file_get_contents(
-        $home . '/config/system/general.json'), true);
-    if (!is_array($d)) {
-        return 0;
-    }
-    foreach (array('Mqtt', 'mqtt') as $ab) {
-        if (!isset($d[$ab]) || !is_array($d[$ab])) {
-            continue;
-        }
-        foreach (array('Gatewayversion', 'gatewayversion') as $sl) {
-            if (isset($d[$ab][$sl]) && (string) $d[$ab][$sl] !== '') {
-                return (int) $d[$ab][$sl];
-            }
-        }
-    }
-    return 0;
-}
 
 /**
  * Der Abo-Hinweis in der Fassung, die zum Gateway passt.
@@ -103,6 +90,28 @@ function ic_roh($schluessel)
 {
     global $L;
     return isset($L[$schluessel]) ? $L[$schluessel] : $schluessel;
+}
+
+/**
+ * Der Sprachwert OHNE Maskierung, mit eingesetzten Platzhaltern.
+ *
+ * NEU 04.09.2026 (2.2.6). Es gab ic_txtf() (maskiert, mit Platzhaltern) und
+ * ic_roh() (roh, ohne Platzhalter) - fuer einen Wert, der BEIDES braucht,
+ * gab es keinen Weg. Genau zwei solche Werte gibt es: BILDSCHUTZ_TEXT und
+ * ARCHIVSCHUTZ_TEXT. Beide liefen ueber ic_txtf(), und die gerenderte Seite
+ * zeigte dem Anwender woertlich "&lt;b&gt;" - ausgerechnet in den zwei
+ * Kaesten, die vor einem offenen Archiv warnen.
+ *
+ * Nur fuer die neun Schluessel, die der Kopf der Sprachdatei namentlich
+ * fuehrt. Der eingesetzte Wert wird NICHT mitmaskiert - er kommt aus
+ * ic_mono()/ic_fett(), die selbst maskieren.
+ */
+function ic_rohf($schluessel)
+{
+    $args = func_get_args();
+    array_shift($args);
+    $f = ic_roh($schluessel);
+    return $args ? vsprintf($f, $args) : $f;
 }
 
 /** Ein Stueck Festbreitenschrift fuer die Platzhalter. */
@@ -178,6 +187,105 @@ if ($ic_wollte && $ic_darf && isset($_POST['vorlage'])) {
     if ($_POST['vorlage'] === 'eingang') {
         ic_vorlage_ausliefern('VI_Intercom_LoxBerry.xml', ic_vorlage_eingang($ic_host));
         exit;
+    }
+}
+
+/* ==================================================================
+ * DIE DOWNLOAD-HANDLER STEHEN VOR JEDER AUSGABE - DAS IST BAUVORSCHRIFT
+ * ==================================================================
+ *
+ * Massgeblich ist die ERSTE AUSGABE, nicht der Aufruf von lbheader().
+ *
+ * Bis 2.2.5 stand hier "vor lbheader()", und die beiden Handler lagen
+ * entsprechend kurz davor - aber ic_stil.php wurde 100 Zeilen frueher
+ * eingebunden und gab beim Einbinden 7200 Byte aus. Ueber HTTP gemessen
+ * am 04.09.2026: der Knopf "Einstellungen sichern" antwortete mit
+ * Content-type: text/html, OHNE Content-Disposition, und der Rumpf war
+ * das Stylesheet mit dem JSON am Ende - eine Seite statt einer Datei.
+ * Gemessen mit output_buffering Off, 4096 und 65536, jedes Mal gleich.
+ * Derselbe Fehler stand schon in 2.2.3 und 2.2.4.
+ *
+ * Seit 2.2.6 stehen beide Handler ganz vorn bei den uebrigen Downloads,
+ * und ic_stil.php wird erst NACH lbheader() eingebunden - so, wie es die
+ * eigene Kopfzeile dieser Datei ohnehin verlangt.
+ *
+ * Der zweite Gewinn: was hier geschieht, geschieht VOR den abgeleiteten
+ * Groessen weiter unten. Nach einem Zurueckspielen stimmen Token,
+ * Formularmerkmal, Stationsliste und alle angezeigten Adressen wieder -
+ * bis 2.2.5 zeigte die Seite danach den Vorstand.
+ * ================================================================== */
+/* ---------------- Einstellungen sichern ----------------
+ *
+ * Ausgegeben wird die VOLLE Konfiguration - samt Aktionstoken. Ohne ihn
+ * stuenden nach dem Zurueckspielen alle Felder richtig, und das Plugin
+ * kaeme trotzdem nicht an die Stationen; die Datei waere wertlos. Damit
+ * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das.
+ *
+ * Der lesbare Kopf (_plugin, _fassung, _erzeugt) sagt beim Wiederfinden,
+ * woher die Datei stammt; ic_sicherung_lesen() uebergeht jeden Schluessel
+ * mit fuehrendem Unterstrich. */
+if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
+    $ic_kopf = array(
+        '_plugin'  => 'Intercom (LoxBerry)',
+        '_fassung' => ic_fassung(),
+        '_erzeugt' => date('Y-m-d H:i:s'),
+        '_hinweis' => 'Diese Datei enthaelt das Zugriffstoken und die '
+                    . 'Zugangsdaten der Tuerstationen. Wie ein Passwort behandeln.',
+    );
+    $ic_js = json_encode($ic_kopf + ic_config(),
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($ic_js !== false) {
+        header('Content-Type: application/json; charset=utf-8');
+        header('Content-Disposition: attachment; filename="intercom_einstellungen_'
+               . date('Ymd_His') . '.json"');
+        echo $ic_js;
+        exit;
+    }
+    $ic_fehler[] = ic_txt('UI.SICH_SCHREIBFEHLER');
+}
+
+/* ---------------- Einstellungen zurueckspielen ----------------
+ *
+ * is_uploaded_file() ZUERST: ohne diese Pruefung liesse sich jede Datei
+ * des Servers unterschieben. Dann die Groessengrenze - eine Sicherung
+ * dieses Plugins ist wenige Kilobyte gross; alles darueber wird gar
+ * nicht erst gelesen. */
+if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
+    if (!isset($_FILES['ic_sicherung']) || !is_array($_FILES['ic_sicherung'])
+        || !isset($_FILES['ic_sicherung']['tmp_name'])
+        || !@is_uploaded_file($_FILES['ic_sicherung']['tmp_name'])) {
+        $ic_fehler[] = ic_txt('UI.SICH_KEINE_DATEI');
+    } elseif ((int) $_FILES['ic_sicherung']['size'] > 262144) {
+        $ic_fehler[] = ic_txt('UI.SICH_ZU_GROSS');
+    } else {
+        list($ic_neu_s, $ic_mangel, $ic_n) = ic_sicherung_lesen(
+            (string) @file_get_contents($_FILES['ic_sicherung']['tmp_name']));
+        if ($ic_neu_s === null) {
+            /* ALLE Beanstandungen, nicht nur die erste - und geaendert
+             * wird nichts. */
+            /* ic_roh, nicht ic_txt: der Wert traegt <b>, und ic_txt()
+             * maskiert selbst. Ausgegeben wird die Zeile im Kasten roh. */
+            $ic_fehler[] = ic_roh('UI.SICH_ABGELEHNT') . ' '
+                         . implode(' ', $ic_mangel);
+        } elseif (ic_config_ablegen($ic_neu_s)) {
+            $ic_cfg = $ic_neu_s;
+            $ic_meldungen[] = sprintf(ic_txt('UI.SICH_UEBERNOMMEN'), $ic_n);
+            /* Den Dienst nachziehen und sagen, was mit ihm geschah. Das
+             * Plugin fuehrt keinen Dauerlaeufer; nachzuziehen sind der
+             * Speicherort (Symlink) und der Archivschutz - beide stehen in
+             * der Sicherung. Bis 2.2.5 geschah das nur beim Speichern, und
+             * der Reiter Test meldete danach A_SPEICHER_FALSCH, ohne dass
+             * jemand verstand, warum. */
+            list($ic_sok2, $ic_smeldung2) = ic_speicherort_anwenden();
+            if (!$ic_sok2) {
+                $ic_fehler[] = ic_txtf('UI.M_SPEICHER_NICHT', ic_e($ic_smeldung2));
+            } elseif ($ic_smeldung2 === 'verschoben') {
+                $ic_meldungen[] = ic_txt('UI.M_SPEICHER_UMGEZOGEN');
+            }
+            ic_archiv_schutz_anwenden();
+        } else {
+            $ic_fehler[] = ic_txt('UI.SICH_SCHREIBFEHLER');
+        }
     }
 }
 
@@ -309,6 +417,15 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     // Vorgabewert das bisherige Verhalten bleibt: eine fehlende Angabe in
     // einer bestehenden data.json bedeutet dann "wie bisher".
     $ic_neu['bild_oeffentlich'] = isset($_POST['bild_schuetzen']) ? '0' : '1';
+    /* NEU 2.2.6, ab Werk AUS: Schutz vor das Bild- und Videoarchiv.
+     * Gemessen am LoxBerry-Quelltext: /legacy/ wird ohne Anmeldung und mit
+     * Verzeichnisauflistung ausgeliefert. Der Haken legt neben dem Archiv
+     * eine .htaccess an, wortgleich mit der des angemeldeten Bereichs.
+     * Warum nicht ab Werk an: ob der Browser die Anmeldung der Plugin-Seite
+     * zu den Bildern der Galerie mitnimmt, ist an einem Geraet zu messen
+     * und hier nicht messbar - eine Aenderung, die eine bestehende Anlage
+     * still zerbrechen koennte, wird nicht ungefragt eingeschaltet. */
+    $ic_neu['archiv_schutz'] = isset($_POST['archiv_schutz']) ? '1' : '0';
 
     /* Bildweg */
     $ic_weg = isset($_POST['bildweg']) && is_string($_POST['bildweg']) ? $_POST['bildweg'] : 'strom';
@@ -358,6 +475,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
                 ic_datei_ersetzen($ic_offene_kopie, (string) @file_get_contents($ic_innen));
             }
         }
+        ic_archiv_schutz_anwenden();
         list($ic_sok, $ic_smeldung) = ic_speicherort_anwenden();
         if (!$ic_sok) {
             $ic_fehler[] = ic_txtf('UI.M_SPEICHER_NICHT', ic_e($ic_smeldung));
@@ -457,20 +575,11 @@ if (!isset($ic_cfg['aktionstoken']) || (string) $ic_cfg['aktionstoken'] === '') 
     }
 }
 
-/* Vorgabewerte fuer noch nie gespeicherte Felder - an EINER Stelle. */
-$ic_cfg += array(
-    'intercomip' => '', 'storage_path' => '', 'timelapse_time' => '12:00',
-    'tv_ip' => '', 'tv_port' => '7676', 'ai_url' => '', 'ai_minconf' => '50',
-    'cleanup_days' => '90', 'cleanup_count' => '', 'cleanup_mb' => '',
-    'intervall_min' => '', 'standbild_pfad' => '/jpg/image.jpg',
-    'bildweg' => 'strom', 'bild_oeffentlich' => '1',
-    'mqtt_enable' => '0', 'mqtt_praefix' => '',
-    'webhook1' => '', 'webhook2' => '', 'webhook3' => '', 'webhook4' => '',
-    'videowebhook1' => '', 'videowebhook2' => '',
-    'timestamp_image' => '', 'timestamp_video' => '', 'timelapse_enable' => '',
-    'timelapse_video' => '', 'tv_enable' => '', 'ai_enable' => '',
-    'aktionstoken' => '',
-);
+/* Vorgabewerte fuer noch nie gespeicherte Felder - an EINER Stelle, und
+ * seit 2.2.6 steht diese Stelle in der Bibliothek, damit auch
+ * ic_aufbewahrung() daraus schoepft. Bis 2.2.5 zeigte das Formular hier
+ * 90 Tage, waehrend ic_aufbewahrung() mit 0 rechnete. */
+$ic_cfg += ic_vorgaben();
 
 $ic_token   = (string) $ic_cfg['aktionstoken'];
 $ic_merkmal = ic_merkmal();
@@ -494,18 +603,23 @@ foreach (array($ic_plugin . '.log', 'intercom22lox.log') as $ic_dn) {
 foreach ($ic_kandidaten as $ic_p) {
     if (@is_file($ic_p)) { $ic_logdatei = $ic_p; break; }
 }
+/* Rueckwaerts mit fseek, nicht die ganze Datei in den Speicher. Die
+ * Kandidatenliste nimmt auch die Altdatei intercom22lox.log auf, und die
+ * kappt ic_log() nie - bis 2.2.5 wurde sie nach einem Neustart
+ * vollstaendig gelesen. */
 if ($ic_logdatei !== '') {
-    $ic_zeilen = @file($ic_logdatei);
-    if (is_array($ic_zeilen)) { $ic_log = implode('', array_slice($ic_zeilen, -200)); }
+    $ic_log = ic_log_ende($ic_logdatei, 200);
 }
 
 /* ==================================================================
  * Ausgabe
  * ================================================================== */
 
+/* menu.php setzt nur $navbar und gibt nichts aus - lbheader() braucht es.
+ * ic_stil.php dagegen GIBT AUS (gemessen: 7200 Byte) und wird deshalb seit
+ * 2.2.6 erst nach lbheader() eingebunden, unten. */
 require_once "menu.php";
 $navbar[1]['active'] = True;
-require_once __DIR__ . "/ic_stil.php";
 
 /** Ein verstecktes Feldpaar, das JEDES Formular mitfuehrt. */
 function ic_formularfelder($tab)
@@ -538,76 +652,12 @@ function ic_pz_zeile(array $z)
     return $o;
 }
 
-/* ==================================================================
- * DIE HANDLER STEHEN VOR lbheader() - DAS IST BAUVORSCHRIFT
- * ==================================================================
- *
- * Stand der Kopf davor, war er beim Aufruf von header() schon
- * geschrieben - "Cannot modify header information", und der Knopf
- * "Einstellungen sichern" lieferte eine Seite mit angehaengtem JSON
- * statt einer Datei.
- *
- * Am PHP-CLI ist das unsichtbar: header() ist dort wirkungslos und
- * headers_sent() immer falsch. Und wer OHNE gueltiges Formularmerkmal
- * misst, wird vom Wachposten abgewiesen, bevor der Handler anlaeuft.
- * Beides hat den Fehler lange verdeckt.
- *
- * Reihenfolge: Bibliothek, Konfiguration, Wachposten, Reiterwahl,
- * ALLE Handler samt Downloads, dann erst lbheader(), dann HTML.
- * ================================================================== */
-/* ---------------- Einstellungen sichern ----------------
- *
- * Ausgegeben wird die VOLLE Konfiguration - samt Aktionstoken. Ohne ihn
- * stuenden nach dem Zurueckspielen alle Felder richtig, und das Plugin
- * kaeme trotzdem nicht an die Stationen; die Datei waere wertlos. Damit
- * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das. */
-if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
-    $ic_js = json_encode(ic_config(),
-        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($ic_js !== false) {
-        header('Content-Type: application/json; charset=utf-8');
-        header('Content-Disposition: attachment; filename="intercom_einstellungen_'
-               . date('Ymd_His') . '.json"');
-        echo $ic_js;
-        exit;
-    }
-    $ic_fehler[] = ic_txt('UI.SICH_SCHREIBFEHLER');
-}
-
-/* ---------------- Einstellungen zurueckspielen ----------------
- *
- * is_uploaded_file() ZUERST: ohne diese Pruefung liesse sich jede Datei
- * des Servers unterschieben. Dann die Groessengrenze - eine Sicherung
- * dieses Plugins ist wenige Kilobyte gross; alles darueber wird gar
- * nicht erst gelesen. */
-if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
-    if (!isset($_FILES['ic_sicherung']) || !is_array($_FILES['ic_sicherung'])
-        || !isset($_FILES['ic_sicherung']['tmp_name'])
-        || !@is_uploaded_file($_FILES['ic_sicherung']['tmp_name'])) {
-        $ic_fehler[] = ic_txt('UI.SICH_KEINE_DATEI');
-    } elseif ((int) $_FILES['ic_sicherung']['size'] > 262144) {
-        $ic_fehler[] = ic_txt('UI.SICH_ZU_GROSS');
-    } else {
-        list($ic_neu_s, $ic_mangel, $ic_n) = ic_sicherung_lesen(
-            (string) @file_get_contents($_FILES['ic_sicherung']['tmp_name']));
-        if ($ic_neu_s === null) {
-            /* ALLE Beanstandungen, nicht nur die erste - und geaendert
-             * wird nichts. */
-            /* ic_roh, nicht ic_txt: der Wert traegt <b>, und ic_txt()
-             * maskiert selbst. Ausgegeben wird die Zeile in :616 roh. */
-            $ic_fehler[] = ic_roh('UI.SICH_ABGELEHNT') . ' '
-                         . implode(' ', $ic_mangel);
-        } elseif (ic_config_ablegen($ic_neu_s)) {
-            $ic_cfg = $ic_neu_s;
-            $ic_meldungen[] = sprintf(ic_txt('UI.SICH_UEBERNOMMEN'), $ic_n);
-        } else {
-            $ic_fehler[] = ic_txt('UI.SICH_SCHREIBFEHLER');
-        }
-    }
-}
-
 
 LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
+
+/* Erst hier - die Datei gibt aus. Ihre eigene Kopfzeile sagt es seit jeher,
+ * live.php, archive.php und videoarchive.php halten sich daran. */
+require_once __DIR__ . "/ic_stil.php";
 
 ?>
 
@@ -628,16 +678,24 @@ LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Inte
 <?php } ?>
 
 <div class="sm-reiter">
-<a class="sm-reiter-el<?= $ic_offen === 'settings' ? ' sm-active' : '' ?>" data-ziel="tab-settings" href="index.php?tab=settings"><?= ic_txt('UI.REITER_EINSTELLUNGEN') ?></a>
-<a class="sm-reiter-el<?= $ic_offen === 'mqtt' ? ' sm-active' : '' ?>" data-ziel="tab-mqtt" href="index.php?tab=mqtt"><?= ic_txt('UI.REITER_MQTT') ?></a>
-<a class="sm-reiter-el<?= $ic_offen === 'loxone' ? ' sm-active' : '' ?>" data-ziel="tab-loxone" href="index.php?tab=loxone"><?= ic_txt('UI.REITER_LOXONE') ?></a>
-<a class="sm-reiter-el<?= $ic_offen === 'archiv' ? ' sm-active' : '' ?>" data-ziel="tab-archiv" href="index.php?tab=archiv"><?= ic_txt('UI.REITER_ARCHIV') ?></a>
-<a class="sm-reiter-el<?= $ic_offen === 'test' ? ' sm-active' : '' ?>" data-ziel="tab-test" href="index.php?tab=test"><?= ic_txt('UI.REITER_TEST') ?></a>
-<a class="sm-reiter-el<?= $ic_offen === 'log' ? ' sm-active' : '' ?>" data-ziel="tab-log" href="index.php?tab=log"><?= ic_txt('UI.REITER_LOG') ?></a>
+<a class="<?= $ic_offen === 'settings' ? 'sm-active' : '' ?>" data-ziel="tab-settings" href="index.php?tab=settings"><?= ic_txt('UI.REITER_EINSTELLUNGEN') ?></a>
+<a class="<?= $ic_offen === 'mqtt' ? 'sm-active' : '' ?>" data-ziel="tab-mqtt" href="index.php?tab=mqtt"><?= ic_txt('UI.REITER_MQTT') ?></a>
+<a class="<?= $ic_offen === 'loxone' ? 'sm-active' : '' ?>" data-ziel="tab-loxone" href="index.php?tab=loxone"><?= ic_txt('UI.REITER_LOXONE') ?></a>
+<a class="<?= $ic_offen === 'archiv' ? 'sm-active' : '' ?>" data-ziel="tab-archiv" href="index.php?tab=archiv"><?= ic_txt('UI.REITER_ARCHIV') ?></a>
+<a class="<?= $ic_offen === 'test' ? 'sm-active' : '' ?>" data-ziel="tab-test" href="index.php?tab=test"><?= ic_txt('UI.REITER_TEST') ?></a>
+<a class="<?= $ic_offen === 'log' ? 'sm-active' : '' ?>" data-ziel="tab-log" href="index.php?tab=log"><?= ic_txt('UI.REITER_LOG') ?></a>
 </div>
 
 <!-- ===================== Einstellungen ===================== -->
 <div class="sm-seite<?= $ic_offen === 'settings' ? ' sm-active' : '' ?>" id="tab-settings">
+<!-- EINE gesammelte Legende oben im Reiter, nicht je Knopfreihe - und sie
+     nennt genau die beiden Farben, die hier vorkommen. Bis 2.2.5 stand sie
+     113 Zeilen weiter unten, und der gruene Punkt trug den Text des
+     orangen (zweimal UI.LEG_AKTION). -->
+<div class="sm-legende">
+<span><i class="sm-punkt sm-b-aktion"></i> <?= ic_txt('UI.LEG_AKTION') ?></span>
+<span><i class="sm-punkt sm-b-lesen"></i> <?= ic_txt('UI.LEG_LESEN') ?></span>
+</div>
 <form method="post" action="index.php">
 <?= ic_formularfelder('settings') ?>
 
@@ -682,7 +740,12 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 
 <h2><?= ic_txt('UI.H_BILDSCHUTZ') ?></h2>
 <label><input type="checkbox" data-role="none" name="bild_schuetzen"<?= $ic_cfg['bild_oeffentlich'] === '0' ? ' checked' : '' ?>> <?= ic_txt('UI.L_BILDSCHUTZ') ?></label>
-<p class="sm-klein"><?= ic_txtf('UI.BILDSCHUTZ_TEXT', ic_mono('lastpicture.jpg'), ic_mono('bild.php?token=...')) ?></p>
+<p class="sm-klein"><?= ic_rohf('UI.BILDSCHUTZ_TEXT', ic_mono('lastpicture.jpg'), ic_mono('bild.php?token=...')) ?></p>
+
+<h2><?= ic_txt('UI.H_ARCHIVSCHUTZ') ?></h2>
+<label><input type="checkbox" data-role="none" name="archiv_schutz"<?= in_array((string) $ic_cfg['archiv_schutz'], array('1', 'on', 'true'), true) ? ' checked' : '' ?>> <?= ic_txt('UI.L_ARCHIVSCHUTZ') ?></label>
+<div class="sm-hinweis sm-warn"><?= ic_rohf('UI.ARCHIVSCHUTZ_TEXT', ic_mono('/legacy/' . $ic_plugin . '_data/')) ?></div>
+<p class="sm-klein"><?= ic_txt('UI.ARCHIVSCHUTZ_PROBE') ?></p>
 
 <h2><?= ic_txt('UI.H_SPEICHERORT') ?></h2>
 <label><?= ic_txt('UI.L_SPEICHERPFAD') ?></label>
@@ -750,10 +813,6 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <label><?= ic_txtf('UI.L_VWH2', ic_mono('<fileurl>')) ?></label>
 <input type="text" data-role="none" name="videowebhook2" value="<?= ic_e($ic_cfg['videowebhook2']) ?>">
 
-<div class="sm-legende">
-<span><i class="sm-punkt sm-b-aktion"></i> <?= ic_txt('UI.LEG_AKTION') ?></span>
-<span><i class="sm-punkt sm-b-lesen"></i> <?= ic_txt('UI.LEG_AKTION') ?></span>
-</div>
 <div class="sm-knopfreihe">
 <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="speichern" value="1"><?= ic_txt('UI.SPEICHERN') ?></button>
 </div>
@@ -767,7 +826,11 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
      genau diesem Muster wuerde sonst diesen Kommentar melden.)
      ic_abo_text() greift aus demselben Grund unmittelbar auf $L zu. -->
 <div class="sm-hinweis"><?= ic_roh('UI.SICH_ERKLAERUNG') ?></div>
-<div class="sm-warnung"><?= ic_roh('UI.SICH_WARNUNG') ?></div>
+<!-- sm-hinweis sm-warn, nicht sm-warnung: die Klasse .sm-warnung ist in
+     ic_stil.php nirgends definiert. Bis 2.2.5 stand ausgerechnet der Satz
+     "Die Datei enthaelt Ihre Zugangsdaten" deshalb als nackter Fliesstext
+     ohne Warnrahmen da. -->
+<div class="sm-hinweis sm-warn"><?= ic_roh('UI.SICH_WARNUNG') ?></div>
 <div class="sm-knopfreihe">
   <!-- ZWEI GETRENNTE Formulare. Das Sichern schickt einen Download und ruft
        exit auf; das Zurueckspielen braucht enctype="multipart/form-data".
@@ -784,7 +847,15 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
   <form method="post" action="index.php" enctype="multipart/form-data">
     <?= ic_formularfelder('settings') ?>
     <input data-role="none" type="file" name="ic_sicherung" accept=".json">
-    <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ic_zurueck" value="1"><?= ic_txt('UI.K_ZURUECK') ?></button>
+    <!-- Eigener Schluessel und eine Rueckfrage. Bis 2.2.5 trug dieser Knopf
+         UI.K_ZURUECK - "Zurueck zur Uebersicht" -, denselben Text, den die
+         beiden Galerien fuer ihren Navigationsverweis benutzen. Ein oranger
+         Knopf neben einem Dateifeld, der wie eine Rueckkehr zur Startseite
+         beschriftet ist und die gesamte Konfiguration samt Token
+         ueberschreibt. -->
+    <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ic_zurueck" value="1"
+        onclick="return confirm(this.getAttribute('data-frage'));"
+        data-frage="<?= ic_txt('UI.SICH_FRAGE') ?>"><?= ic_txt('UI.K_ZURUECKSPIELEN') ?></button>
   </form>
 </div>
 </div>
@@ -796,7 +867,7 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <input type="hidden" name="mqtt_speichern" value="1">
 
 <h2><?= ic_txt('UI.H_MQTT') ?></h2>
-<label><input type="checkbox" data-role="none" name="mqtt_enable"<?= (string) $ic_cfg['mqtt_enable'] === '1' ? ' checked' : '' ?>> <?= ic_txt('UI.L_MQTT') ?></label>
+<label><input type="checkbox" data-role="none" name="mqtt_enable"<?= ic_mqtt_an() ? ' checked' : '' ?>> <?= ic_txt('UI.L_MQTT') ?></label>
 <p class="sm-klein"><?= ic_txt('UI.MQTT_GATEWAY_TEXT') ?></p>
 
 <label><?= ic_txt('UI.L_MQTT_PRAEFIX') ?></label>
@@ -809,9 +880,14 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <h2><?= ic_txt('UI.H_MQTT_THEMEN') ?></h2>
 <div class="sm-tabrahmen">
 <table>
-<tr><th><?= ic_txt('UI.SP_THEMA') ?></th><th><?= ic_txt('UI.SP_WANN') ?></th></tr>
+<!-- Dritte Spalte seit 2.2.6: der Hausstandard verlangt, dass je Thema
+     dasteht, ob es retained gesendet wird - wer einen virtuellen Eingang
+     baut, muss wissen, ob nach einem Neustart ein Wert da ist. Die Angabe
+     kommt aus derselben Liste wie der Sender (ic_mqtt_themen()), sie kann
+     also nicht auseinanderlaufen. -->
+<tr><th><?= ic_txt('UI.SP_THEMA') ?></th><th><?= ic_txt('UI.SP_WANN') ?></th><th><?= ic_txt('UI.SP_RETAIN') ?></th></tr>
 <?php foreach (ic_mqtt_themen() as $ic_t) { ?>
-<tr><td><span class="sm-mono"><?= ic_e($ic_t[0]) ?></span></td><td><?= ic_txt($ic_t[1]) ?></td></tr>
+<tr><td><span class="sm-mono"><?= ic_e($ic_t[0]) ?></span></td><td><?= ic_txt($ic_t[1]) ?></td><td><?= ic_txt($ic_t[2] ? 'UI.JA' : 'UI.NEIN') ?></td></tr>
 <?php } ?>
 </table>
 </div>
@@ -905,6 +981,16 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
 <div class="sm-step"><b><?= ic_txt('LOX.S7') ?></b><br>
 <?= ic_txt('LOX.S7_TEXT') ?><br>
 <span class="sm-mono"><?= ic_e($ic_adr['selftest']) ?></span>
+<!-- NEU 2.2.6: die drei auswertbaren Felder stehen namentlich da.
+     Bis 2.2.5 versprach der Satz, die Antwort sei "auch fuer den Miniserver
+     auswertbar" - und liess offen, WORAUF man auswerten soll. Zwei der drei
+     Felder gab es damals ueberhaupt nicht; sie sind mit dieser Fassung
+     dazugekommen (ic_start.php). Die Feldnamen sind JSON, kein uebersetzbarer
+     Text, und stehen deshalb hier und nicht in der Sprachdatei. -->
+<p class="sm-klein"><?= ic_txt('LOX.S7_FELDER') ?><br>
+<span class="sm-mono">bestanden</span> - <?= ic_txt('LOX.S7_E1') ?><br>
+<span class="sm-mono">alter</span> - <?= ic_txt('LOX.S7_E2') ?><br>
+<span class="sm-mono">zaehler</span> - <?= ic_txt('LOX.S7_E3') ?></p>
 </div>
 
 <div class="sm-step"><b><?= ic_txt('LOX.S8') ?></b><br>
@@ -939,7 +1025,15 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
     <td><?= ic_txt('LOX.B3_PARAM') ?></td><td><?= ic_txt('LOX.B3_VERB') ?></td></tr>
 <tr><td>4</td><td><?= ic_txt('LOX.B4_TYP') ?></td><td><?= ic_txt('LOX.B4_NAME') ?></td>
     <td><?= ic_txt('LOX.B4_PARAM') ?></td><td><?= ic_txt('LOX.B4_VERB') ?></td></tr>
-<tr><td>5</td><td><?= ic_txt('LOX.B5_TYP') ?></td><td><?= ic_txt('LOX.B5_NAME') ?></td>
+<!-- Der Name wird GERECHNET, nicht getippt: das Gateway benennt den Eingang
+     nach dem Thema und ersetzt dabei "/" durch "_". Bis 2.2.5 stand hier
+     woertlich "intercom_ok" - bei einer Zweitinstallation (intercom_01) oder
+     eigenem Praefix zeigte die Baustein-Liste auf einen Eingang, den das
+     Gateway nie anlegt. Und ausgerechnet an ihm haengt die Ausfallerkennung.
+     Baustein 5 haengt seit 2.2.6 an status/ts statt an ok: ok kommt nur nach
+     einem Bildabruf, status/ts bei JEDEM Cron-Lauf - nur damit misst
+     Baustein 6 wirklich ein Alter. -->
+<tr><td>5</td><td><?= ic_txt('LOX.B5_TYP') ?></td><td><?= ic_txtf('LOX.B5_NAME', ic_mono(ic_gatewayname(ic_mqtt_praefix()) . '_status_ts')) ?></td>
     <td><?= ic_txt('LOX.B5_PARAM') ?></td><td><?= ic_txt('LOX.B5_VERB') ?></td></tr>
 <tr><td>6</td><td><?= ic_txt('LOX.B6_TYP') ?></td><td><?= ic_txt('LOX.B6_NAME') ?></td>
     <td><?= ic_txt('LOX.B6_PARAM') ?></td><td><?= ic_txt('LOX.B6_VERB') ?></td></tr>
@@ -1091,7 +1185,10 @@ if ($ic_neueste) { ?>
 <form method="post" action="index.php">
 <?= ic_formularfelder('test') ?>
 <input type="hidden" name="link_stunden" value="24">
-<button type="submit" data-role="none" class="sm-btn sm-b-technik" name="tat" value="bildlink"><?= ic_txt('UI.K_BILDLINK') ?></button>
+<!-- Orange, nicht grau: der Knopf legt einen Zugangscode an, mit dem sich
+     das Haustuerbild 24 Stunden lang fuenfmal OHNE Anmeldung abrufen laesst.
+     Das ist "loest etwas aus", nicht "technische Auskunft". -->
+<button type="submit" data-role="none" class="sm-btn sm-b-aktion" name="tat" value="bildlink"><?= ic_txt('UI.K_BILDLINK') ?></button>
 </form>
 </div>
 </div>

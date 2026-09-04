@@ -875,6 +875,51 @@ function ic_mqtt_thema($thema)
     return trim(preg_replace('#/+#', '/', $t), '/');
 }
 
+/**
+ * Der Name, unter dem das MQTT-Gateway einen virtuellen Eingang anlegt.
+ *
+ * NEU 04.09.2026 (2.2.6). Das Gateway ersetzt im Themennamen "/" durch "_"
+ * (Regeln/07). Bis 2.2.5 baute die Importvorlage ihre Titel dagegen aus dem
+ * ROHEN Praefix: bei einem Praefix "haus/tuer" hiess der Eingang in der
+ * Vorlage "haus/tuer_ok", das Gateway legte aber "haus_tuer_ok" an. Der
+ * importierte Eingang bekam nie einen Wert, und daneben entstand beim ersten
+ * Empfang ein zweiter. ic_mqtt_thema() laesst den Schraegstrich absichtlich
+ * stehen - ein mehrstufiges Thema ist zulaessig -, also gehoert die
+ * Umsetzung hierher, an EINE Stelle fuer Vorlage und Baustein-Liste.
+ */
+function ic_gatewayname($thema)
+{
+    return str_replace('/', '_', ic_mqtt_thema($thema));
+}
+
+/**
+ * Die Fassung des LoxBerry-MQTT-Gateways - 0 heisst "nicht feststellbar".
+ *
+ * UMGEZOGEN 04.09.2026 (2.2.6) aus index.php in die Bibliothek: die
+ * Selbstpruefung braucht sie, und bis 2.2.5 suchte diese Funktion ihren
+ * Pfad ueber getenv('LBHOMEDIR') allein, waehrend ic_paths() eine
+ * Kandidatenliste fuehrt. War die Umgebungsvariable im Webkontext nicht
+ * gesetzt, lasen Autostart- und Portpruefung die general.json weiterhin,
+ * die Fassungspruefung aber nicht - zwei Wahrheiten ueber denselben Pfad.
+ */
+function ic_gateway_fassung()
+{
+    $home = ic_paths()['home'];
+    if ($home === '' || !@is_dir($home)) { return 0; }
+    $d = @json_decode((string) @file_get_contents(
+        $home . '/config/system/general.json'), true);
+    if (!is_array($d)) { return 0; }
+    foreach (array('Mqtt', 'mqtt') as $ab) {
+        if (!isset($d[$ab]) || !is_array($d[$ab])) { continue; }
+        foreach (array('Gatewayversion', 'gatewayversion') as $sl) {
+            if (isset($d[$ab][$sl]) && (string) $d[$ab][$sl] !== '') {
+                return (int) $d[$ab][$sl];
+            }
+        }
+    }
+    return 0;
+}
+
 /** Eine Nutzlast fuer das MQTT-Gateway saeubern. */
 function ic_mqtt_nutzlast($wert)
 {
@@ -898,8 +943,12 @@ function ic_mqtt_nutzlast($wert)
  *
  * Uebergeben wird nur der Teil HINTER dem Praefix ('' fuer das Sammelthema).
  */
-function ic_mqtt_senden($unterthema, $wert, $retain = true)
+function ic_mqtt_senden($unterthema, $wert, $retain = null)
 {
+    /* BERICHTIGT 04.09.2026 (2.2.6): die Vorgabe ist nicht mehr "immer
+     * retained", sondern "was die Themenliste sagt". Wer es ausdruecklich
+     * anders will, uebergibt true oder false. */
+    if ($retain === null) { $retain = ic_mqtt_retain($unterthema); }
     $port = ic_mqtt_udpport();
     if (!$port) {
         ic_log_gebremst('mqtt_port', 'MQTT: in der general.json steht kein UDP-Eingangsport '
@@ -941,6 +990,26 @@ function ic_mqtt_senden($unterthema, $wert, $retain = true)
 function ic_mqtt_herzschlag()
 {
     if (!ic_mqtt_an()) { return false; }
+
+    /* Das Lebenszeichen nach Hausschema (Regeln/07): status/ok sagt, ob der
+     * letzte Lauf wirklich gemessen hat, status/ts wann, status/zaehler
+     * laeuft 0..999 um. Erst der Zaehler macht "der Dienst steht" von "er
+     * arbeitet" unterscheidbar - ein Zeitstempel allein sagt das nicht, wenn
+     * niemand die Uhr des Miniservers dagegenhaelt.
+     *
+     * <praefix>/ok bleibt unveraendert daneben stehen. Es traegt seit jeher
+     * die Loxone-Zeit, und an dem Namen haengen bestehende Anlagen; ein
+     * Umbenennen waere ein Schnitt, keine Berichtigung. Die Themenliste
+     * kennzeichnet es als ueberholt.
+     */
+    $zk = ic_merker_lesen('mqttzaehler');
+    $zaehler = ($zk === null || !is_numeric($zk['text']))
+             ? 0 : (((int) $zk['text']) + 1) % 1000;
+    ic_merker_setzen('mqttzaehler', (string) $zaehler);
+
+    ic_mqtt_senden('status/ok', '1');
+    ic_mqtt_senden('status/ts', (string) (time() - 1230768000));
+    ic_mqtt_senden('status/zaehler', (string) $zaehler);
     ic_mqtt_senden('ok', (string) (time() - 1230768000));
 
     /* Die Archivzahl kostet vier Verzeichnisdurchlaeufe. Der Herzschlag laeuft
@@ -977,16 +1046,57 @@ function ic_mqtt_an()
 function ic_mqtt_themen()
 {
     $p = ic_mqtt_praefix();
+    /* Drittes Feld: wird das Thema RETAINED gesendet?
+     *
+     * Hausstandard seit 03.09.2026 (Regeln/07): Zustaende retained, damit
+     * Loxone nach einem Neustart des Miniservers oder des Gateways sofort den
+     * Stand hat; Messwerte mit Zeitbezug NICHT retained, damit nach einem
+     * Ausfall kein alter Wert als aktuell erscheint; das Lebenszeichen NIE -
+     * retained zeigte es immer "lebt".
+     *
+     * Bis 2.2.5 ging jedes der acht Themen retained hinaus (ic_mqtt_senden()
+     * hat retain=true als Vorgabe, und kein Aufruf uebergab etwas anderes;
+     * der publish-Zweig war toter Code). Nach einem Neustart hielt der Broker
+     * damit eine alte Klingelmeldung samt Bildadresse vor, die aussah, als
+     * sei gerade geklingelt worden.
+     *
+     * Der Sender liest die Klasse aus DIESER Liste (ic_mqtt_retain()), und
+     * die Tabelle im Reiter MQTT zeigt sie an - Sender und Anleitung koennen
+     * nicht auseinanderlaufen.
+     */
     return array(
-        array($p,                   'MQTT.T_BILD'),
-        array($p . '/video',        'MQTT.T_VIDEO'),
-        array($p . '/trigger/NAME', 'MQTT.T_TRIGGER'),
-        array($p . '/ai',           'MQTT.T_AI'),
-        array($p . '/ai_count',     'MQTT.T_AI_COUNT'),
-        array($p . '/timelapse',    'MQTT.T_TIMELAPSE'),
-        array($p . '/ok',           'MQTT.T_OK'),
-        array($p . '/bilder',       'MQTT.T_BILDER'),
+        array($p,                     'MQTT.T_BILD',      false),
+        array($p . '/video',          'MQTT.T_VIDEO',     false),
+        array($p . '/trigger/NAME',   'MQTT.T_TRIGGER',   false),
+        array($p . '/ai',             'MQTT.T_AI',        false),
+        array($p . '/ai_count',       'MQTT.T_AI_COUNT',  true),
+        array($p . '/timelapse',      'MQTT.T_TIMELAPSE', false),
+        array($p . '/bilder',         'MQTT.T_BILDER',    true),
+        array($p . '/status/ok',      'MQTT.T_ST_OK',     false),
+        array($p . '/status/ts',      'MQTT.T_ST_TS',     false),
+        array($p . '/status/zaehler', 'MQTT.T_ST_ZAEHLER', false),
+        array($p . '/ok',             'MQTT.T_OK',        false),
     );
+}
+
+/**
+ * Wird dieses Unterthema retained gesendet? - aus der Themenliste, nicht
+ * aus einem zweiten Verzeichnis. Ein unbekanntes Unterthema geht NICHT
+ * retained hinaus; das ist die vorsichtigere der beiden Antworten.
+ */
+function ic_mqtt_retain($unterthema)
+{
+    $p = ic_mqtt_praefix();
+    $voll = $unterthema === '' ? $p : $p . '/' . ic_mqtt_thema($unterthema);
+    foreach (ic_mqtt_themen() as $t) {
+        if ($t[0] === $voll) { return (bool) $t[2]; }
+        /* trigger/NAME steht in der Liste als Muster. */
+        if (substr($t[0], -5) === '/NAME'
+            && strpos($voll, substr($t[0], 0, -4)) === 0) {
+            return (bool) $t[2];
+        }
+    }
+    return false;
 }
 
 /* ==================================================================
@@ -1029,14 +1139,184 @@ function ic_log($text)
  */
 function ic_log_gebremst($schluessel, $text, $sekunden = 3600)
 {
-    $p = ic_paths();
-    if (!@is_dir($p['datadir'])) { @mkdir($p['datadir'], 0775, true); }
-    $f = $p['datadir'] . '/.meld_' . preg_replace('/[^a-z0-9_]/i', '', $schluessel);
+    /* BERICHTIGT 04.09.2026 (2.2.6), zwei Sachen an derselben Stelle:
+     *
+     * 1. Der Merker lag unter data/ und wurde damit auch von einem
+     *    ABGEWIESENEN Aufruf des unangemeldeten Endpunkts angelegt -
+     *    gemessen: eine Anfrage ohne Token hinterliess
+     *    data/plugins/<ordner>/.meld_token_leer. Der unangemeldete
+     *    Endpunkt darf nichts anlegen; die Protokollzeile selbst ist
+     *    Pflicht, der Merker gehoert deshalb neben das Protokoll.
+     * 2. Damit loest sich zugleich der zweite Fehler: log/ liegt auf der
+     *    Ramdisk. Lag der Merker unter data/, ueberlebte er einen
+     *    Neustart, das Protokoll nicht - bis zu eine Stunde lang
+     *    schwieg die Bremse ueber eine laufende Stoerung, waehrend die
+     *    Protokolldatei leer war.
+     *
+     * Und der Merker wird erst NACH ic_log() gesetzt: scheitert das
+     * Schreiben ins Protokoll, ist die Meldung sonst trotzdem
+     * verbraucht.
+     */
+    $f = ic_logordner() . '/.meld_' . preg_replace('/[^a-z0-9_]/i', '', $schluessel);
     $letzte = @is_file($f) ? (int) @file_get_contents($f) : 0;
     if (time() - $letzte >= $sekunden) {
-        @file_put_contents($f, (string) time());
         ic_log($text);
+        @file_put_contents($f, (string) time());
     }
+    return true;
+}
+
+/**
+ * Ist eine Sperre gerade belegt? - ANSEHEN, nicht nehmen.
+ *
+ * NEU 04.09.2026 (2.2.6) fuer cleanup.php: die Bereinigung wartet kurz auf
+ * den Zeitrafferlauf, statt sofort aufzugeben. Die Sperre wird dabei
+ * geoeffnet, geprueft und sofort wieder freigegeben - genommen wird sie
+ * nicht.
+ */
+function ic_sperre_belegt($name)
+{
+    $p = ic_paths();
+    if (!@is_dir($p['datadir'])) { return false; }
+    $datei = $p['datadir'] . '/.sperre_' . preg_replace('/[^a-z0-9_]/i', '', $name);
+    if (!@is_file($datei)) { return false; }
+    $fh = @fopen($datei, 'c');
+    if ($fh === false) { return true; }   // im Zweifel belegt - fail closed
+    $frei = @flock($fh, LOCK_EX | LOCK_NB);
+    if ($frei) { @flock($fh, LOCK_UN); }
+    @fclose($fh);
+    return !$frei;
+}
+
+/**
+ * Der Protokollordner - eine Quelle fuer Protokoll und Bremsmerker.
+ */
+function ic_logordner()
+{
+    $o = defined('LBPLOGDIR') && LBPLOGDIR !== '' ? LBPLOGDIR : ic_paths()['log'];
+    if (!@is_dir($o)) { @mkdir($o, 0775, true); }
+    return rtrim($o, '/');
+}
+
+/**
+ * Die letzten N Zeilen einer Datei - RUECKWAERTS gelesen, nicht ganz.
+ *
+ * NEU 04.09.2026 (2.2.6). Bis 2.2.5 las die Oberflaeche mit
+ * @file($datei) die ganze Datei in den Speicher und nahm davon die
+ * letzten 200 Zeilen. Fuer <ordner>.log ist das durch die Kappung bei
+ * 256 kB begrenzt - die Kandidatenliste nimmt aber auch die Altdatei
+ * intercom22lox.log auf, und die kappt ic_log() nie (ic_logdatei()
+ * bildet nur den neuen Namen). Nach einem Neustart, solange die neue
+ * Datei noch fehlt, wurde also eine ungekappte Datei vollstaendig
+ * gelesen.
+ *
+ * Gemessen im Haus an 12.000 Zeilen (610 kB), je 20 Durchlaeufe:
+ * file()+array_reverse 0,37 ms und 2048 kB zusaetzlicher Speicher,
+ * exec("tail") 2,17 ms, rueckwaerts mit fseek 0,05 ms und 0 kB.
+ */
+function ic_log_ende($datei, $zeilen = 200, $block = 8192)
+{
+    if (!@is_file($datei)) { return ''; }
+    $fh = @fopen($datei, 'rb');
+    if ($fh === false) { return ''; }
+    @fseek($fh, 0, SEEK_END);
+    $rest = (int) @ftell($fh);
+    $puffer = '';
+    $gefunden = 0;
+    while ($rest > 0 && $gefunden <= $zeilen) {
+        $lies = ($rest > $block) ? $block : $rest;
+        $rest -= $lies;
+        @fseek($fh, $rest, SEEK_SET);
+        $stueck = (string) @fread($fh, $lies);
+        $puffer = $stueck . $puffer;
+        $gefunden = substr_count($puffer, "\n");
+    }
+    @fclose($fh);
+    $z = explode("\n", $puffer);
+    if (count($z) > $zeilen) { $z = array_slice($z, -$zeilen); }
+    return implode("\n", $z);
+}
+
+/**
+ * Taugt dieser Wert ueberhaupt fuer eine Konfigurationsdatei?
+ *
+ * NEU 04.09.2026 (2.2.6), Eingang der Wertpruefung beim Zurueckspielen.
+ * Kein Feld, kein Objekt, kein Wahrheitswert, kein null, keine
+ * Steuerzeichen, Laengengrenze. 'stationen' ist die einzige Ausnahme
+ * und wird eigens geprueft.
+ */
+function ic_wert_taugt($w)
+{
+    if (is_array($w) || is_object($w) || is_bool($w) || is_null($w)) { return false; }
+    $t = (string) $w;
+    if (strlen($t) > 4096) { return false; }
+    return preg_match('/[\x00-\x08\x0A-\x1F\x7F]/', $t) !== 1;
+}
+
+/**
+ * Ist dieser Wert fuer DIESE Einstellung zulaessig?
+ *
+ * NEU 04.09.2026 (2.2.6). Bis 2.2.5 prueste ic_sicherung_lesen() nur den
+ * SCHLUESSEL; jeder Wert ging durch. Gemessen ueber HTTP mit einer
+ * hochgeladenen Datei: aus dem Aktionstoken wurde die Zahl 12345, aus
+ * storage_path ein Feld, aus mqtt_praefix "haus\nEINGESCHLEUST=ja" -
+ * ein Zeilenumbruch in einem Thema schleust eine zweite Zeile in jedes
+ * UDP-Datagramm an das Gateway.
+ *
+ * Geprueft wird gegen dieselben Formen, die das Formular schreibt.
+ */
+function ic_wert_pruefen($schluessel, $wert)
+{
+    /* Stationen: ein Feld von Feldern mit bekannten Feldnamen. */
+    if ($schluessel === 'stationen') {
+        if (!is_array($wert)) { return false; }
+        if (count($wert) > 50) { return false; }
+        $erlaubt = array('name', 'ip', 'user', 'pass', 'ms', 'standbild');
+        foreach ($wert as $st) {
+            if (!is_array($st)) { return false; }
+            foreach ($st as $sk => $sw) {
+                if (!in_array((string) $sk, $erlaubt, true)) { return false; }
+                if (!ic_wert_taugt($sw)) { return false; }
+            }
+        }
+        return true;
+    }
+    if (!ic_wert_taugt($wert)) { return false; }
+    $t = (string) $wert;
+
+    if ($schluessel === 'aktionstoken') {
+        /* Weit gefasst und mit Laenge 0 - ein leeres Token in einer
+         * Sicherung heisst "kein Token gesichert" und ist kein
+         * unzulaessiger Wert. Zugelassen ist, was ohne Kodierung in eine
+         * Adresse passt. */
+        return preg_match('/^[A-Za-z0-9_.\-]{0,64}$/', $t) === 1;
+    }
+    if (in_array($schluessel, array('cleanup_days', 'cleanup_count', 'cleanup_mb',
+                                    'intervall_min', 'tv_port', 'ai_minconf'), true)) {
+        return $t === '' || is_numeric($t);
+    }
+    if ($schluessel === 'bildweg') {
+        return in_array($t, array('strom', 'standbild', 'auto'), true);
+    }
+    if ($schluessel === 'timelapse_time') {
+        return $t === '' || preg_match('/^([01]?\d|2[0-3]):([0-5]\d)$/', $t) === 1;
+    }
+    if (in_array($schluessel, array('timestamp_image', 'timestamp_video',
+                                    'timelapse_enable', 'timelapse_video',
+                                    'tv_enable', 'ai_enable'), true)) {
+        return $t === '' || $t === 'on';
+    }
+    if (in_array($schluessel, array('bild_oeffentlich', 'mqtt_enable',
+                                    'archiv_schutz'), true)) {
+        return in_array($t, array('', '0', '1', 'on', 'true'), true);
+    }
+    if ($schluessel === 'mqtt_praefix') {
+        /* Kein Schraegstrich am Rand, keine Rauten, keine Pluszeichen -
+         * dieselbe Form, die ic_mqtt_thema() herstellt. */
+        return $t === '' || preg_match('#^[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-]+)*$#', $t) === 1;
+    }
+    /* Alles Uebrige ist ein einzeiliges Textfeld - ic_wert_taugt() hat es
+     * bereits geprueft. */
     return true;
 }
 
@@ -1138,10 +1418,16 @@ function ic_aufbewahrung()
 {
     $cfg = ic_config();
     $n = function ($w) { return is_numeric($w) ? max(0, (int) $w) : 0; };
+    /* BERICHTIGT 04.09.2026 (2.2.6): der Ersatzwert kommt aus ic_vorgaben(),
+     * nicht als 0 daneben. Vorher zeigte das Formular 90 Tage und diese
+     * Funktion rechnete mit 0 - gemessen an einer frischen Anlage. */
     return array(
-        'tage' => $n(isset($cfg['cleanup_days']) ? $cfg['cleanup_days'] : 0),
-        'zahl' => $n(isset($cfg['cleanup_count']) ? $cfg['cleanup_count'] : 0),
-        'mb'   => $n(isset($cfg['cleanup_mb']) ? $cfg['cleanup_mb'] : 0),
+        'tage' => $n(isset($cfg['cleanup_days'])
+                     ? $cfg['cleanup_days'] : ic_vorgabe('cleanup_days', 0)),
+        'zahl' => $n(isset($cfg['cleanup_count'])
+                     ? $cfg['cleanup_count'] : ic_vorgabe('cleanup_count', 0)),
+        'mb'   => $n(isset($cfg['cleanup_mb'])
+                     ? $cfg['cleanup_mb'] : ic_vorgabe('cleanup_mb', 0)),
     );
 }
 
@@ -1340,44 +1626,91 @@ function ic_vorlage_ausgang($host, $token)
     foreach ($st as $i => $s) {
         $nr = (string) ($i + 1);
         $a = ic_adressen($host, $token, 'klingel', $nr);
+        /* Der Comment wird in Loxone Config zum ANZEIGENAMEN - eine
+         * Beschriftung, kein Satz. Bis 2.2.5 standen hier 42 und 56
+         * Zeichen; die Erklaerung steht jetzt im HintText der Wurzel. */
         $cmds[] = array(
             'title' => 'Foto ' . $s['name'],
-            'comment' => 'Holt ein Standbild und legt es ins Archiv.',
+            'comment' => 'Foto ins Archiv',
             'on' => $a['bild_trig'],
         );
         $cmds[] = array(
             'title' => 'Video ' . $s['name'],
-            'comment' => 'Nimmt 10 Sekunden auf; erlaubt sind 1 bis 300 ueber &s=.',
+            'comment' => 'Video 10 s',
             'on' => $a['video'],
         );
     }
+    /* BERICHTIGT 04.09.2026 (2.2.6): eine vollstaendige http-Adresse, kein
+     * Geraetepfad.
+     *
+     * Gemessen an der massgeblichen Ausfuhr aus Loxone Config vom 12.08.2026
+     * (VO_Intercom2Loxberry - Foto_Test.xml, genau dieser Anwendungsfall):
+     * Config schreibt dort
+     *     Address="http://<host>/plugins/intercom/getpicture.php?token=..."
+     * und dieselbe vollstaendige URL noch einmal als CmdOn. Ein Geraetepfad
+     * /dev/tcp/<host>/80 schickt den Befehlstext roh ueber die Verbindung -
+     * eine http-URL als CmdOn ist dort kein gueltiger Aufruf. Der
+     * Importknopf legte damit Befehle an, die nichts ausloesen, waehrend die
+     * von Hand nach Schritt 2 nachgebaute Fassung arbeitete. */
+    $erste = $cmds ? $cmds[0]['on'] : ('http://' . $host . '/');
     return ic_xml_virtual_out(array(
         'title'   => 'Intercom (LoxBerry-Plugin)',
         'comment' => 'Erzeugt vom Plugin Intercom. Loxone Config legt beim Import NEU an.',
-        'address' => '/dev/tcp/' . $host . '/80',
-        'hint'    => 'Adresse pruefen: der Miniserver muss den LoxBerry unter diesem Namen erreichen.',
+        'address' => $erste,
+        'hint'    => 'Adresse pruefen: der Miniserver muss den LoxBerry unter diesem '
+                   . 'Namen erreichen. Foto holt ein Standbild und legt es ins Archiv; '
+                   . 'Video nimmt 10 Sekunden auf - erlaubt sind 1 bis 300 ueber &s=, '
+                   . 'ein Wert ausserhalb wird abgewiesen.',
     ), $cmds);
 }
 
 /** Die Vorlage der Rueckmeldungen (MQTT-Gateway-Eingaenge). */
 function ic_vorlage_eingang($host)
 {
-    $p = ic_mqtt_praefix();
+    /* BERICHTIGT 04.09.2026 (2.2.6), vier Sachen an dieser Stelle:
+     *
+     * 1. Der Titel kommt aus ic_gatewayname(), nicht aus dem rohen Praefix -
+     *    das Gateway ersetzt "/" durch "_", die Vorlage tat es nicht.
+     * 2. ai_count fehlte, obwohl es ein reiner Zahlenwert ist und der
+     *    Hinweistext behauptete, es fehlten nur Texte.
+     * 3. Die drei Lebenszeichen-Themen sind dazugekommen.
+     * 4. Der Comment wird in Loxone Config zum ANZEIGENAMEN. "Herzschlag:
+     *    Loxone-Zeit des letzten Abrufs (Sekunden seit 01.01.2009)." sind
+     *    70 Zeichen - das ist ein Satz, kein Kachelname. Die Erklaerung steht
+     *    jetzt im HintText, wo sie hingehoert.
+     */
+    $g = ic_gatewayname(ic_mqtt_praefix());
     $cmds = array(
-        array('title' => $p . '_ok',
-              'comment' => 'Herzschlag: Loxone-Zeit des letzten Abrufs (Sekunden seit 01.01.2009).',
-              'analog' => true, 'min' => '0', 'max' => '2147483647', 'unit' => '<v.1>'),
-        array('title' => $p . '_bilder',
-              'comment' => 'Zahl der Bilder im Archiv.',
-              'analog' => true, 'min' => '0', 'max' => '1000000', 'unit' => '<v.1>'),
+        array('title' => $g . '_status_ok',
+              'comment' => 'Lebenszeichen',
+              'analog' => true, 'min' => '0', 'max' => '1', 'unit' => '<v.0>'),
+        array('title' => $g . '_status_ts',
+              'comment' => 'Herzschlag (Loxone-Zeit)',
+              'analog' => true, 'min' => '0', 'max' => '2000000000', 'unit' => '<v.0> s'),
+        array('title' => $g . '_status_zaehler',
+              'comment' => 'Laufzaehler 0-999',
+              'analog' => true, 'min' => '-1', 'max' => '999', 'unit' => '<v.0>'),
+        array('title' => $g . '_bilder',
+              'comment' => 'Bilder im Archiv',
+              'analog' => true, 'min' => '0', 'max' => '1000000', 'unit' => '<v.0>'),
+        array('title' => $g . '_ai_count',
+              'comment' => 'Erkannte Objekte',
+              'analog' => true, 'min' => '0', 'max' => '100', 'unit' => '<v.0>'),
+        array('title' => $g . '_ok',
+              'comment' => 'Herzschlag (ueberholt)',
+              'analog' => true, 'min' => '0', 'max' => '2000000000', 'unit' => '<v.0> s'),
     );
     return ic_xml_virtual_in(array(
         'title'   => 'Intercom Rueckmeldungen (LoxBerry-Plugin)',
         'comment' => 'Die Werte kommen vom MQTT-Gateway, nicht von dieser Adresse.',
         'address' => 'http://localhost',
         'polling' => 604800,
-        'hint'    => 'Nur Zahlenwerte. Texte (Bildadresse, erkannte Objekte) legt das '
-                   . 'Gateway beim ersten Empfang selbst an.',
+        'hint'    => 'Nur Zahlenwerte. Texte (Bildadresse, erkannte Objekte, '
+                   . 'Zeitrafferdatei) legt das Gateway beim ersten Empfang selbst '
+                   . 'an. Die Zeile <praefix>_ok ist ueberholt und steht nur fuer '
+                   . 'bestehende Anlagen hier; neu ist <praefix>_status_ts. '
+                   . 'Ausfallerkennung: <praefix>_status_zaehler aendert sich in '
+                   . 'jeder Minute - bleibt er stehen, laeuft der Cron nicht.',
     ), $cmds);
 }
 
@@ -1493,13 +1826,37 @@ function ic_selbsttest($mit_netz = false)
         ? ic_pz('ok', 'TEST.F_GD', 'TEST.A_JA')
         : ic_pz((empty($cfg['timestamp_image']) && empty($cfg['timestamp_video']))
                 ? 'hinweis' : 'fehl', 'TEST.F_GD', 'TEST.A_NEIN', 'TEST.R_GD');
+    /* NEU 04.09.2026 (2.2.6): php-curl wurde bis 2.2.5 an vier Stellen
+     * gebraucht (Bild ans Anzeigegeraet, Webhook 1 und 3, Video-Webhook,
+     * Objekterkennung), stand nicht in dpkg/apt, und jede der vier Stellen
+     * sprang kommentarlos ab. Fehlte es, feuerte nichts davon - und nichts
+     * sagte es. Jetzt steht es in dpkg/apt, die Stellen schreiben eine
+     * gebremste Zeile, und hier steht die Frage. */
+    $z[] = function_exists('curl_init')
+        ? ic_pz('ok', 'TEST.F_CURL', 'TEST.A_JA')
+        : ic_pz((empty($cfg['webhook1']) && empty($cfg['webhook2'])
+                 && empty($cfg['webhook3']) && empty($cfg['webhook4'])
+                 && empty($cfg['videowebhook1']) && empty($cfg['videowebhook2'])
+                 && empty($cfg['tv_enable']) && empty($cfg['ai_enable']))
+                ? 'hinweis' : 'fehl', 'TEST.F_CURL', 'TEST.A_NEIN', 'TEST.R_CURL');
+    $z[] = ic_archiv_geschuetzt()
+        ? ic_pz('ok', 'TEST.F_ARCHIVSCHUTZ', 'TEST.A_ARCHIVSCHUTZ_AN')
+        : ic_pz('hinweis', 'TEST.F_ARCHIVSCHUTZ', 'TEST.A_ARCHIVSCHUTZ_AUS',
+                'TEST.R_ARCHIVSCHUTZ');
     $z[] = function_exists('socket_create')
         ? ic_pz('ok', 'TEST.F_SOCKETS', 'TEST.A_JA')
-        : ic_pz(empty($cfg['mqtt_enable']) ? 'hinweis' : 'fehl',
+        : ic_pz(!ic_mqtt_an() ? 'hinweis' : 'fehl',
                 'TEST.F_SOCKETS', 'TEST.A_NEIN', 'TEST.R_SOCKETS');
 
+    /* BERICHTIGT 04.09.2026 (2.2.6): der Schalter wird ausschliesslich ueber
+     * ic_mqtt_an() beantwortet. Bis 2.2.5 stand daneben zweimal empty() und
+     * einmal === '1'; der Kommentar an ic_mqtt_an() erklaerte die
+     * Vereinheitlichung fuer vollzogen, sie war es nicht. Stand 'on' oder
+     * 'true' in der Datei - was ic_mqtt_an() zulaesst und was die
+     * Rueckspielfunktion bis 2.2.5 durchliess -, sendete der Herzschlag,
+     * das Zeitrafferthema aber nicht. */
     /* -------- MQTT -------- */
-    if (!empty($cfg['mqtt_enable'])) {
+    if (ic_mqtt_an()) {
         $port = ic_mqtt_udpport();
         $z[] = $port
             ? ic_pz('ok', 'TEST.F_MQTTPORT', (string) $port)
@@ -1512,7 +1869,21 @@ function ic_selbsttest($mit_netz = false)
         } else {
             $z[] = ic_pz('unklar', 'TEST.F_MQTTAUTO', 'TEST.A_UNKLAR');
         }
-        $z[] = ic_pz('ok', 'TEST.F_MQTTABO', ic_mqtt_praefix() . '/#');
+        /* BERICHTIGT 04.09.2026 (2.2.6): diese Zeile war immer gruen und
+         * kannte Gateway V2 nicht. Ein Haken, der nichts gemessen hat, geht
+         * in die Bilanz "x von y in Ordnung" ein; und bei V2 sagte er "das
+         * Abo gehoert ins Gateway", waehrend der Reiter MQTT zwei Zeilen
+         * weiter richtig sagt, dass dort nichts einzutragen ist. */
+        $gv = ic_gateway_fassung();
+        if ($gv >= 2) {
+            $z[] = ic_pz('hinweis', 'TEST.F_MQTTABO', 'TEST.A_MQTTABO_V2');
+        } elseif ($gv === 0) {
+            $z[] = ic_pz('unklar', 'TEST.F_MQTTABO', 'TEST.A_UNKLAR', 'TEST.R_MQTTABO');
+        } else {
+            $z[] = ic_pz('hinweis', 'TEST.F_MQTTABO', ic_mqtt_praefix() . '/#',
+                         'TEST.R_MQTTABO');
+        }
+        $z[] = ic_pruefe_themen();
     } else {
         $z[] = ic_pz('hinweis', 'TEST.F_MQTT', 'TEST.A_MQTT_AUS');
     }
@@ -1625,10 +1996,83 @@ function ic_pruefe_reiter()
                 array(), array(count($leiste), count($bereiche), count($liste)));
 }
 
+/**
+ * Stimmen die gesendeten Themen mit der Themenliste ueberein?
+ *
+ * NEU 04.09.2026 (2.2.6). Die Deckung war beim Nachmessen vollstaendig - aber
+ * nichts hielt sie. Genau daran ist Renault 2.0.6 gescheitert: 20 gesendete
+ * Themen standen in keiner Anleitung. Gelesen werden die ic_mqtt_senden()-
+ * Aufrufe aus ALLEN drei Dateien, die senden, nicht nur aus dieser.
+ */
+function ic_pruefe_themen()
+{
+    $p = ic_paths();
+    $dateien = array(
+        __DIR__ . '/ic_lib.php',
+        dirname(__DIR__) . '/html/getpicture.php',
+        dirname(__DIR__) . '/html/videowebhook.php',
+        $p['html'] . '/getpicture.php',
+        $p['html'] . '/videowebhook.php',
+    );
+    $gesendet = array();
+    $gelesen = 0;
+    foreach ($dateien as $d) {
+        if (!@is_file($d)) { continue; }
+        $t = (string) @file_get_contents($d);
+        if ($t === '') { continue; }
+        $gelesen++;
+        if (preg_match_all("/ic_mqtt_senden\(\s*'([^']*)'/", $t, $m)) {
+            foreach ($m[1] as $u) {
+                $gesendet[$u === '' ? '' : $u] = true;
+            }
+        }
+    }
+    if ($gelesen === 0) {
+        return ic_pz('unklar', 'TEST.F_THEMEN', 'TEST.A_UNKLAR');
+    }
+    $praefix = ic_mqtt_praefix();
+    $genannt = array();
+    foreach (ic_mqtt_themen() as $t) {
+        $genannt[$t[0]] = true;
+    }
+    $fehlt = array();
+    foreach (array_keys($gesendet) as $u) {
+        /* 'trigger/' . $trigger steht als Verkettung im Quelltext; der
+         * Aufruf liefert dann 'trigger/' - die Liste fuehrt trigger/NAME.
+         *
+         * BERICHTIGT am Tag des Einbaus (04.09.2026), gemessen an der
+         * Selbstpruefung: hier stand rtrim($u, '/') und danach .= 'NAME',
+         * also OHNE den Schraegstrich - herausgekommen ist
+         * "<praefix>/triggerNAME", das steht in keiner Liste, und die
+         * Zeile meldete auf JEDER Anlage einen Fehler. Eine Pruefung, die
+         * immer rot ist, ist keine Pruefung. */
+        $voll = $u === '' ? $praefix : $praefix . '/' . rtrim($u, '/');
+        if (substr($u, -1) === '/') { $voll .= '/NAME'; }
+        if (!isset($genannt[$voll])) { $fehlt[] = $voll; }
+    }
+    if ($fehlt) {
+        return ic_pz('fehl', 'TEST.F_THEMEN', implode(', ', $fehlt), 'TEST.R_THEMEN',
+                     array(), array());
+    }
+    return ic_pz('ok', 'TEST.F_THEMEN', 'TEST.A_THEMEN', '', array(),
+                 array(count($gesendet), count($genannt)));
+}
+
 /** Die erzeugte Vorlage durch den XML-Leser schicken - wohlgeformt oder nicht. */
 function ic_pruefe_vorlage()
 {
     $cfg = ic_config();
+    /* BERICHTIGT 04.09.2026 (2.2.6): php-xml ist nicht garantiert geladen.
+     * Bis 2.2.5 stand simplexml_load_string() ohne Wache hier - es war die
+     * EINZIGE ungeschuetzte Erweiterungsfunktion des Plugins. Fehlte
+     * php-xml, starb ic_selbsttest() mit einem fatalen Fehler, und weil
+     * ic_start.php display_errors abschaltet, war das HTTP 500 mit leerem
+     * Rumpf - an allen fuenf Endpunkten, ausgerechnet an der Stelle, die
+     * dem Anwender sagen soll, ob sein Token stimmt. php-xml steht seit
+     * 2.2.6 zusaetzlich in dpkg/apt. */
+    if (!function_exists('simplexml_load_string')) {
+        return ic_pz('unklar', 'TEST.F_VORLAGE', 'TEST.A_VORLAGE_UNKLAR', 'TEST.R_VORLAGE_XML');
+    }
     $token = isset($cfg['aktionstoken']) ? (string) $cfg['aktionstoken'] : 'TOKEN';
     $xml = ic_vorlage_ausgang(ic_host(), $token) . ic_vorlage_eingang(ic_host());
     $vorher = libxml_use_internal_errors(true);
@@ -1686,7 +2130,75 @@ function ic_archiv_sicherstellen()
     foreach (ic_archivordner() as $d) {
         if (!@file_exists($d)) { @mkdir($d, 0775, true); }
     }
+    ic_archiv_schutz_anwenden();
     return @is_dir($l);
+}
+
+/** Der Pfad der Schutzdatei des Archivs. */
+function ic_archiv_schutzdatei()
+{
+    return rtrim(ic_paths()['legacy'], '/') . '/.htaccess';
+}
+
+/**
+ * Ist das Archiv ohne Anmeldung erreichbar?
+ *
+ * NEU 04.09.2026 (2.2.6). Gemessen am Quelltext der LoxBerry-Fassung
+ * 4.0.0.15 und der LoxBerry-Fassung 3.0.1.3: die Vhost-Datei traegt
+ *     Alias /legacy/ ${LBHOMEDIR}/webfrontend/legacy/
+ * mit einem Directory-Block OHNE AuthType und Require und MIT
+ * Options +Indexes; unter webfrontend/legacy/ liegt keine .htaccess,
+ * anders als unter webfrontend/htmlauth/. Das Bild- und Videoarchiv
+ * dieses Plugins liegt genau dort - jedes Geraet im Netz kann es
+ * auflisten und herunterladen.
+ *
+ * Der Haken "Das letzte Bild nur mit Token" schuetzt gemessen nur
+ * lastpicture.jpg, nicht das Archiv. Der Hinweistext sagt das seit
+ * 2.2.6 auch.
+ *
+ * Rueckgabe: true = geschuetzt (Schutzdatei liegt), false = offen.
+ */
+function ic_archiv_geschuetzt()
+{
+    return @is_file(ic_archiv_schutzdatei());
+}
+
+/**
+ * Den Archivschutz herstellen oder wegnehmen - nach der Einstellung.
+ *
+ * AB WERK AUS. Eine Anmeldung vor dem Archiv aendert das Verhalten jeder
+ * bestehenden Anlage: die Galerien holen ihre Bilder ueber /legacy/, und
+ * ob der Browser die Anmeldung der Plugin-Seite dorthin mitnimmt, ist an
+ * einem Geraet zu messen und hier nicht messbar. Deshalb ein Schalter,
+ * ab Werk aus, mit einer Zeile im Reiter Test, die den Zustand nennt -
+ * melden ist richtig, blockieren nicht.
+ */
+function ic_archiv_schutz_anwenden()
+{
+    $cfg = ic_config();
+    $an = isset($cfg['archiv_schutz'])
+        ? in_array((string) $cfg['archiv_schutz'], array('1', 'on', 'true'), true)
+        : false;
+    $datei = ic_archiv_schutzdatei();
+    if (!$an) {
+        if (@is_file($datei)) { @unlink($datei); }
+        return false;
+    }
+    if (@is_file($datei)) { return true; }
+    $wurzel = rtrim(ic_paths()['home'], '/');
+    /* Wortgleich mit webfrontend/htmlauth/.htaccess des LoxBerry, damit
+     * dieselbe Anmeldung gilt und nicht eine zweite entsteht. */
+    $inhalt = "AuthType Basic\n"
+            . "AuthName \"Loxberry Administration\"\n"
+            . "AuthUserFile " . $wurzel . "/config/system/htusers.dat\n"
+            . "Require valid-user\n"
+            . "Order allow,deny\n"
+            . "Allow from localhost\n"
+            . "Allow from 127.0.0.1\n"
+            . "Allow from 127.0.1.1\n"
+            . "Satisfy Any\n"
+            . "Options -Indexes\n";
+    return ic_datei_ersetzen($datei, $inhalt, 0644);
 }
 
 /**
@@ -1938,7 +2450,7 @@ function ic_timelapse_lauf($erzwingen = false)
     }
     ic_log('Zeitrafferbild aufgenommen: ' . basename($ziel) . ' (' . ic_byte(strlen($r['bild'])) . ')');
     ic_merker_setzen('timelapse', basename($ziel));
-    if (!empty($cfg['mqtt_enable']) && $cfg['mqtt_enable'] === '1') {
+    if (ic_mqtt_an()) {
         ic_mqtt_senden('timelapse', json_encode(array(
             'timestamp' => date('d.m.Y-H:i:s'), 'file' => basename($ziel))));
     }
@@ -1982,8 +2494,18 @@ function ic_ki_erkennen($bilddatei)
 {
     $cfg = ic_config();
     if (empty($cfg['ai_enable']) || $cfg['ai_enable'] !== 'on'
-        || empty($cfg['ai_url']) || !function_exists('curl_init')
+        || empty($cfg['ai_url'])
         || !@is_file($bilddatei)) {
+        return array();
+    }
+    /* BERICHTIGT 04.09.2026 (2.2.6): die Wache bleibt - php-curl ist nicht
+     * garantiert geladen -, aber sie schweigt nicht mehr. Bis 2.2.5 sprang
+     * die Erkennung ohne curl kommentarlos ab; eingeschaltet und nutzlos
+     * ist schlimmer als abgeschaltet. */
+    if (!function_exists('curl_init')) {
+        ic_log_gebremst('curl_ki', 'Die Objekterkennung ist eingeschaltet, aber die '
+            . 'PHP-Erweiterung curl fehlt - es wird nichts erkannt. '
+            . 'Abhilfe: sudo apt install php-curl');
         return array();
     }
     $minconf = (isset($cfg['ai_minconf']) && is_numeric($cfg['ai_minconf']))
@@ -2198,6 +2720,47 @@ function ic_bildlink_pruefen($code)
 
 
 /**
+ * Die Vorgabewerte - an EINER Stelle, fuer Oberflaeche UND Bibliothek.
+ *
+ * BERICHTIGT 04.09.2026 (2.2.6). Bis 2.2.5 stand die Liste allein in
+ * index.php und fuellte nur die Anzeige; ic_aufbewahrung() hatte eigene
+ * Ersatzwerte. Gemessen an einer frischen Anlage (data.json = {}): das
+ * Formular zeigte "90 Tage", ic_aufbewahrung() lieferte tage=0, und
+ * ic_aufraeumen() meldete "Keine Grenze eingestellt - es wird nichts
+ * geloescht". Zwei Wahrheiten ueber dieselbe Einstellung; die Karte lief
+ * voll, waehrend das Formular eine Grenze anzeigte.
+ */
+function ic_vorgaben()
+{
+    return array(
+        'intercomip' => '', 'storage_path' => '', 'timelapse_time' => '12:00',
+        'tv_ip' => '', 'tv_port' => '7676', 'ai_url' => '', 'ai_minconf' => '50',
+        'cleanup_days' => '90', 'cleanup_count' => '', 'cleanup_mb' => '',
+        'intervall_min' => '', 'standbild_pfad' => '/jpg/image.jpg',
+        'bildweg' => 'strom', 'bild_oeffentlich' => '1',
+        'mqtt_enable' => '0', 'mqtt_praefix' => '',
+        'webhook1' => '', 'webhook2' => '', 'webhook3' => '', 'webhook4' => '',
+        'videowebhook1' => '', 'videowebhook2' => '',
+        'timestamp_image' => '', 'timestamp_video' => '', 'timelapse_enable' => '',
+        'timelapse_video' => '', 'tv_enable' => '', 'ai_enable' => '',
+        'archiv_schutz' => '0',
+        'aktionstoken' => '',
+    );
+}
+
+/**
+ * Einen Vorgabewert holen.
+ *
+ * Wer einen Ersatzwert braucht, holt ihn hier - nicht als Literal neben
+ * der Lesestelle. Sonst entstehen wieder zwei Wahrheiten.
+ */
+function ic_vorgabe($schluessel, $ersatz = '')
+{
+    $v = ic_vorgaben();
+    return array_key_exists($schluessel, $v) ? $v[$schluessel] : $ersatz;
+}
+
+/**
  * Die Schluessel, die zur Konfiguration gehoeren.
  *
  * Diese Linie hat KEINE Vorgabenfunktion: ic_config() gibt die data.json
@@ -2212,7 +2775,7 @@ function ic_sicherungsschluessel()
 {
     return array(
         'ai_enable', 'ai_minconf', 'ai_url', 'aktionstoken',
-        'bild_oeffentlich', 'bildweg',
+        'archiv_schutz', 'bild_oeffentlich', 'bildweg',
         'cleanup_count', 'cleanup_days', 'cleanup_mb',
         'intercomip', 'intervall_min',
         'mqtt_enable', 'mqtt_praefix',
@@ -2251,8 +2814,25 @@ function ic_sicherung_lesen($roh)
     $bekannt = ic_sicherungsschluessel();
     $anzahl = 0;
     foreach ($daten as $k => $w) {
+        /* Der lesbare Kopf wird UEBERGANGEN, nicht beanstandet. Seit 2.2.6
+         * schreibt die Sicherung einen: _plugin, _fassung, _erzeugt. Wer
+         * eine alte Datei von Hand um eine Zeile ergaenzt, soll sie nicht
+         * zurueckgewiesen bekommen. */
+        if ((string) $k !== '' && substr((string) $k, 0, 1) === '_') {
+            continue;
+        }
         if (!in_array($k, $bekannt, true)) {
             $mangel[] = sprintf(ic_txt('UI.SICH_FREMD'),
+                                 htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8'));
+            continue;
+        }
+        /* BERICHTIGT 04.09.2026 (2.2.6): auch der WERT wird geprueft, nicht
+         * nur der Schluessel. Gemessen ueber HTTP: bis 2.2.5 wurde aus dem
+         * Aktionstoken die Zahl 12345, aus storage_path ein Feld und aus
+         * mqtt_praefix eine Zeichenkette mit Zeilenumbruch. Fail closed -
+         * eine Beanstandung heisst, dass GAR NICHTS geschrieben wird. */
+        if (!ic_wert_pruefen($k, $w)) {
+            $mangel[] = sprintf(ic_txt('UI.SICH_WERT'),
                                  htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8'));
             continue;
         }

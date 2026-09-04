@@ -29,12 +29,29 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-// Eigene Sperre: das Aufraeumen loescht im Zeitraffer-Ordner, in den
-// timelapse.php schreibt. Beide Laeufe liegen zwar auf verschiedene Zeiten,
-// aber eine Ueberschneidung ist damit nicht ausgeschlossen.
-$ic_sperre = ic_sperre('cron');
+/* BERICHTIGT 04.09.2026 (2.2.6): eine EIGENE Sperre.
+ *
+ * Bis 2.2.5 holten timelapse.php und cleanup.php beide ic_sperre('cron').
+ * Der Zeitraffer laeuft minuetlich, die Bereinigung um 03:35 - beide
+ * starteten also jeden Tag in derselben Minute, und wer verlor, ging.
+ * Verlor die Bereinigung, entfiel sie fuer einen ganzen Tag, und sichtbar
+ * war das nur im Systemprotokoll. Der Kommentar sah die Ueberschneidung
+ * ausdruecklich vor, zog daraus aber keine Folge.
+ *
+ * Beide Laeufe fassen den Zeitrafferordner an; die Bereinigung wartet
+ * deshalb kurz, statt sofort aufzugeben - eine Aufnahme dauert Sekunden. */
+$ic_sperre = ic_sperre('cleanup');
 if ($ic_sperre === false) {
-    echo "Ein anderer Lauf ist noch beschaeftigt - dieser Durchgang entfaellt.\n";
+    echo "Es laeuft bereits eine Bereinigung - dieser Durchgang entfaellt.\n";
+    exit(0);
+}
+$ic_wartete = 0;
+while ($ic_wartete < 20 && ic_sperre_belegt('cron')) {
+    sleep(2);
+    $ic_wartete += 2;
+}
+if (ic_sperre_belegt('cron')) {
+    echo "Der Zeitrafferlauf ist noch beschaeftigt - dieser Durchgang entfaellt.\n";
     exit(0);
 }
 

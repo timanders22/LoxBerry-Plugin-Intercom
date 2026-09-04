@@ -6,7 +6,39 @@ php-gd
 ffmpeg
 # wget wird von getvideo.php aufgerufen, um nach der Aufnahme die Rueckmeldung
 # auszuloesen. Bis 2.1.13 stand es hier NICHT: fehlte es, lief die Aufnahme,
-# aber videowebhook.php wurde nie erreicht - und weil der gesamte Befehl nach
-# /dev/null ging, fiel es nirgends auf. Das Plugin weicht inzwischen auf php
-# aus, wenn wget fehlt; angefordert wird es trotzdem.
+# aber videowebhook.php wurde nie erreicht. Das Plugin weicht inzwischen auf
+# php aus, wenn wget fehlt; angefordert wird es trotzdem.
+#
+# ANMERKUNG 2.2.6 zur alten Begruendung: der ffmpeg-Aufruf selbst geht
+# weiterhin nach /dev/null (getvideo.php, shell_exec mit "> /dev/null 2>&1 &").
+# Behoben wurde 2.2.0 nur der Sonderfall "wget fehlt". ffmpeg-Fehler sind
+# also nach wie vor unsichtbar; das steht hier, damit es niemand fuer
+# erledigt haelt.
 wget
+# php-curl: gebraucht an vier Stellen - Bild ans Anzeigegeraet
+# (getpicture.php), Webhook 1 und 3 (getpicture.php), Video-Webhook
+# (videowebhook.php) und die Objekterkennung (ic_lib.php). Bis 2.2.5 stand
+# es hier NICHT, und alle vier Stellen sprangen bei fehlendem curl
+# kommentarlos ab: eingetragene Webhooks feuerten nie, und weder das
+# Installationsprotokoll noch die Selbstpruefung noch das Plugin-Protokoll
+# sagten ein Wort. Seit 2.2.6 steht es hier, jede der vier Stellen schreibt
+# eine gebremste Zeile, und der Reiter Test fragt danach.
+# Der Bildabruf selbst braucht es nicht: ic_http_holen_voll() hat einen
+# vollwertigen Rueckfall ueber stream_context_create().
+php-curl
+# php-xml: ic_pruefe_vorlage() schickt die erzeugten Loxone-Vorlagen durch
+# simplexml_load_string(). Bis 2.2.5 stand der Aufruf ohne function_exists
+# da - die einzige ungeschuetzte Erweiterungsfunktion des Plugins. Fehlte
+# php-xml, starb die Selbstpruefung mit einem fatalen Fehler, und weil
+# ic_start.php display_errors abschaltet, war das HTTP 500 mit leerem Rumpf
+# an allen fuenf Endpunkten. Seit 2.2.6 ist der Aufruf zusaetzlich
+# abgesichert.
+php-xml
+# php-sockets steht bewusst NICHT hier.
+#
+# MQTT ist ab Werk aus (ic_vorgaben: mqtt_enable => '0'), und der Ausfall
+# ist sauber abgefangen: ic_mqtt_senden() prueft function_exists und meldet
+# gebremst, der Reiter Test fragt danach. Wer MQTT einschaltet, bekommt in
+# der Selbstpruefung die Zeile samt Abhilfebefehl. Eine Erweiterung fuer
+# eine abgeschaltete Funktion anzufordern, waere eine Anmassung gegenueber
+# jeder Anlage, die dieses Plugin ohne MQTT betreibt.

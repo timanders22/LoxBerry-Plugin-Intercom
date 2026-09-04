@@ -66,7 +66,7 @@ Die Aenderungen wurden dem Originalautor zuerst als Pull Request angeboten
        /plugins/intercom/..., und die MQTT-Themen von intercom22lox... auf
        intercom... Jeder virtuelle Ausgang und jedes MQTT-Abo im Miniserver muss
        nachgezogen werden. Die Anleitung dazu steht im README unter "Umstieg auf
-       2.0.0", die fertigen Adressen im Reiter "Anleitung".
+       2.0.0", die fertigen Adressen im Reiter "Einbindung in Loxone".
 
        Das Bild- und Videoarchiv wird bei der Installation uebernommen -
        verschoben, aber nur, wenn am neuen Ort noch keines liegt.

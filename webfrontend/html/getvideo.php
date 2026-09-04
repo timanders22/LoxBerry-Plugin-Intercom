@@ -78,12 +78,26 @@ if ($station === null) {
 // milder, als sie klingt: is_numeric() laesst zwar 1e3 oder " 12" durch, aber
 // keine Shell-Sonderzeichen. Aus $s liess sich also keine Befehlsausfuehrung
 // bauen, wohl aber eine 1000-Sekunden-Aufnahme.
+/* BERICHTIGT 04.09.2026 (2.2.6): ABGEWIESEN, nicht still zurechtgebogen.
+ *
+ * Bis 2.2.5 wurde ein Wert ausserhalb 1..300 wortlos auf die Grenze
+ * gesetzt und ein nicht numerischer auf 20. Ueber HTTP gemessen: ?s=999
+ * lieferte eine 300-Sekunden-Aufnahme ohne eine einzige Meldung, waehrend
+ * die Oberflaeche und die Baustein-Liste dem Anwender "erlaubt sind 1 bis
+ * 300" zusagen. Wer 600 eintraegt, soll es erfahren. */
 $seconds = 20;
-if (isset($_GET['s']) && is_numeric($_GET['s'])) {
+if (isset($_GET['s'])) {
+    if (!is_string($_GET['s']) || !is_numeric($_GET['s'])
+        || (int) $_GET['s'] < 1 || (int) $_GET['s'] > 300) {
+        ic_log_gebremst('dauer', 'Eine Videoaufzeichnung wurde mit einer unzulaessigen '
+            . 'Dauer angefordert (Absender ' . ic_absender() . ') - abgewiesen.');
+        header('HTTP/1.1 400 Bad Request');
+        echo json_encode(array('success' => false,
+            'error' => 'Die Dauer muss eine ganze Zahl von 1 bis 300 Sekunden sein.'));
+        exit;
+    }
     $seconds = (int) $_GET['s'];
 }
-if ($seconds < 1)   { $seconds = 1; }
-if ($seconds > 300) { $seconds = 300; }
 
 $arr = ic_config();
 

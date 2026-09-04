@@ -134,9 +134,30 @@ $ai = ic_ki_erkennen($ic_intern);
 
 /* ---------------- Antwort ---------------- */
 $basis = 'http://' . ic_host() . '/plugins/' . ic_plugin_ordner() . '/';
-$token = isset($arr['aktionstoken']) ? (string) $arr['aktionstoken'] : '';
-$bildurl = $ic_offen ? $basis . 'lastpicture.jpg'
-                     : $basis . 'bild.php?token=' . rawurlencode($token);
+/* BERICHTIGT 04.09.2026 (2.2.6): KEIN Aktionstoken in dieser Adresse.
+ *
+ * Bis 2.2.5 stand bei abgeschaltetem "offenem Bild" das Zugriffstoken in
+ * $bildurl - und $bildurl geht als Feld "image" in die MQTT-Nutzlast (mit
+ * retain, also dauerhaft im Broker) und an alle vier Webhooks, bei zweien
+ * sogar in die Adresse einer fremden Gegenstelle. Gerade der Anwender, der
+ * den Haken setzt, veroeffentlichte damit sein Token.
+ *
+ * Stattdessen ein befristeter Bildlink: 24 Stunden, fuenf Abrufe, und er
+ * gilt nur fuer das LETZTE Bild, nie fuer das Archiv (bild.php weist im
+ * Link-Zweig jeden weiteren Parameter ab). Abgelaufene Codes raeumt
+ * ic_bildlink_liste() bei jedem Lauf mit aus. Laesst sich kein Link
+ * anlegen, bleibt das Feld leer - eine Adresse, die nicht traegt, ist
+ * schlechter als keine. */
+if ($ic_offen) {
+    $bildurl = $basis . 'lastpicture.jpg';
+} else {
+    $ic_code = ic_bildlink_erzeugen(24, 5);
+    $bildurl = $ic_code === '' ? '' : $basis . 'bild.php?link=' . rawurlencode($ic_code);
+    if ($ic_code === '') {
+        ic_log_gebremst('bildlink', 'Es liess sich kein befristeter Bildlink anlegen - '
+            . 'die Meldung geht ohne Bildadresse hinaus.');
+    }
+}
 $json = json_encode(array(
     'success'      => true,
     'timestamp'    => date('d.m.Y-H:i:s'),
@@ -181,6 +202,14 @@ if ($nur_vorschau) { exit; }
 /* ---------------- Bild an ein Anzeigegeraet ---------------- */
 // App "Notifications for Android TV", Port 7676
 if (!empty($arr['tv_enable']) && $arr['tv_enable'] === 'on'
+    && !empty($arr['tv_ip']) && !function_exists('curl_init')) {
+    /* BERICHTIGT 2.2.6: bis 2.2.5 sprang der Zweig hier kommentarlos ab.
+     * php-curl stand nicht in dpkg/apt; fehlte es, kam beim Anzeigegeraet
+     * nie etwas an, und nichts sagte es. */
+    ic_log_gebremst('curl_tv', 'Das Bild sollte an das Anzeigegeraet gehen, aber die '
+        . 'PHP-Erweiterung curl fehlt. Abhilfe: sudo apt install php-curl');
+}
+if (!empty($arr['tv_enable']) && $arr['tv_enable'] === 'on'
     && !empty($arr['tv_ip']) && function_exists('curl_init')) {
     $tvport = (isset($arr['tv_port']) && is_numeric($arr['tv_port'])) ? (int) $arr['tv_port'] : 7676;
     $tvmsg = $trigger !== '' ? 'Ausloeser: ' . $trigger : 'Jemand hat geklingelt';
@@ -224,7 +253,14 @@ $jsonarr = json_decode($json, true);
 
 // 1 und 3: POST mit JSON
 foreach (array(1, 3) as $nr) {
-    if (empty($arr['webhook' . $nr]) || !function_exists('curl_init')) { continue; }
+    if (empty($arr['webhook' . $nr])) { continue; }
+    if (!function_exists('curl_init')) {
+        /* BERICHTIGT 2.2.6: nicht mehr schweigend ueberspringen. */
+        ic_log_gebremst('curl_webhook', 'Webhook ' . $nr . ' ist eingetragen, aber die '
+            . 'PHP-Erweiterung curl fehlt - es wird nichts aufgerufen. '
+            . 'Abhilfe: sudo apt install php-curl');
+        continue;
+    }
     $ch = curl_init($arr['webhook' . $nr]);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
     curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));

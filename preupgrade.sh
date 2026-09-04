@@ -8,6 +8,14 @@ ARGV5=$5   # Wurzelverzeichnis des LoxBerry
 BASE="${ARGV5:-$LBHOMEDIR}"
 PDIR="${ARGV3:-intercom}"
 
+# NEU 2.2.6: ohne Wurzel arbeitet dieses Skript auf /config/plugins/... und
+# scheitert lautlos, weil alles nach /dev/null geht.
+if [ -z "$BASE" ] || [ ! -d "$BASE" ]; then
+    echo "<ERROR> Das LoxBerry-Wurzelverzeichnis ist nicht bestimmbar (LBHOMEDIR leer)."
+    echo "<ERROR> Es wurde nichts gesichert."
+    exit 1
+fi
+
 # ==== EINE Zweitschrift, nicht zwei ====
 #
 # Der Installer kopiert config/* aus dem Archiv ueber config/plugins/<ordner>
@@ -51,14 +59,31 @@ fi
 LEGACY="$BASE/webfrontend/legacy/${PDIR}_data"
 mkdir -p "$LEGACY/img_archive" "$LEGACY/video_archive" "$LEGACY/timelapse" 2>/dev/null
 
+# BERICHTIGT 04.09.2026 (2.2.6), zwei Sachen an derselben Stelle:
+#
+# 1. Es hiess "Verschiebe" und war ein cp - die Quelle blieb liegen. Damit
+#    stand das Archiv waehrend des Updates ZWEIMAL auf derselben Karte, und
+#    dieselbe Datei begruendet elf Zeilen weiter oben, dass ein Archiv viele
+#    Gigabyte gross sein kann. Jetzt mv -n: gleiches Dateisystem, kein
+#    zweites Mal Platz, vorhandene Dateien am Ziel bleiben unberuehrt.
+# 2. Das "<OK> Altbestand uebernommen." stand UNBEDINGT hinter einem cp,
+#    dessen Rueckgabewert niemand las und dessen Fehlerausgabe nach
+#    /dev/null ging. Volle Karte, fehlende Rechte, abgebrochene Kopie - im
+#    Protokoll stand in jedem Fall Erfolg. Genau dieses Muster verurteilt
+#    dieselbe Datei elf Zeilen weiter oben.
 for paar in "archive:img_archive" "videoarchive:video_archive"; do
     quelle="$BASE/webfrontend/html/plugins/$PDIR/${paar%%:*}"
     ziel="$LEGACY/${paar##*:}"
     if [ -d "$quelle" ] && [ -n "$(ls -A "$quelle" 2>/dev/null)" ]; then
         echo "<INFO> Verschiebe Altbestand aus $quelle"
-        # -n: vorhandene Dateien am Ziel nicht ueberschreiben.
-        cp -an "$quelle/." "$ziel/" 2>/dev/null
-        echo "<OK> Altbestand uebernommen."
+        if mv -n "$quelle"/* "$ziel"/ 2>/dev/null; then
+            echo "<OK> Altbestand uebernommen."
+        else
+            echo "<WARNING> Der Altbestand liess sich nicht uebernehmen:"
+            echo "<WARNING>   $quelle"
+            echo "<WARNING> Er bleibt liegen. Von Hand:"
+            echo "<WARNING>   mv -n '$quelle'/* '$ziel'/"
+        fi
     fi
 done
 

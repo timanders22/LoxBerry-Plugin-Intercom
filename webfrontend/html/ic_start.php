@@ -93,12 +93,25 @@ function ic_selftest_antwort($endpunkt)
     foreach ($z as $zeile) {
         if ($zeile['lage'] === 'fehl') { $fehl[] = $zeile['frage']; }
     }
+    /* NEU 2.2.6: alter und zaehler. Bis 2.2.5 versprach der Reiter
+     * "Einbindung in Loxone", diese Antwort sei "auch fuer den Miniserver
+     * auswertbar" - sie trug aber weder ein Alter noch einen Laufzaehler,
+     * also gerade die beiden Werte, an denen eine Ausfallerkennung haengt.
+     * -1 heisst "noch nie gelaufen"; eine 0 waere ein gueltiger Stand und
+     * darf deshalb nicht dafuer stehen. Quelle ist derselbe Merker, aus dem
+     * der Cron-Lauf status/zaehler sendet - zwei Wege, eine Wahrheit. */
+    $ic_mk = ic_merker_lesen('mqttzaehler');
+    $ic_alter = $ic_mk === null ? -1 : (time() - (int) $ic_mk['zeit']);
+    $ic_zaehler = ($ic_mk === null || !is_numeric($ic_mk['text']))
+                ? -1 : (int) $ic_mk['text'];
     echo json_encode(array(
         'selftest'  => true,
         'endpunkt'  => $endpunkt,
         'plugin'    => ic_plugin_ordner(),
         'version'   => ic_fassung(),
         'timestamp' => date('d.m.Y-H:i:s'),
+        'alter'     => $ic_alter,
+        'zaehler'   => $ic_zaehler,
         'ok'        => $b['ok'],
         'fehl'      => $b['fehl'],
         'unklar'    => $b['unklar'],

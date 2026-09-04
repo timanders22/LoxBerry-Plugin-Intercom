@@ -2,17 +2,26 @@
 
 # LoxBerry-Plugin Intercom
 
+Version 2.2.6 · LoxBerry ab 3.0 · PHP 7.4
+
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
 ## Unterstützte Türstationen
 
 **Loxone Intercom (Gen. 1)**, **Loxone Intercom Gen. 2** und **Loxone Intercom XL**.
 
-Das Plugin fragt bei allen dreien denselben Weg ab — den MJPEG-Strom unter
-`/mjpg/video.mjpg`, mit den Zugangsdaten aus der Miniserver-Konfiguration.
-Es gibt deshalb keine Modellauswahl und nichts modellabhängig einzustellen:
-Was zählt, ist allein, ob die Türstation diesen Strom anbietet. Der Reiter
-*Test* holt ein Bild ohne Umweg über Loxone und beantwortet das in einem Schritt.
+Es gibt **keine Modellauswahl** — welcher Abrufweg benutzt wird, ist eine
+Einstellung und keine Modellfrage. Zur Wahl stehen im Reiter *Einstellungen*
+der MJPEG-Strom unter `/mjpg/video.mjpg`, das Standbild unter
+`/jpg/image.jpg` und „erst das Standbild, sonst den Strom"; ab Werk bleibt es
+beim Strom. Die Zugangsdaten holt sich das Plugin aus der
+Miniserver-Konfiguration, je Station lässt sich ein eigener Standbildpfad
+eintragen. Der Reiter *Test* holt ein Bild ohne Umweg über Loxone und
+beantwortet in einem Schritt, welcher Weg Ihre Station trägt.
+
+*Berichtigt in 2.2.6:* bis dahin stand hier „nichts modellabhängig
+einzustellen" — und 110 Zeilen weiter unten beschrieb dieselbe Datei die
+Umstellung auf das Standbild.
 
 Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 
@@ -144,6 +153,15 @@ Bibliothek, und Cron wie Knopf rufen dieselbe Funktion auf.
 
 ### Was bei der Deinstallation liegen bleibt
 
+> **Das Archiv liegt ohne Anmeldung im Netz.** Der Webserver des LoxBerry
+> liefert `/legacy/` ohne Anmeldung und mit Verzeichnisauflistung aus —
+> am ausgelieferten LoxBerry gemessen (Vhost `000-default.conf`, keine
+> `.htaccess` unter `webfrontend/legacy/`). Der Haken *Das letzte Bild nur
+> mit Token* schützt nur das letzte Bild. Seit 2.2.6 gibt es daneben den
+> Haken *Das Archiv nur mit Anmeldung herausgeben*; er ist **ab Werk aus**,
+> weil sich ohne Gerät nicht messen lässt, ob die Galerien danach noch
+> Bilder zeigen. Der Reiter *Test* nennt den Zustand in einer Zeile.
+
 Das Bild- und Videoarchiv unter `webfrontend/legacy/<ordner>_data` (und, falls
 eingestellt, unter `<Speicherort>/<ordner>_data`) bleibt erhalten — es sind
 Ihre Aufnahmen, und eine Deinstallation kann auch ein Umzug sein. Diese
@@ -183,14 +201,22 @@ Aktuelle Release URL in das URL Feld bei der Loxberry Plugininstallation kopiere
 
 ## Funktionsumfang
 
-- Manuelle Bildaufname über Trigger ( http://<IP>/plugins/intercom/getpicture.php )
+- Manuelle Bildaufname über Trigger
+  ( http://<IP>/plugins/intercom/getpicture.php?token=<TOKEN> )
 - LoxConfig Intercom Bild an Loxberry Plugin über Virtuellen Ausgang übergeben
 - Webhook via POST-/GET-Request bzw. MQTT-Broker
 - Bilder Archiv für Bilder die über URL Trigger angestossen wurden
-- Video aufnahme durch URL Trigger mit Angabe der Videolänge (1 bis 300 Sekunden http://<IP>/plugins/intercom/getvideo.php?s=<SEKUNDEN> )
-- Videoaufnahmen mit Zeitsatempel (optional) über Trigger ( http://<IP>/plugins/intercom/getpicture.php )
+- Video aufnahme durch URL Trigger mit Angabe der Videolänge (1 bis 300 Sekunden;
+  ein Wert ausserhalb wird seit 2.2.6 abgewiesen, nicht mehr still gekappt:
+  http://<IP>/plugins/intercom/getvideo.php?s=<SEKUNDEN>&token=<TOKEN> )
+- Videoaufnahmen mit Zeitstempel (optional) über Trigger
+  ( http://<IP>/plugins/intercom/getvideo.php?s=<SEKUNDEN>&token=<TOKEN> )
 - Video Archiv
-- Video stream Proxy ( http://<IP>/plugins/intercom/mjpgproxy.php ) ohne authentifizierung
+- Video stream Proxy
+  ( http://<IP>/plugins/intercom/mjpgproxy.php?token=<TOKEN> ) — der Abrufer
+  braucht die Zugangsdaten der Türstation nicht, wohl aber das Zugriffstoken.
+  *Berichtigt in 2.2.6:* hier stand „ohne authentifizierung"; seit 1.6.0
+  verlangen alle Endpunkte ein Token.
 
 ## Anwendungsfälle
 
@@ -281,7 +307,8 @@ Jeder virtuelle Ausgang, der auf das Plugin zeigt, muss von
 | `http://<LoxBerry>/plugins/intercom22lox/lastpicture.jpg` | `http://<LoxBerry>/plugins/intercom/lastpicture.jpg` |
 
 Das Zugriffstoken (seit 1.6.0 Pflicht) hängt unverändert an jeder dieser
-Adressen. Die fertigen Adressen samt Token stehen im Reiter **Anleitung**.
+Adressen. Die fertigen Adressen samt Token stehen im Reiter
+**Einbindung in Loxone**.
 
 ### Im MQTT-Gateway nachziehen
 
@@ -291,7 +318,7 @@ zu ändern, und die Bausteine, die auf die Themen hören, entsprechend:
 | bisher | ab 2.0.0 |
 |---|---|
 | `intercom22lox` | `intercom` |
-| `intercom22loxvideo` | `intercomvideo` |
+| `intercom22lox/video` | `intercom/video` |
 | `intercom22lox/trigger/NAME` | `intercom/trigger/NAME` |
 | `intercom22lox/ai` | `intercom/ai` |
 
@@ -461,6 +488,68 @@ zuerst als Pull Requests angeboten; die vollständige Liste steht in `NOTICE`
 - **`.gitignore`** ergänzt, damit `lastpicture.jpg`, `.tmp`-Reste und
   `__pycache__` nicht wieder mit ins Paket wandern.
 
+
+## Fassung 2.2.6 — was die Durchsicht vom 04.09.2026 gefunden hat
+
+Eine vollständige Gegenlesung von 2.2.5 mit der Hausprüfkette und zwei neu
+gebauten Prüfständen (`endpunkte.py`, 55 Aufrufe in drei Tokenlagen;
+`sicherung.py`, sechs Fälle am echten Formular). Das Freigabetor war grün;
+gefunden wurden 33 Punkte. Die schwersten:
+
+- **Der Knopf „Einstellungen sichern" lieferte keine Datei.** `ic_stil.php`
+  wurde 100 Zeilen vor dem Download-Handler eingebunden und gab dabei 7200
+  Byte aus; die Kopfzeilen waren gesendet, bevor `header()` lief. Über HTTP
+  gemessen: `Content-type: text/html`, kein `Content-Disposition`, und der
+  Rumpf war das Stylesheet mit dem JSON am Ende. Der Fehler steckte schon in
+  2.2.3. Jetzt stehen beide Sicherungs-Handler ganz vorn bei den übrigen
+  Downloads, und der Stilblock kommt nach dem Seitenkopf.
+- **Beim Zurückspielen wurde nur der Schlüssel geprüft, nie der Wert.**
+  Gemessen mit einer hochgeladenen Datei: aus dem Zugriffstoken wurde die
+  Zahl `12345`, aus dem Speicherpfad ein Feld, aus dem MQTT-Präfix eine
+  Zeichenkette mit Zeilenumbruch — und ein Zeilenumbruch im Thema schleust
+  eine zweite Zeile in jedes Datagramm ans Gateway. Jeder Wert läuft jetzt
+  gegen dieselbe Prüfung wie im Formular; eine Beanstandung heißt weiterhin,
+  dass **gar nichts** geschrieben wird.
+- **Das Bild- und Videoarchiv liegt ohne Anmeldung im Netz** (siehe oben).
+  Neuer Haken, ab Werk aus, plus eine Zeile im Reiter *Test*.
+- **Der Knopf zum Zurückspielen hieß „Zurück zur Übersicht"** — derselbe
+  Text, den die beiden Galerien für ihren Rückweg benutzen — und hatte als
+  einziger schaltender Knopf keine Rückfrage. Beides berichtigt.
+- **Die Aufnahmedauer wurde still gekappt.** `?s=999` ergab eine
+  300-Sekunden-Aufnahme ohne Meldung, während die Oberfläche „1 bis 300"
+  zusagt. Jetzt wird abgewiesen und gemeldet.
+- **„90 Tage" im Formular, keine Grenze im Aufräumen.** Auf einer frischen
+  Anlage zeigte das Feld 90, `ic_aufbewahrung()` rechnete mit 0 und die
+  tägliche Bereinigung löschte nichts. Die Vorgabewerte stehen jetzt in
+  `ic_vorgaben()`, aus der beide Seiten schöpfen.
+- **Das Zugriffstoken verließ das Haus.** Wer die offene Bildkopie
+  abschaltete, bekam die Adresse `bild.php?token=…` in die MQTT-Nutzlast
+  (mit Retain, also dauerhaft im Broker) und in jeden Webhook. Jetzt steht
+  dort ein befristeter Bildlink (24 Stunden, fünf Abrufe).
+- **`php-curl` und `php-xml` fehlten in `dpkg/apt`.** Ohne curl feuerten
+  Webhooks, Anzeigegerät und Objekterkennung nie, ohne dass etwas darüber
+  stand; ohne php-xml starb die Selbstprüfung mit einem fatalen Fehler. Beide
+  Pakete stehen jetzt dort, alle Absprungstellen schreiben eine Zeile, und
+  der Reiter *Test* fragt danach.
+- **Zeitraffer und Bereinigung teilten sich eine Sperre** und trafen sich
+  jeden Tag um 03:35; verlor die Bereinigung, entfiel sie für einen Tag.
+  Eigene Sperre, mit kurzer Wartezeit.
+- Dazu die tote CSS-Klasse `.sm-warnung` an genau dem Satz, der die
+  Sicherungsdatei zum Geheimnis erklärt, eine Legende, die den grünen Punkt
+  mit dem orangen Text erklärte, vier ungeschützte Zugriffe in `menu.php`,
+  ein `rm -rf` auf einen Pfad, den nichts anlegt, zwei Erfolgsmeldungen ohne
+  Erfolgsprüfung und zwölf Textstellen, die etwas anderes sagten als der
+  Code tut.
+
+**Was ausdrücklich nicht geprüft ist:** keine Fassung dieser Linie ist je an
+einer Anlage gemessen worden. Offen bleiben die Türstation (welcher der drei
+Bildwege trägt) und MQTT mit Retain am laufenden Gateway.
+
+## Fassung 2.2.5 — drei Ausgaben roh statt maskiert
+
+Drei Sprachwerte tragen `<b>`; sie liefen durch die maskierende
+Ausgabefunktion, und auf dem Bildschirm standen die spitzen Klammern im
+Klartext. Umgestellt auf die rohe Ausgabe. Sonst nur die Fassungsnummer.
 
 ## Fassung 2.2.4 — der Stat-Zwischenspeicher
 Die Protokollkappung (262 144 Byte) stand in
