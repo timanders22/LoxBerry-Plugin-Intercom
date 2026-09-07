@@ -258,8 +258,14 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
     } elseif ((int) $_FILES['ic_sicherung']['size'] > 262144) {
         $ic_fehler[] = ic_txt('UI.SICH_ZU_GROSS');
     } else {
-        list($ic_neu_s, $ic_mangel, $ic_n) = ic_sicherung_lesen(
+        $ic_erg = ic_sicherung_lesen(
             (string) @file_get_contents($_FILES['ic_sicherung']['tmp_name']));
+        list($ic_neu_s, $ic_mangel, $ic_n) = $ic_erg;
+        /* isset statt fester Stelle: eine aeltere Bibliothek neben einer
+         * neueren Oberflaeche gibt drei Werte zurueck, und dann darf hier
+         * keine Meldung ueber einen Wert entstehen, den es nicht gibt. */
+        $ic_uebergangen = (isset($ic_erg[3]) && is_array($ic_erg[3]))
+                        ? $ic_erg[3] : array();
         if ($ic_neu_s === null) {
             /* ALLE Beanstandungen, nicht nur die erste - und geaendert
              * wird nichts. */
@@ -270,6 +276,13 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
         } elseif (ic_config_ablegen($ic_neu_s)) {
             $ic_cfg = $ic_neu_s;
             $ic_meldungen[] = sprintf(ic_txt('UI.SICH_UEBERNOMMEN'), $ic_n);
+            /* "n Werte zurueckgespielt" sieht nach Vollstaendigkeit aus.
+             * Was die Datei nicht mitbrachte, wird deshalb benannt. */
+            if ($ic_uebergangen) {
+                $ic_meldungen[] = sprintf(ic_txt('UI.SICH_UEBERGANGEN'),
+                    count($ic_uebergangen),
+                    ic_e(implode(', ', $ic_uebergangen)));
+            }
             /* Den Dienst nachziehen und sagen, was mit ihm geschah. Das
              * Plugin fuehrt keinen Dauerlaeufer; nachzuziehen sind der
              * Speicherort (Symlink) und der Archivschutz - beide stehen in

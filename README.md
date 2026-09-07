@@ -2,7 +2,7 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.6 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.7 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
@@ -28,6 +28,12 @@ Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.2.7
+
+Drei Wörter in den erzeugten Loxone-Vorlagen: „Laufzaehler", „Rueckmeldungen"
+und „ueberholt" heißen jetzt „Laufzähler", „Rückmeldungen" und „überholt".
+Sichtbar waren sie in Loxone Config als Bezeichnung und Anzeigename.
 
 ## Neu in 2.2.0
 
@@ -488,6 +494,52 @@ zuerst als Pull Requests angeboten; die vollständige Liste steht in `NOTICE`
 - **`.gitignore`** ergänzt, damit `lastpicture.jpg`, `.tmp`-Reste und
   `__pycache__` nicht wieder mit ins Paket wandern.
 
+
+## Fassung 2.2.8 — die Cron-Aufträge erreichen bestehende Anlagen wieder
+
+**Betrifft nur den Aktualisierungsfall** — den Zustand, den eine
+Neuinstallation nie durchläuft.
+
+Bis 2.2.7 lieferte dieses Plugin seine beiden Aufträge als `cron/crontab`
+aus. Am Quelltext des Installateurs nachgemessen, nicht vermutet:
+
+| Stelle | Was dort steht |
+|---|---|
+| `plugininstall.pl:989` | kopiert **nur, wenn** `system/cron/cron.d/<Name>` noch **nicht existiert** |
+| `plugininstall.pl:1571` | entfernt sie **ausschließlich beim Deinstallieren** („only on uninstall“) |
+| `plugininstall.pl:987-998` | die **Ordner** unter `cron/` werden bei **jedem** Upgrade neu kopiert |
+
+Auf einer bestehenden Anlage erreichte eine Änderung an `cron/crontab` also
+**nie** an: die Zeilen, die dort liefen, waren die der **ersten**
+Installation. Am 07.09.2026 an der laufenden Anlage bestätigt —
+`cron.d/intercom` stammte vom 10.08.2026.
+
+43 Linien dieses Bestands liefern über die Ordner aus; diese und
+Smartmeter-classic waren die beiden letzten mit `crontab`.
+
+### Die alte Datei wird entfernt — sonst laufen die Aufträge doppelt
+
+Der Installateur lässt `cron.d/intercom` liegen. Wer nur den Ordner
+ergänzt, hat danach **beide** Wege aktiv — der Zeitraffer liefe zweimal je
+Minute. Das neue `postroot.sh` entfernt sie.
+
+**Warum postroot und nicht postupgrade**, am Gerät gemessen: `postupgrade`
+läuft per `sudo -n -u loxberry`, der Ordner `system/cron/cron.d` ist
+`drwxrwxr-x root root`, und `loxberry` ist nicht in der Gruppe root —
+`sudo -u loxberry touch …/cron.d/.probe` endet mit *Permission denied*. Wer
+im Verzeichnis nicht schreiben darf, kann darin auch nichts löschen.
+`postroot` läuft als root und nach `postupgrade`.
+
+### Eine Verhaltensänderung, und sie gehört genannt
+
+Die Archiv-Bereinigung lief bis 2.2.7 um **3:35** — die crontab konnte eine
+Uhrzeit nennen. Der Ordnerweg kann das nicht: `cron.daily` startet das
+System, auf dieser Anlage um **4:23** (gemessen in `/etc/cron.d/lbdefaults`).
+Für eine tägliche Bereinigung ist das ohne Belang. Der Zeitraffer bleibt
+minütlich.
+
+Die Ausgabe geht weiter über `logger` ins Systemprotokoll — nicht nach
+`/dev/null`, aus demselben Grund wie seit 2.1.13.
 
 ## Fassung 2.2.6 — was die Durchsicht vom 04.09.2026 gefunden hat
 

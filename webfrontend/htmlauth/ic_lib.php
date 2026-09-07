@@ -1688,7 +1688,7 @@ function ic_vorlage_eingang($host)
               'comment' => 'Herzschlag (Loxone-Zeit)',
               'analog' => true, 'min' => '0', 'max' => '2000000000', 'unit' => '<v.0> s'),
         array('title' => $g . '_status_zaehler',
-              'comment' => 'Laufzaehler 0-999',
+              'comment' => 'Laufzähler 0-999',
               'analog' => true, 'min' => '-1', 'max' => '999', 'unit' => '<v.0>'),
         array('title' => $g . '_bilder',
               'comment' => 'Bilder im Archiv',
@@ -1697,11 +1697,11 @@ function ic_vorlage_eingang($host)
               'comment' => 'Erkannte Objekte',
               'analog' => true, 'min' => '0', 'max' => '100', 'unit' => '<v.0>'),
         array('title' => $g . '_ok',
-              'comment' => 'Herzschlag (ueberholt)',
+              'comment' => 'Herzschlag (überholt)',
               'analog' => true, 'min' => '0', 'max' => '2000000000', 'unit' => '<v.0> s'),
     );
     return ic_xml_virtual_in(array(
-        'title'   => 'Intercom Rueckmeldungen (LoxBerry-Plugin)',
+        'title'   => 'Intercom Rückmeldungen (LoxBerry-Plugin)',
         'comment' => 'Die Werte kommen vom MQTT-Gateway, nicht von dieser Adresse.',
         'address' => 'http://localhost',
         'polling' => 604800,
@@ -2801,7 +2801,17 @@ function ic_sicherungsschluessel()
  * NICHTS. Eine zur Haelfte uebernommene Konfiguration ist schlimmer als
  * die alte, und man sieht es ihr nicht an.
  *
- * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte).
+ * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte,
+ * uebergangene Schluessel[]).
+ *
+ * Der VIERTE Wert kam am 07.09.2026 dazu. Bis dahin quittierte die
+ * Oberflaeche nur "n Werte zurueckgespielt" - eine Zahl, die nach
+ * Vollstaendigkeit aussieht, obwohl fehlende Schluessel stillschweigend
+ * ihren jetzigen Wert behielten. Beim UMZUG auf einen zweiten LoxBerry -
+ * dem ausdruecklichen Zweck einer Sicherung - ist "der jetzige Wert" die
+ * frische Konfiguration; der Schluessel blieb also auf dem Anfangswert,
+ * ohne ein Wort. Pumpenwacht und Midea2Lox, die dieselbe Grundlage
+ * benutzen, nennen die uebergangenen Schluessel seit jeher.
  */
 function ic_sicherung_lesen($roh)
 {
@@ -2842,7 +2852,16 @@ function ic_sicherung_lesen($roh)
     if ($anzahl === 0) {
         $mangel[] = ic_txt('UI.SICH_LEER');
     }
-    return array($mangel ? null : $neu, $mangel, $anzahl);
+    /* Was NICHT in der Datei stand, behaelt seinen jetzigen Wert - und der
+     * Anwender erfaehrt, welche das waren. Der lesbare Kopf zaehlt nicht
+     * mit: er gehoert nicht zur Konfiguration. */
+    $uebergangen = array();
+    foreach ($bekannt as $bk) {
+        if (!array_key_exists($bk, $daten)) {
+            $uebergangen[] = $bk;
+        }
+    }
+    return array($mangel ? null : $neu, $mangel, $anzahl, $uebergangen);
 }
 
 /**

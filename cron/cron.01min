@@ -1,0 +1,39 @@
+#!/bin/sh
+# Intercom - minuetlicher Auftrag (Zeitraffer und Intervallaufnahme)
+#
+# WARUM DIESE DATEI UND NICHT MEHR cron/crontab
+#
+# Der Installateur kopiert cron/crontab NUR, wenn system/cron/cron.d/<NAME>
+# noch nicht existiert (plugininstall.pl:989), und entfernt sie
+# ausschliesslich beim Deinstallieren (:1571, "only on uninstall"). Auf einer
+# bestehenden Anlage erreichte eine Aenderung an dieser Datei also NIE an -
+# die Zeilen, die dort seit Jahren stehen, sind die der ERSTEN Installation.
+#
+# Die Ordner unter cron/ werden dagegen bei JEDEM Upgrade neu kopiert
+# (plugininstall.pl:987-998). 43 Linien dieses Bestands liefern so aus.
+#
+# Aufgerufen wird die Datei vom Systemauftrag in /etc/cron.d/lbdefaults:
+#     * * * * * loxberry cd / && for f in .../cron.01min/*; do ($f cron=01min &); done
+# Sie laeuft also als loxberry, bekommt "cron=01min" als Argument (das hier
+# niemanden interessiert) und muss AUSFUEHRBAR sein.
+#
+# DIE AUSGABE GEHT NICHT NACH /dev/null.
+#
+# Bis 2.1.13 endeten die Cron-Zeilen auf ">/dev/null 2>&1". Beide Skripte
+# geben ihr Ergebnis per echo aus - es ging also ausnahmslos ins Nichts, und
+# weder Zeitraffer noch Bereinigung hinterliessen eine Spur. Ein Cron-Dienst,
+# der schweigend nichts tut, ist schlimmer als keiner.
+
+WEB="REPLACELBPHTMLDIR"
+
+if [ ! -d "$WEB" ]; then
+	logger -t intercom "Web-Ordner nicht gefunden: $WEB"
+	exit 1
+fi
+if [ ! -f "$WEB/timelapse.php" ]; then
+	logger -t intercom "timelapse.php fehlt in $WEB"
+	exit 1
+fi
+
+cd "$WEB" && /usr/bin/php timelapse.php 2>&1 | logger -t intercom
+exit 0

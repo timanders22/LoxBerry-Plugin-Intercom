@@ -1,0 +1,30 @@
+#!/bin/sh
+# Intercom - taeglicher Auftrag (Archiv-Bereinigung)
+#
+# Siehe den Kopf von cron/cron.01min: cron/crontab erreicht eine bestehende
+# Anlage nie, die Ordner unter cron/ werden bei jedem Upgrade kopiert.
+#
+# EINE VERHALTENSAENDERUNG, UND SIE GEHOERT GENANNT
+#
+# Bis 2.2.7 lief die Bereinigung um 3:35 - die crontab konnte eine Uhrzeit
+# nennen. Der Ordnerweg kann das nicht: cron.daily wird vom System gestartet,
+# auf dieser Anlage um 4:23 (gemessen am 07.09.2026 in
+# /etc/cron.d/lbdefaults). Fuer eine taegliche Bereinigung ist das ohne
+# Belang - sie loescht alte Dateien, nicht zeitkritische. Wer eine feste
+# Uhrzeit BRAUCHT, muesste den Auftrag nach cron.01min legen und dort selbst
+# auf die Stunde pruefen; das waere 1440 Laeufe am Tag fuer einen, der
+# etwas tut.
+
+WEB="REPLACELBPHTMLDIR"
+
+if [ ! -d "$WEB" ]; then
+	logger -t intercom "Web-Ordner nicht gefunden: $WEB"
+	exit 1
+fi
+if [ ! -f "$WEB/cleanup.php" ]; then
+	logger -t intercom "cleanup.php fehlt in $WEB"
+	exit 1
+fi
+
+cd "$WEB" && /usr/bin/php cleanup.php 2>&1 | logger -t intercom
+exit 0
