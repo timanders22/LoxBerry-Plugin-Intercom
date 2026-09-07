@@ -2,13 +2,20 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.9 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.10 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
 ## Unterstützte Türstationen
 
 **Loxone Intercom (Gen. 1)**, **Loxone Intercom Gen. 2** und **Loxone Intercom XL**.
+
+**Gemessen wird ausschließlich an einer Intercom XL.** Für die Gen. 1 und
+die Gen. 2 steht hier kein Gerät zur Verfügung. Beide sollten laufen — das
+Plugin fragt bei allen Stationen denselben MJPEG-Strom ab und kennt keine
+Modellunterscheidung —, an einem Gerät nachgewiesen ist das aber nicht. Der
+Reiter *Test* beantwortet an Ihrer Station in einem Schritt, welcher Bildweg
+trägt; eine Rückmeldung darüber ist willkommen.
 
 Es gibt **keine Modellauswahl** — welcher Abrufweg benutzt wird, ist eine
 Einstellung und keine Modellfrage. Zur Wahl stehen im Reiter *Einstellungen*
@@ -28,6 +35,17 @@ Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.2.10
+
+**Der Prüfstand steht jetzt dabei.** README und Hilfe nannten seit 2.1.12
+Gen. 1, Gen. 2 und XL gleichrangig — ohne zu sagen, dass hier nur an einer
+**Intercom XL** gemessen wird. Das ist keine Einschränkung der
+Unterstützung, sondern eine Angabe zur Prüfung: für die beiden anderen
+Stationen steht kein Gerät zur Verfügung, und was nicht gemessen ist, wird
+nicht als gemessen ausgegeben.
+
+Sonst nur die Fassungsnummer.
 
 ## Neu in 2.2.9
 
