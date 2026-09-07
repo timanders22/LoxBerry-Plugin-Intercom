@@ -139,6 +139,66 @@ function ic_titel_quelle()
     return $q;
 }
 
+/**
+ * Der Eintrag dieses Plugins in der plugindatabase.json des LoxBerry.
+ *
+ * NEU 2.2.9, und zwar aus einem gemessenen Grund: KEINER der acht Kandidaten
+ * oben existiert auf einer Installation. plugininstall.pl liest die
+ * plugin.cfg aus dem Auspackordner und loescht sie danach - installiert wird
+ * sie nirgendwohin (Installationsprotokoll vom 07.09.2026, Zeile 411:
+ * "removed .../LoxBerry-Plugin-Intercom-2.2.8/plugin.cfg"). Getroffen hat die
+ * Liste immer nur den Archivfall, also den Arbeitsordner.
+ *
+ * Die Folge war nicht bloss eine gelbe Zeile im Reiter Test: ic_fassung()
+ * gab eine LEERE Zeichenkette zurueck. Am Geraet gemessen antwortete
+ * ?selftest=1 mit "version":"", und der Kopf einer Sicherungsdatei trug
+ * "_fassung": "". Ein Plugin, das seine eigene Fassung nicht nennen kann,
+ * macht jede Fehlersuche darueber unmoeglich.
+ *
+ * LoxBerry fuehrt Titel und Fassung in data/system/plugindatabase.json (644,
+ * lesbar). Gesucht wird ueber "folder" - der Ordnername ist das, was auch
+ * ic_paths() benutzt; ueber den md5-Schluessel zu gehen waere geraten.
+ */
+function ic_plugindb()
+{
+    static $e = null;
+    if ($e !== null) { return $e; }
+    $e = array();
+    $roh = @file_get_contents(ic_paths()['home'] . '/data/system/plugindatabase.json');
+    if ($roh === false || $roh === '') { return $e; }
+    $d = @json_decode($roh, true);
+    if (!is_array($d)) { return $e; }
+    $liste = (isset($d['plugins']) && is_array($d['plugins'])) ? $d['plugins'] : $d;
+    if (!is_array($liste)) { return $e; }
+    $o = ic_plugin_ordner();
+    foreach ($liste as $x) {
+        if (is_array($x) && isset($x['folder']) && (string) $x['folder'] === $o) {
+            $e = $x;
+            break;
+        }
+    }
+    return $e;
+}
+
+/**
+ * Woher Titel und Fassung wirklich kommen.
+ *
+ * Drei Ausgaenge, nicht zwei - der Reiter Test soll den Unterschied zwischen
+ * "aus einer Datei", "aus der Datenbank des LoxBerry" und "gar nicht"
+ * anzeigen koennen. Ein Haken, der beide ersten Faelle zusammenwirft, sagt
+ * weniger als er koennte.
+ */
+function ic_fassungsquelle()
+{
+    $q = ic_titel_quelle();
+    if ($q !== '') { return array('datei', $q); }
+    $e = ic_plugindb();
+    if (isset($e['version']) && (string) $e['version'] !== '') {
+        return array('db', ic_paths()['home'] . '/data/system/plugindatabase.json');
+    }
+    return array('', '');
+}
+
 /** Ein Wert aus der plugin.cfg - oder der Vorgabewert. */
 function ic_plugincfg($sektion, $schluessel, $vorgabe = '')
 {
@@ -167,6 +227,25 @@ function ic_plugincfg($sektion, $schluessel, $vorgabe = '')
     }
     if (isset($d[$sektion][$schluessel]) && trim($d[$sektion][$schluessel]) !== '') {
         return trim($d[$sektion][$schluessel], " \t\"'");
+    }
+    /* NEU 2.2.9: bevor der Vorgabewert kommt, wird die plugindatabase.json
+     * gefragt. Nur fuer die Felder, die dort WIRKLICH stehen - geraten wird
+     * nichts; alles Uebrige faellt weiter auf den Vorgabewert. */
+    $ausdb = array(
+        'VERSION'      => 'version',
+        'TITLE'        => 'title',
+        'NAME'         => 'name',
+        'FOLDER'       => 'folder',
+        'AUTHOR_NAME'  => 'author_name',
+        'AUTHOR_EMAIL' => 'author_email',
+        'INTERFACE'    => 'interface',
+    );
+    if ($sektion === 'PLUGIN' && isset($ausdb[$schluessel])) {
+        $e = ic_plugindb();
+        $f = $ausdb[$schluessel];
+        if (isset($e[$f]) && (string) $e[$f] !== '') {
+            return (string) $e[$f];
+        }
     }
     return $vorgabe;
 }
@@ -1392,6 +1471,28 @@ function ic_archiv_zahlen()
     );
 }
 
+/**
+ * Das juengste Bild im Bildarchiv - oder '' wenn keines da ist.
+ *
+ * NEU 2.2.9 fuer den dritten Rueckfall in bild.php. Verglichen wird der
+ * Zeitstempel der Datei, nicht der Name: die Namen tragen zwar das Datum,
+ * aber ein zurueckgespieltes Archiv oder eine umbenannte Datei wuerde eine
+ * Namenssortierung in die Irre fuehren.
+ */
+function ic_archiv_neuestes_bild()
+{
+    $o = ic_archivordner();
+    $f = @glob($o['bild'] . '*.jpg');
+    if (!is_array($f) || !$f) { return ''; }
+    $bestes = '';
+    $zeit = -1;
+    foreach ($f as $d) {
+        $t = @filemtime($d);
+        if ($t !== false && $t > $zeit) { $zeit = $t; $bestes = $d; }
+    }
+    return $bestes;
+}
+
 /** Freier Platz auf dem Medium, auf dem das Archiv liegt. */
 function ic_platz()
 {
@@ -1757,10 +1858,21 @@ function ic_selbsttest($mit_netz = false)
         ? ic_pz('ok', 'TEST.F_TOKEN', 'TEST.A_TOKEN_JA', '', array(), array(strlen($token)))
         : ic_pz('fehl', 'TEST.F_TOKEN', 'TEST.A_TOKEN_NEIN', 'TEST.R_TOKEN');
 
-    $quelle = ic_titel_quelle();
-    $z[] = $quelle !== ''
-        ? ic_pz('ok', 'TEST.F_CFG', 'TEST.A_CFG_JA', '', array(), array($quelle, ic_fassung()))
-        : ic_pz('hinweis', 'TEST.F_CFG', 'TEST.A_CFG_NEIN', 'TEST.R_CFG');
+    /* BERICHTIGT 2.2.9: bis 2.2.8 stand hier eine Zeile, die auf JEDER
+     * Installation gelb war - die plugin.cfg wird nirgendwohin installiert.
+     * Ein Fehlalarm bei jedem Lauf ist eine abgeschaltete Pruefung. Gefragt
+     * wird jetzt nach der Sache statt nach der Datei: woher kommen Titel und
+     * Fassung? */
+    list($ic_qart, $ic_qort) = ic_fassungsquelle();
+    if ($ic_qart === 'datei') {
+        $z[] = ic_pz('ok', 'TEST.F_CFG', 'TEST.A_CFG_JA', '', array(),
+                     array($ic_qort, ic_fassung()));
+    } elseif ($ic_qart === 'db') {
+        $z[] = ic_pz('ok', 'TEST.F_CFG', 'TEST.A_CFG_DB', '', array(),
+                     array(ic_fassung()));
+    } else {
+        $z[] = ic_pz('hinweis', 'TEST.F_CFG', 'TEST.A_CFG_NEIN', 'TEST.R_CFG');
+    }
 
     /* -------- Stationen: erst die Menge, dann das Urteil -------- */
     $st = ic_stationen();

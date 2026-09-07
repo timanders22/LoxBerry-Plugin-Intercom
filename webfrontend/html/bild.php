@@ -93,20 +93,49 @@ if (isset($_GET['datei']) && is_string($_GET['datei']) && $_GET['datei'] !== '')
     $name = $n;
 }
 
-/* ---------------- Rueckfall auf die offene Kopie ---------------- */
-// Wer von 2.1.13 kommt, hat das letzte Bild noch nicht im Datenverzeichnis:
-// dort landet es erst mit dem ersten Abruf nach dem Update.
+/* ---------------- Rueckfall, in drei Stufen ---------------- */
+//
+// 1. data/plugins/<ordner>/lastpicture.jpg   - der Regelfall
+// 2. webfrontend/html/plugins/<ordner>/...   - wer von 2.1.13 kommt, hat das
+//    letzte Bild noch nicht im Datenverzeichnis
+// 3. NEU 2.2.9: das juengste Bild im Archiv
+//
+// Zur dritten Stufe, gemessen am 07.09.2026: postupgrade.sh sagte dem
+// Anwender "die offene Kopie des letzten Bildes bleibt liegen - dieses
+// Update entfernt sie nicht". Das Installationsprotokoll desselben Laufs
+// entfernt BEIDE Kopien (data/plugins/<ordner>/ wird bei jedem Upgrade
+// abgeraeumt, und den html-Baum loescht der Installer vor dem Kopieren
+// vollstaendig). Nachgemessen: /plugins/intercom/lastpicture.jpg antwortete
+// mit HTTP 404, und in Loxone stand an einem Kamera-Baustein ein totes Bild -
+// bis zum naechsten Klingeln.
+//
+// Statt die Zusage zurueckzunehmen, wird sie eingeloest: das juengste Bild im
+// Archiv IST das letzte Bild, das es noch gibt. Ist die Archivierung
+// abgeschaltet, ist auch kein neueres entstanden - die Aussage bleibt wahr.
+// Der Dateiname der Antwort bleibt lastpicture.jpg, damit sich an der
+// Adresse, die in Loxone eingetragen ist, nichts aendert.
+$ic_quelle = 'datei';
 if (!@is_file($datei)) {
     $alt = __DIR__ . '/lastpicture.jpg';
     if (@is_file($alt)) {
         $datei = $alt;
+        $ic_quelle = 'offene-kopie';
     } else {
-        header('HTTP/1.1 404 Not Found');
-        header('Content-Type: text/plain; charset=utf-8');
-        echo "Es liegt noch kein Bild vor. Einmal ausloesen - dann steht es hier.\n";
-        exit;
+        $ic_neuestes = ic_archiv_neuestes_bild();
+        if ($ic_neuestes !== '') {
+            $datei = $ic_neuestes;
+            $ic_quelle = 'archiv';
+        } else {
+            header('HTTP/1.1 404 Not Found');
+            header('Content-Type: text/plain; charset=utf-8');
+            echo "Es liegt noch kein Bild vor. Einmal ausloesen - dann steht es hier.\n";
+            exit;
+        }
     }
 }
+// Damit sich die Stufe MESSEN laesst, ohne ins Protokoll zu schreiben -
+// bild.php wird oft aufgerufen, eine Protokollzeile je Aufruf waere Laerm.
+header('X-Intercom-Bildquelle: ' . $ic_quelle);
 
 $d = @file_get_contents($datei);
 if ($d === false) {

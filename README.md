@@ -2,7 +2,7 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.7 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.9 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
@@ -28,6 +28,60 @@ Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.2.9
+
+Zwei Fehler, die erst am laufenden Gerät sichtbar wurden.
+
+### Das letzte Bild überlebt ein Update
+
+Bis 2.2.8 sagte die Update-Meldung: „Die offene Kopie des letzten Bildes
+bleibt liegen — dieses Update entfernt sie nicht." Das war falsch. Der
+Installer räumt bei jedem Upgrade das Datenverzeichnis ab **und** löscht den
+html-Baum vor dem Kopieren; damit sind **beide** Kopien weg. Gemessen am
+07.09.2026: `…/plugins/intercom/lastpicture.jpg` antwortete mit HTTP 404, und
+an einem Kamera-Baustein in Loxone stand ein totes Bild — bis zum nächsten
+Klingeln.
+
+Statt die Zusage zurückzunehmen, löst 2.2.9 sie ein: der Bildabruf fällt jetzt
+in drei Stufen zurück — Datenverzeichnis, offene Kopie, und neu **das jüngste
+Bild im Archiv**. Die Adresse ist damit auch unmittelbar nach einem Update
+bedient. Der Dateiname der Antwort bleibt `lastpicture.jpg`, an den Adressen
+in Loxone ändert sich nichts. Welche Stufe gegriffen hat, steht in der
+Kopfzeile `X-Intercom-Bildquelle`.
+
+### Das Plugin kennt seine eigene Fassung wieder
+
+Der Reiter Test meldete auf **jeder** Installation „Wird die plugin.cfg
+gefunden? nein", und `?selftest=1` antwortete `"version":""`. Der Grund: der
+LoxBerry-Installer liest die `plugin.cfg` aus dem Auspackordner und löscht sie
+danach — installiert wird sie nirgendwohin. Die Suchliste des Plugins traf
+deshalb immer nur den Archivfall.
+
+Titel und Fassung kommen jetzt aus `data/system/plugindatabase.json`, wo
+LoxBerry sie führt. Die Prüfzeile heißt daher nicht mehr „Wird die plugin.cfg
+gefunden?", sondern „Woher kommen Titel und Fassung?" und hat drei Ausgänge:
+aus einer Datei, aus der Datenbank, oder aus dem Vorgabewert.
+
+## Neu in 2.2.8
+
+Der Cron-Eintrag zieht bei einer Aktualisierung endlich mit.
+
+Bis 2.2.7 lag er als `cron/crontab`. Der LoxBerry-Installer kopiert eine
+solche Datei aber **nur, wenn sie noch nicht da ist**, und entfernt sie nur
+beim Deinstallieren. Eine Änderung daran erreichte eine bestehende Anlage
+also **nie** — gemessen am 06.09.2026 an einer Installation, auf der noch der
+Eintrag vom 10.08. lief, während das Archiv seit 2.2.4 einen anderen
+mitbrachte.
+
+2.2.8 legt die beiden Aufträge nach `cron/cron.01min` und `cron/cron.daily`;
+diese Ordner kopiert der Installer bei jedem Lauf. Die alte Datei entfernt
+`postroot.sh` — als einziges der Installationsskripte läuft es mit den nötigen
+Rechten. Nachgemessen nach dem Update: der Minutenauftrag hat 124 Minuten lang
+124-mal gelaufen, ohne eine Lücke.
+
+Eine Kleinigkeit ändert sich dabei: die tägliche Archiv-Bereinigung lief um
+3:35 Uhr und läuft jetzt zur Zeit von `cron.daily`.
 
 ## Neu in 2.2.7
 
