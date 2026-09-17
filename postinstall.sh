@@ -74,7 +74,37 @@ verloren() {
     return 1
 }
 
-if verloren; then
+# Liegt die Marke aus preupgrade.sh, ist die Zweitschrift die von eben - und
+# was jetzt in data.json steht und NICHT die Vorgabe ist, ist waehrend der
+# Installation entstanden. Bis 2.2.10 war genau das der Schaden: die
+# Plugin-Seite hatte in der Luecke ein Token geschrieben, verloren() sagte
+# "vorhanden", und die Rueckholung unterblieb (in WSL nachgestellt,
+# Pruefung-Upgradeluecke-2026-09-17, Fall F). Dann wird ohne Blick auf
+# data.json zurueckgeholt - aber nur aus <ordner>.backup.json und nur, wenn
+# sie selbst Token oder Station traegt; der alte Name .backup.data.json kann
+# aus einer Fassung vor 2.2.0 stammen und wird hier nie blind genommen.
+MARKE="$BASE/data/plugins/$PDIR.upgrade_laeuft"
+ZWEIT="$BASE/config/plugins/$PDIR.backup.json"
+zweit_mit_inhalt() {
+    [ -s "$ZWEIT" ] || return 1
+    php -r '$d = json_decode((string) @file_get_contents($argv[1]), true);
+        if (!is_array($d)) { exit(1); }
+        $t = isset($d["aktionstoken"]) && is_string($d["aktionstoken"]) && $d["aktionstoken"] !== "";
+        $s = (isset($d["stationen"]) && is_array($d["stationen"]) && count($d["stationen"]) > 0)
+          || (isset($d["intercomip"]) && is_string($d["intercomip"]) && trim($d["intercomip"]) !== "");
+        exit(($t || $s) ? 0 : 1);' "$ZWEIT" 2>/dev/null
+}
+
+if [ -f "$MARKE" ] && ! verloren && zweit_mit_inhalt && ! cmp -s "$ZWEIT" "$CF"; then
+    if cp -p "$ZWEIT" "$CF" 2>/dev/null; then
+        chmod 0600 "$CF" 2>/dev/null
+        echo "<OK> Einstellungen aus der Zweitschrift wiederhergestellt ($ZWEIT)."
+        echo "<OK> data.json war waehrend der Installation veraendert worden."
+    else
+        echo "<WARNING> Die Zweitschrift liess sich nicht zurueckspielen."
+        echo "<WARNING> Sie liegt unter $ZWEIT und kann von Hand kopiert werden."
+    fi
+elif verloren; then
     ZURUECK=""
     for kandidat in "$BASE/config/plugins/$PDIR.backup.json" \
                     "$BASE/config/plugins/$PDIR.backup.data.json"; do
@@ -93,6 +123,14 @@ if verloren; then
     fi
 else
     echo "<OK> Die Einstellungen sind vorhanden."
+fi
+
+# Die Marke erst NACH der Rueckholung entfernen - vorher haette die
+# Plugin-Seite in dieser Sekunde wieder schreiben duerfen.
+rm -f "$MARKE" 2>/dev/null
+if [ -e "$MARKE" ]; then
+    echo "<WARNING> Die Marke der laufenden Aktualisierung liess sich nicht entfernen: $MARKE"
+    echo "<WARNING> Die Plugin-Seite speichert bis zu einer Stunde lang nichts."
 fi
 
 # In data.json stehen das Zugriffstoken und die Zugangsdaten fremder Dienste.

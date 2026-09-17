@@ -2,7 +2,7 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.10 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.11 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
@@ -35,6 +35,95 @@ Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.2.11
+
+Ein Update konnte die Einstellungen löschen, wenn in der falschen Minute
+jemand die Plugin-Seite öffnete.
+
+### Die Plugin-Seite während eines Updates
+
+Zwischen dem Kopieren der neuen Dateien und dem Zurückholen der Einstellungen
+liegt bei einem Update rund eine Minute. In dieser Zeit ist die Konfiguration
+leer. Bis 2.2.10 erzeugte die Plugin-Seite, in dieser Minute geöffnet, ein
+neues Zugriffstoken und speicherte es — in die Konfiguration **und** in die
+Zweitschrift. Das Update fand danach „Einstellungen vorhanden" und holte
+nichts zurück: Türstationen, Webhooks und das bisherige Token waren weg, und
+jede Adresse im Miniserver lief auf HTTP 403.
+
+2.2.11 schützt an zwei Stellen, die jede für sich trägt:
+
+* Während des Updates liegt eine Marke neben dem Datenordner. Solange sie
+  gilt, zeigt die Plugin-Seite nur den Hinweis „Eine Aktualisierung dieses
+  Plugins läuft gerade" und speichert nichts; Zeitraffer, Intervallaufnahme
+  und die tägliche Bereinigung setzen aus. Am Ende der Installation wird die
+  Marke entfernt. Eine Marke, die älter als eine Stunde ist, gilt nicht.
+* Unabhängig davon holt die Plugin-Seite eine Konfiguration, die weder
+  Zugriffstoken noch Türstation enthält, zuerst aus der Zweitschrift zurück,
+  bevor sie ein neues Token erzeugt, und sagt das einmal. Und eine Zweitschrift
+  mit Token oder Stationen wird nie mehr von einer Konfiguration überschrieben,
+  der diese fehlen. Stationen löschen, ein neues Token erzeugen und
+  Einstellungen zurückspielen ziehen die Zweitschrift weiter mit.
+
+Dabei ist ein zweiter Fehler derselben Minute aufgefallen: lief die tägliche
+Bereinigung in dieser Zeit, rechnete sie mit der Vorgabe von 90 Tagen und
+löschte ältere Archivbilder — auch wenn keine Tagesgrenze eingestellt war.
+
+Nachgestellt in WSL mit dem Ablauf des LoxBerry-Installers, nicht an einem
+Gerät gemessen.
+
+### Die Zweitschrift wird nach Inhalt erneuert, nicht nach Größe
+
+Vor jedem Update legt das Plugin eine Zweitschrift der Konfiguration neben den
+Konfigurationsordner — dorthin greift der Installer nicht. Bis 2.2.11 geschah
+das, sobald die Konfigurationsdatei nicht leer war. `{}` ist nicht leer, und
+genau so sieht die Datei aus, wenn ein früheres Update vor dem Zurückholen
+abgebrochen ist und seither niemand die Plugin-Seite geöffnet hat. Das nächste
+Update ersetzte damit eine Zweitschrift mit Türstationen und Token durch `{}`;
+der einzige Rückweg war weg, ohne eine Zeile im Protokoll.
+
+Jetzt entscheidet der Inhalt, und zwar nach derselben Frage wie im laufenden
+Betrieb: erneuert wird die Zweitschrift nur, wenn die Konfiguration ein
+Zugriffstoken **oder** eine Türstation trägt. Sonst bleibt die vorhandene
+stehen, und das Installationsprotokoll sagt, warum.
+
+### Ein leeres Zugriffstoken bleibt leer
+
+Das Zugriffstoken entsteht beim ersten Öffnen der Plugin-Seite und danach nie
+wieder von selbst. Bis 2.2.11 fragte die Seite nach dem *Wert*: war er leer,
+entstand ein neues. Wer eine Sicherung ohne Token zurückspielte oder das Feld
+von Hand leerte, bekam ungefragt ein neues — und jede Adresse im Miniserver
+war von da an ungültig, ohne dass es jemand meldete. Gefragt wird jetzt nach
+dem *Schlüssel*: fehlt er, ist es eine Erstinstallation, und es entsteht genau
+eines; ist er da und leer, bleibt er leer.
+
+Zwei Folgen, die man kennen muss:
+
+* Eine Sicherungsdatei, deren `aktionstoken` leer ist, ersetzt das laufende
+  Token nicht mehr. Alles Übrige der Datei wird zurückgespielt, und die
+  Oberfläche sagt: „Die Datei trug kein Zugriffstoken (der Eintrag ist leer).
+  Das bisherige Zugriffstoken bleibt deshalb in Kraft." Die Sicherung, die
+  dieses Plugin selbst schreibt, trägt das Token — sie ist genau dafür da,
+  auf einem zweiten LoxBerry weiterzuarbeiten.
+* Ist kein Token eingerichtet, nimmt die Plugin-Seite keine Formulare an: das
+  Merkmal, mit dem sie fremd ausgelöste Aufrufe abweist, hängt am
+  Zugriffstoken. Damit das keine Sackgasse wird, nimmt sie genau einen Knopf
+  auch ohne Merkmal an — „Neues Zugriffstoken" im Reiter „Einbindung in
+  Loxone". Alles andere bleibt abgewiesen, und sobald ein Token eingerichtet
+  ist, gilt auch diese Ausnahme nicht mehr. Der Reiter „Test" nennt den
+  Zustand, und die Meldung beim Speichern sagt, was zu tun ist.
+
+Für das Repository führt der Ordner seit 2.2.11 eine `.gitattributes` mit
+`* -text`. Sie ändert am Plugin nichts; sie hält git davon ab, beim Erzeugen
+des Tag-Archivs Zeilenenden umzuschreiben. Alle 43 Textdateien dieser Fassung
+führen LF.
+
+### Die Sperre ohne Datenordner
+
+Fehlte der Datenordner, legten Zeitraffer und Bereinigung ihre Sperre unter
+dem festen Namen `/tmp/.sperre_cron` an. Zwei Installationen auf demselben
+LoxBerry sperrten sich damit gegenseitig aus. Der Name trägt jetzt den
+Plugin-Ordner.
 
 ## Neu in 2.2.10
 

@@ -45,6 +45,14 @@ rm -f "$PCONFIG.backup.data.json" 2>/dev/null
 # Altlastenraeumung, die Begruendung ist seit 2.2.6 berichtigt.
 rm -rf "$PDATA/upgrade_sicherung"
 
+# Die Marke "Aktualisierung laeuft" aus preupgrade.sh liegt NEBEN dem
+# Datenordner und uebersteht deshalb auch das Deinstallieren. Bliebe sie nach
+# einer abgebrochenen Aktualisierung liegen, speicherte eine Neuinstallation
+# innerhalb der ersten Stunde nichts.
+if [ -n "$PDIR" ]; then
+    rm -f "$LBWURZEL/data/plugins/$PDIR.upgrade_laeuft" 2>/dev/null
+fi
+
 # BERICHTIGT 04.09.2026 (2.2.6): die Meldung haengt am Ergebnis.
 # Bis 2.2.5 stand hier unbedingt "<OK> Zweitschriften und Upgrade-Sicherung
 # entfernt." - auch wenn nichts da war oder rm scheiterte. Der Anwender las,

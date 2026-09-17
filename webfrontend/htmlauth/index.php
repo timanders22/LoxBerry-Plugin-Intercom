@@ -154,7 +154,47 @@ $ic_plugin  = ic_plugin_ordner();
 $ic_meldungen = array();     // Beanstandungen SAMMELN, nicht ueberschreiben
 $ic_fehler    = array();
 
+/* ==================================================================
+ * Waehrend einer Aktualisierung: nichts erzeugen, nichts speichern
+ * ==================================================================
+ *
+ * Zwischen den neuen Dateien und postinstall.sh ist data.json die leere
+ * Vorgabe aus dem Archiv. Bis 2.2.10 erzeugte ein Aufruf dieser Seite in der
+ * Zeit ein neues Token und schrieb es samt Zweitschrift - die Stationen und
+ * das alte Token waren danach weg (Pruefung-Upgradeluecke-2026-09-17, Fall F).
+ * Solange die Marke aus preupgrade.sh gilt, zeigt die Seite nur einen
+ * Hinweis; auch ein Formular von vorher wird nicht mehr angenommen.
+ *
+ * Unabhaengig davon (die Marke kann fehlen oder veraltet sein): eine
+ * Konfiguration ohne Token und ohne Station wird ZUERST aus der Zweitschrift
+ * geheilt, bevor unten ein Token entstehen kann. Nur hier, nicht im
+ * unangemeldeten Bereich. */
+$ic_upgrade = ic_upgrade_laeuft();
+$ic_heilung = array('ok', '');
+if (!$ic_upgrade) {
+    $ic_heilung = ic_config_heilen();
+    if ($ic_heilung[0] === 'geheilt') {
+        $ic_meldungen[] = ic_txtf('UI.M_AUS_ZWEITSCHRIFT', ic_e($ic_heilung[1]));
+    } elseif ($ic_heilung[0] === 'fehler') {
+        $ic_fehler[] = ic_txtf('UI.M_HEILUNG_NICHT', ic_e($ic_heilung[1]));
+    }
+}
+
 $ic_cfg = ic_config();
+
+if ($ic_upgrade) {
+    require_once "menu.php";
+    $navbar[1]['active'] = True;
+    LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
+    require_once __DIR__ . "/ic_stil.php";
+    echo '<div class="smw">' . "\n"
+       . '<h1>' . ic_txt('UI.TITEL') . '</h1>' . "\n"
+       . '<div class="sm-hinweis sm-warn"><b>' . ic_txt('UI.UPGRADE_LAEUFT') . '</b> '
+       . ic_txt('UI.UPGRADE_LAEUFT_TEXT') . '</div>' . "\n"
+       . '</div>' . "\n";
+    LBWeb::lbfooter();
+    exit;
+}
 
 /* ==================================================================
  * Handler - ALLES vor der ersten Ausgabe
@@ -168,11 +208,31 @@ if (isset($_POST['activetab']) && is_string($_POST['activetab'])
     $ic_offen = $_GET['tab'];
 }
 
-/** Jeder auslösende Aufruf verlangt das Merkmal - ausnahmslos. */
+/** Jeder auslösende Aufruf verlangt das Merkmal - mit genau einer Ausnahme.
+ *
+ * Das Merkmal haengt am Zugriffstoken (ic_merkmal()). Ist keines
+ * eingerichtet, gibt es keines - und damit keinen Weg zurueck: jedes
+ * Formular wird abgewiesen, auch der Knopf "Neues Zugriffstoken". Seit
+ * 2.2.11 kann dieser Zustand stehen bleiben, weil ein leeres Token nicht
+ * mehr stillschweigend ersetzt wird (unten, und Regeln/05: unterschieden
+ * wird per array_key_exists(), nicht per empty()).
+ *
+ * Genau dieser eine Knopf wird deshalb ohne Merkmal angenommen, solange
+ * kein Token eingerichtet ist - und nur er. Zu schuetzen ist dann nichts:
+ * ohne Token weist jeder Endpunkt jeden Aufruf ab, keine Adresse im
+ * Miniserver arbeitet, und wer den Aufruf von aussen ausloest, bekommt die
+ * Antwort nicht zu sehen. Gemessen im Pruefstand: TK4 (der Knopf wirkt
+ * ohne Merkmal), TK5 (mit eingerichtetem Token wird derselbe Knopf ohne
+ * Merkmal abgewiesen), TK2 (jedes andere Formular bleibt abgewiesen).
+ *
+ * Die Meldung nennt in dieser Lage die Sache und nicht das Merkmal: "Seite
+ * neu laden und noch einmal absenden" waere eine Schleife ohne Ausgang. */
 $ic_darf = ic_merkmal_gueltig();
 $ic_wollte = ($_SERVER['REQUEST_METHOD'] === 'POST');
-if ($ic_wollte && !$ic_darf) {
-    $ic_fehler[] = ic_txt('UI.M_MERKMAL');
+$ic_ohne_token = (ic_merkmal() === '');
+$ic_darf_token = $ic_darf || ($ic_ohne_token && isset($_POST['token_neu']));
+if ($ic_wollte && !$ic_darf && !$ic_darf_token) {
+    $ic_fehler[] = $ic_ohne_token ? ic_txt('UI.M_OHNE_TOKEN') : ic_txt('UI.M_MERKMAL');
 }
 
 /* ---------------- Loxone-Vorlage herunterladen ---------------- */
@@ -266,6 +326,11 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
          * keine Meldung ueber einen Wert entstehen, den es nicht gibt. */
         $ic_uebergangen = (isset($ic_erg[3]) && is_array($ic_erg[3]))
                         ? $ic_erg[3] : array();
+        /* Ein LEERES Aktionstoken in der Datei heisst "kein Token
+         * gesichert" (Regeln/05) - das laufende bleibt in Kraft, und der
+         * Anwender erfaehrt es. Derselbe isset-Vorbehalt wie eine Zeile
+         * darueber: eine aeltere Bibliothek gibt vier Werte zurueck. */
+        $ic_tokleer = (isset($ic_erg[4]) && $ic_erg[4]);
         if ($ic_neu_s === null) {
             /* ALLE Beanstandungen, nicht nur die erste - und geaendert
              * wird nichts. */
@@ -282,6 +347,9 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
                 $ic_meldungen[] = sprintf(ic_txt('UI.SICH_UEBERGANGEN'),
                     count($ic_uebergangen),
                     ic_e(implode(', ', $ic_uebergangen)));
+            }
+            if ($ic_tokleer) {
+                $ic_meldungen[] = ic_txt('UI.SICH_TOKEN_LEER');
             }
             /* Den Dienst nachziehen und sagen, was mit ihm geschah. Das
              * Plugin fuehrt keinen Dauerlaeufer; nachzuziehen sind der
@@ -303,7 +371,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
 }
 
 /* ---------------- Neues Token ---------------- */
-if ($ic_wollte && $ic_darf && isset($_POST['token_neu'])) {
+if ($ic_wollte && $ic_darf_token && isset($_POST['token_neu'])) {
     $ic_neu = $ic_cfg;
     try {
         $ic_neu['aktionstoken'] = ic_token_neu();
@@ -447,16 +515,26 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     // mqtt_* wohnen im MQTT-Reiter mit eigenem Formular und eigenem Handler -
     // hier nicht anfassen, sonst stellte jedes Speichern die Haken auf 0.
 
-    /* Ist noch kein Token da, eines erzeugen und behalten. Ein vorhandenes
-     * wird hier NIEMALS ersetzt, sonst waeren nach jedem Speichern alle
-     * Adressen im Miniserver ungueltig. */
-    if (empty($ic_neu['aktionstoken'])) {
+    /* Ist noch nie eines gesetzt worden, eines erzeugen und behalten. Ein
+     * vorhandenes wird hier NIEMALS ersetzt, sonst waeren nach jedem
+     * Speichern alle Adressen im Miniserver ungueltig.
+     *
+     * Gefragt wird, ob der SCHLUESSEL da ist, nicht ob der Wert leer ist
+     * (Regeln/05): ein fehlender Schluessel heisst "noch nie gesetzt" und
+     * bekommt eines, ein leerer heisst "bewusst geleert" und bleibt leer.
+     * Bis 2.2.11 stand hier empty(): wer das Feld leerte oder eine
+     * Sicherung mit leerem Token zurueckspielte, bekam beim naechsten
+     * Speichern ein neues - und jede Adresse im Miniserver war stumm
+     * ungueltig. */
+    if (!array_key_exists('aktionstoken', $ic_neu)) {
         try {
             $ic_neu['aktionstoken'] = ic_token_neu();
         } catch (RuntimeException $ic_e) {
             // Lieber gar kein Token als ein erratbares: die Endpunkte
-            // weisen dann konsequent alles ab.
-            $ic_neu['aktionstoken'] = '';
+            // weisen dann konsequent alles ab. Der Schluessel wird dabei
+            // NICHT leer angelegt - sonst hiesse er beim naechsten Mal
+            // "bewusst geleert", und es entstuende nie wieder eines.
+            unset($ic_neu['aktionstoken']);
             $ic_fehler[] = ic_txt('UI.M_ZUFALL');
         }
     }
@@ -576,7 +654,15 @@ if ($ic_wollte && $ic_darf && isset($_POST['loeschen'])) {
 /* ==================================================================
  * Beim ersten Oeffnen ein Token erzeugen
  * ================================================================== */
-if (!isset($ic_cfg['aktionstoken']) || (string) $ic_cfg['aktionstoken'] === '') {
+/* Nicht, wenn die Heilung oben scheiterte: ein neues Token auf eine
+ * Konfiguration, deren Zweitschrift Inhalt hat, ist genau der Verlust, den
+ * sie verhindern soll.
+ *
+ * Auch hier der SCHLUESSEL, nicht der Wert (Regeln/05, und derselbe Grund
+ * wie oben beim Speichern). Ein leeres Token bleibt stehen; der Reiter Test
+ * meldet es, und der Knopf "Neues Zugriffstoken" erzeugt auf Wunsch eines -
+ * melden ist richtig, stillschweigend ersetzen nicht. */
+if ($ic_heilung[0] !== 'fehler' && !array_key_exists('aktionstoken', $ic_cfg)) {
     try {
         $ic_cfg['aktionstoken'] = ic_token_neu();
         list($ic_ok, $ic_was) = ic_config_speichern($ic_cfg);
@@ -586,6 +672,13 @@ if (!isset($ic_cfg['aktionstoken']) || (string) $ic_cfg['aktionstoken'] === '') 
     } catch (RuntimeException $ic_e) {
         $ic_fehler[] = ic_txt('UI.M_ZUFALL');
     }
+}
+
+/* Hat ein Speichern dieses Aufrufs die Zweitschrift geschont, erfaehrt der
+ * Anwender es hier und nicht erst beim naechsten Update. */
+if (ic_zweitschrift_geschont()) {
+    $ic_fehler[] = ic_txtf('UI.M_ZWEITSCHRIFT_GESCHONT', ic_e(ic_zweitschrift()),
+                           ic_e(implode(', ', ic_zweitschrift_geschont())));
 }
 
 /* Vorgabewerte fuer noch nie gespeicherte Felder - an EINER Stelle, und

@@ -273,6 +273,158 @@ function ic_zweitschrift()
     return dirname($p['config']) . '/' . basename($p['config']) . '.backup.json';
 }
 
+/* ------------------------------------------------------------------
+ * Woran eine Konfiguration ihren Inhalt erkennt
+ * ------------------------------------------------------------------
+ *
+ * Das Merkwort dieser Linie sind zwei Dinge: das Zugriffstoken und die
+ * Tuerstationen (seit 2.2.0 die Liste "stationen", davor das eine Feld
+ * "intercomip"). Ohne beides ist eine Konfiguration wertlos - mit einem
+ * davon nicht. Entschieden wird nach Inhalt, nicht nach Form: "{}", eine
+ * leere Datei, abgeschnittenes JSON und eine fehlende Datei sind hier alle
+ * dasselbe, naemlich "ohne Inhalt".
+ */
+function ic_hat_token(array $c)
+{
+    return isset($c['aktionstoken']) && is_string($c['aktionstoken'])
+        && $c['aktionstoken'] !== '';
+}
+
+function ic_hat_stationen(array $c)
+{
+    if (isset($c['stationen']) && is_array($c['stationen']) && count($c['stationen']) > 0) {
+        return true;
+    }
+    return isset($c['intercomip']) && is_string($c['intercomip'])
+        && trim($c['intercomip']) !== '';
+}
+
+function ic_config_hat_inhalt(array $c)
+{
+    return ic_hat_token($c) || ic_hat_stationen($c);
+}
+
+/* ------------------------------------------------------------------
+ * Die Marke "Aktualisierung laeuft"
+ * ------------------------------------------------------------------
+ *
+ * Zwischen dem Kopieren der neuen Dateien und postinstall.sh liegt beim
+ * Upgrade rund eine Minute (Regeln/06, am Geraet 08.09.2026 gemessen). In
+ * dieser Luecke ist data.json die leere Vorgabe aus dem Archiv; die echten
+ * Einstellungen liegen nur in der Zweitschrift. Bis 2.2.10 erzeugte die
+ * Oberflaeche, in dieser Zeit geoeffnet, ein neues Token und schrieb es in
+ * data.json UND in die Zweitschrift - postinstall.sh fand danach "Einstellungen
+ * vorhanden", Stationen und altes Token waren weg (in WSL nachgestellt,
+ * Pruefung-Upgradeluecke-2026-09-17, Fall F).
+ *
+ * preupgrade.sh legt die Marke als Erstes an, postinstall.sh entfernt sie
+ * nach der Rueckholung. Sie liegt NEBEN dem Datenordner, weil
+ * purge_installation den Ordner selbst loescht. Aelter als eine Stunde oder
+ * unlesbar gilt sie nicht: eine abgebrochene Installation darf die Seite
+ * nicht fuer immer stilllegen.
+ */
+function ic_upgrade_marke()
+{
+    $p = ic_paths();
+    return dirname($p['datadir']) . '/' . basename($p['datadir']) . '.upgrade_laeuft';
+}
+
+function ic_upgrade_laeuft()
+{
+    $f = ic_upgrade_marke();
+    $roh = @is_file($f) ? @file_get_contents($f) : false;
+    if ($roh === false) { return false; }
+    $roh = trim((string) $roh);
+    if (!preg_match('/^[0-9]{1,12}$/', $roh)) { return false; }
+    $alter = time() - (int) $roh;
+    // Ein paar Minuten "Zukunft" sind eine nachgestellte Uhr, keine Luege.
+    return $alter > -300 && $alter < 3600;
+}
+
+/**
+ * Eine Konfiguration ohne Inhalt aus der Zweitschrift wiederherstellen.
+ *
+ * Nur fuer die Oberflaeche - der unangemeldete Bereich ruft das nie
+ * (Regeln/05: die Selbstheilung liegt hinter der Anmeldung). Und nicht,
+ * waehrend die Marke gilt; dann holt postinstall.sh zurueck.
+ *
+ * Lesen -> pruefen -> einmal zurueckschreiben -> einmal melden. Einmal, weil
+ * die geheilte Datei beim naechsten Aufruf Inhalt hat. Die Zweitschrift wird
+ * dabei nicht angefasst, sondern Byte fuer Byte uebernommen. Stand in
+ * data.json etwas, das kein leeres Objekt war (abgeschnittenes JSON,
+ * Einstellungen ohne Token und Station), bleibt es als data.json.kaputt
+ * liegen - mit 0600, es kann Zugangsdaten tragen.
+ *
+ * Rueckgabe array(lage, pfad): 'ok' (Inhalt da, nichts zu tun), 'ohne'
+ * (keine brauchbare Zweitschrift - der Fall der Neuinstallation), 'geheilt',
+ * 'fehler' (Schreiben scheiterte; pfad nennt die Datei).
+ */
+function ic_config_heilen()
+{
+    $datei = ic_paths()['config'] . '/data.json';
+    $roh = @is_file($datei) ? @file_get_contents($datei) : false;
+    $cfg = ($roh !== false && trim((string) $roh) !== '')
+         ? json_decode((string) $roh, true) : array();
+    if (is_array($cfg) && ic_config_hat_inhalt($cfg)) {
+        return array('ok', '');
+    }
+    $zweit = ic_zweitschrift();
+    $zroh = @is_file($zweit) ? @file_get_contents($zweit) : false;
+    $z = ($zroh !== false && trim((string) $zroh) !== '')
+       ? json_decode((string) $zroh, true) : null;
+    if (!is_array($z) || !ic_config_hat_inhalt($z)) {
+        return array('ohne', '');
+    }
+    $rest = ($roh === false) ? '' : preg_replace('/\s+/', '', (string) $roh);
+    $aufheben = ($rest !== '' && $rest !== '{}' && $rest !== '[]');
+    if ($aufheben && !ic_datei_ersetzen($datei . '.kaputt', (string) $roh, 0600)) {
+        return array('fehler', $datei . '.kaputt');
+    }
+    if (!ic_datei_ersetzen($datei, (string) $zroh, 0600)) {
+        return array('fehler', $datei);
+    }
+    ic_log('Die Konfiguration trug weder Zugriffstoken noch Tuerstation; sie wurde '
+        . 'aus der Zweitschrift wiederhergestellt: ' . $zweit
+        . ($aufheben ? ' (der vorherige Inhalt liegt unter ' . $datei . '.kaputt)' : '') . '.');
+    return array('geheilt', $zweit);
+}
+
+/**
+ * Was die Zweitschrift traegt und die neue Konfiguration nicht.
+ *
+ * Leer heisst: die Zweitschrift darf erneuert werden. Verglichen wird, ob
+ * ein SCHLUESSEL fehlt, nicht ob ein Wert leer ist - "stationen": [] ist
+ * ein gewolltes Loeschen und wird nachgezogen; ein fehlender Schluessel
+ * heisst, die Konfiguration ist nicht aus dem gespeicherten Stand
+ * hervorgegangen. Ein leeres Token dagegen gibt es auf keinem Weg der
+ * Oberflaeche und gilt deshalb als fehlend.
+ */
+function ic_zweitschrift_fehlt(array $neu)
+{
+    $zweit = ic_zweitschrift();
+    $zroh = @is_file($zweit) ? @file_get_contents($zweit) : false;
+    $z = ($zroh !== false && trim((string) $zroh) !== '')
+       ? json_decode((string) $zroh, true) : null;
+    if (!is_array($z)) { return array(); }
+    $fehlt = array();
+    if (ic_hat_token($z) && !ic_hat_token($neu)) {
+        $fehlt[] = 'aktionstoken';
+    }
+    if (ic_hat_stationen($z) && !array_key_exists('stationen', $neu)
+        && !array_key_exists('intercomip', $neu)) {
+        $fehlt[] = 'stationen';
+    }
+    return $fehlt;
+}
+
+/** Hat ic_config_speichern() in diesem Aufruf die Zweitschrift geschont? */
+function ic_zweitschrift_geschont($fehlt = null)
+{
+    static $f = array();
+    if (is_array($fehlt)) { $f = $fehlt; }
+    return $f;
+}
+
 /**
  * Die Konfiguration schreiben - unteilbar, mit Zweitschrift.
  *
@@ -284,6 +436,12 @@ function ic_zweitschrift()
  * Update ueberschreibt, und wird von postinstall.sh zurueckgespielt, wenn die
  * eigentliche Datei leer ist. 0600, weil hier Zugangsdaten und das
  * Zugriffstoken stehen.
+ *
+ * Die Zweitschrift wird NICHT erneuert, wenn die neue Konfiguration Token
+ * oder Stationen nicht traegt, die dort stehen (ic_zweitschrift_fehlt()).
+ * data.json wird trotzdem geschrieben - das Speichern selbst wird nicht
+ * verhindert, nur der einzige Rueckweg nicht zerstoert; Protokoll und
+ * Oberflaeche sagen es.
  */
 function ic_config_speichern(array $neu)
 {
@@ -292,11 +450,17 @@ function ic_config_speichern(array $neu)
     if ($js === false) {
         return array(false, 'json_encode: ' . json_last_error_msg());
     }
+    $fehlt = ic_zweitschrift_fehlt($neu);
     $datei = ic_paths()['config'] . '/data.json';
     if (!ic_datei_ersetzen($datei, $js, 0600)) {
         return array(false, $datei);
     }
-    if (!ic_datei_ersetzen(ic_zweitschrift(), $js, 0600)) {
+    if ($fehlt) {
+        ic_zweitschrift_geschont($fehlt);
+        ic_log('WARNUNG: Die Zweitschrift bleibt unveraendert - die gespeicherte '
+            . 'Konfiguration traegt nicht, was dort steht (' . implode(', ', $fehlt)
+            . '): ' . ic_zweitschrift());
+    } elseif (!ic_datei_ersetzen(ic_zweitschrift(), $js, 0600)) {
         ic_log('WARNUNG: Die Zweitschrift liess sich nicht schreiben: ' . ic_zweitschrift());
     }
     return array(true, '');
@@ -481,6 +645,28 @@ function ic_datei_ersetzen($pfad, $inhalt, $modus = 0644)
 }
 
 /**
+ * Der Ort einer Sperre - fuer ic_sperre() und ic_sperre_belegt() derselbe.
+ *
+ * Im Datenordner, solange es ihn gibt. Ohne Datenordner (nach
+ * purge_installation, vor postinstall.sh) fiel ic_sperre() bis 2.2.10 auf
+ * sys_get_temp_dir() zurueck - mit dem festen Namen .sperre_<name>. Zwei
+ * Installationen (intercom, intercom_01) teilten sich dann /tmp/.sperre_cron,
+ * und die zweite wurde abgewiesen; ic_sperre_belegt() sah dort gar nicht
+ * nach. In WSL gemessen (Pruefung-Intercom-2.2.11, Fall N6). Der Name traegt
+ * deshalb den Plugin-Ordner und ein Kennzeichen des LoxBerry-Wurzelordners.
+ */
+function ic_sperre_datei($name)
+{
+    $p = ic_paths();
+    $n = preg_replace('/[^a-z0-9_]/i', '', $name);
+    if (@is_dir($p['datadir'])) {
+        return $p['datadir'] . '/.sperre_' . $n;
+    }
+    return rtrim(sys_get_temp_dir(), '/') . '/.' . preg_replace('/[^a-z0-9_]/i', '', $p['plugin'])
+         . '_' . substr(md5((string) $p['home']), 0, 8) . '.sperre_' . $n;
+}
+
+/**
  * Eine nicht blockierende Sperre gegen Parallellaeufe.
  *
  * Der Name traegt den PLUGIN-ORDNER. Bis 2.1.13 hiess die Datei fest
@@ -494,10 +680,7 @@ function ic_datei_ersetzen($pfad, $inhalt, $modus = 0644)
  */
 function ic_sperre($name)
 {
-    $p = ic_paths();
-    $ordner = @is_dir($p['datadir']) ? $p['datadir'] : sys_get_temp_dir();
-    if (!@is_dir($ordner)) { @mkdir($ordner, 0775, true); }
-    $datei = $ordner . '/.sperre_' . preg_replace('/[^a-z0-9_]/i', '', $name);
+    $datei = ic_sperre_datei($name);
     $fh = @fopen($datei, 'c');
     if ($fh === false) { return false; }
     if (!@flock($fh, LOCK_EX | LOCK_NB)) {
@@ -1255,9 +1438,7 @@ function ic_log_gebremst($schluessel, $text, $sekunden = 3600)
  */
 function ic_sperre_belegt($name)
 {
-    $p = ic_paths();
-    if (!@is_dir($p['datadir'])) { return false; }
-    $datei = $p['datadir'] . '/.sperre_' . preg_replace('/[^a-z0-9_]/i', '', $name);
+    $datei = ic_sperre_datei($name);
     if (!@is_file($datei)) { return false; }
     $fh = @fopen($datei, 'c');
     if ($fh === false) { return true; }   // im Zweifel belegt - fail closed
@@ -2914,7 +3095,7 @@ function ic_sicherungsschluessel()
  * die alte, und man sieht es ihr nicht an.
  *
  * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte,
- * uebergangene Schluessel[]).
+ * uebergangene Schluessel[], Token der Datei war leer).
  *
  * Der VIERTE Wert kam am 07.09.2026 dazu. Bis dahin quittierte die
  * Oberflaeche nur "n Werte zurueckgespielt" - eine Zahl, die nach
@@ -2928,6 +3109,7 @@ function ic_sicherungsschluessel()
 function ic_sicherung_lesen($roh)
 {
     $mangel = array();
+    $leertoken = false;
     $daten = json_decode((string) $roh, true);
     if (!is_array($daten)) {
         return array(null, array(ic_txt('UI.SICH_KEIN_JSON')), 0);
@@ -2958,6 +3140,21 @@ function ic_sicherung_lesen($roh)
                                  htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8'));
             continue;
         }
+        /* NEU 17.09.2026: ein LEERES Aktionstoken heisst "kein Token
+         * gesichert" und ist kein unzulaessiger Wert (Regeln/05, an
+         * VolkswagenID 0.9.12 entschieden) - es darf aber auch das
+         * laufende nicht ersetzen. An jedem Zugriffstoken haengt jede
+         * Adresse im Miniserver; ein leeres macht sie alle stumm
+         * ungueltig, und seit dieser Fassung erzeugt die Oberflaeche
+         * kein neues mehr an seiner Stelle. Der Schluessel behaelt
+         * deshalb seinen jetzigen Wert - wie jeder, der in der Datei
+         * fehlt -, und die Oberflaeche sagt es (UI.SICH_TOKEN_LEER).
+         * Beanstandet wird nichts: eine Sicherung ohne Token ist keine
+         * halb gueltige Datei. */
+        if ((string) $k === 'aktionstoken' && (string) $w === '') {
+            $leertoken = true;
+            continue;
+        }
         $neu[$k] = $w;
         $anzahl++;
     }
@@ -2973,7 +3170,7 @@ function ic_sicherung_lesen($roh)
             $uebergangen[] = $bk;
         }
     }
-    return array($mangel ? null : $neu, $mangel, $anzahl, $uebergangen);
+    return array($mangel ? null : $neu, $mangel, $anzahl, $uebergangen, $leertoken);
 }
 
 /**

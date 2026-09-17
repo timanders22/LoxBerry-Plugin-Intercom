@@ -29,6 +29,19 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
+/* Waehrend einer Aktualisierung wird NICHTS geloescht.
+ *
+ * In der Zeit zwischen den neuen Dateien und postinstall.sh ist data.json die
+ * leere Vorgabe. ic_aufbewahrung() rechnet dann mit der Vorgabe von 90 Tagen -
+ * auch auf einer Anlage, deren Anwender keine Tagesgrenze eingestellt hat.
+ * In WSL gemessen (Pruefung-Intercom-2.2.11, Fall T2): 2.2.10 loeschte in
+ * dieser Luecke ein 200 Tage altes Archivbild, obwohl die Einstellung leer
+ * war. Der Lauf ist taeglich; er entfaellt einmal. */
+if (ic_upgrade_laeuft()) {
+    echo "Aktualisierung laeuft - die Bereinigung entfaellt heute.\n";
+    exit(0);
+}
+
 /* BERICHTIGT 04.09.2026 (2.2.6): eine EIGENE Sperre.
  *
  * Bis 2.2.5 holten timelapse.php und cleanup.php beide ic_sperre('cron').

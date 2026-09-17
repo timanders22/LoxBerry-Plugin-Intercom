@@ -16,6 +16,28 @@ if [ -z "$BASE" ] || [ ! -d "$BASE" ]; then
     exit 1
 fi
 
+# ==== Zuerst die Marke "Aktualisierung laeuft" ====
+#
+# Zwischen den neuen Dateien und postinstall.sh liegt rund eine Minute
+# (Regeln/06). data.json ist in der Zeit die leere Vorgabe aus dem Archiv.
+# Bis 2.2.10 erzeugte die Plugin-Seite, in dieser Zeit geoeffnet, ein neues
+# Token und ueberschrieb damit data.json UND die Zweitschrift; postinstall.sh
+# fand danach "Einstellungen vorhanden" (in WSL nachgestellt,
+# Pruefung-Upgradeluecke-2026-09-17, Fall F). Solange die Marke gilt,
+# speichert die Seite nichts, und Zeitraffer und Bereinigung setzen aus.
+# postinstall.sh entfernt sie. Sie liegt NEBEN dem Datenordner, weil
+# purge_installation den Ordner selbst loescht. Aelter als eine Stunde gilt
+# sie nicht mehr.
+MARKE="$BASE/data/plugins/$PDIR.upgrade_laeuft"
+mkdir -p "$BASE/data/plugins" 2>/dev/null
+date +%s > "$MARKE" 2>/dev/null
+if grep -Eq '^[0-9]+$' "$MARKE" 2>/dev/null; then
+    echo "<OK> Bis zum Ende der Installation speichert die Plugin-Seite nichts."
+else
+    echo "<WARNING> Die Marke fuer die laufende Aktualisierung liess sich nicht anlegen: $MARKE"
+    echo "<WARNING> Bitte die Plugin-Seite erst nach dem Ende der Installation oeffnen."
+fi
+
 # ==== EINE Zweitschrift, nicht zwei ====
 #
 # Der Installer kopiert config/* aus dem Archiv ueber config/plugins/<ordner>
@@ -31,7 +53,38 @@ fi
 ZWEIT="$BASE/config/plugins/$PDIR.backup.json"
 CF="$BASE/config/plugins/$PDIR/data.json"
 
-if [ -s "$CF" ]; then
+# ==== Erneuert wird nach INHALT, nicht nach Form ====
+#
+# Bis 2.2.11 stand hier [ -s "$CF" ] - "Datei nicht leer". "{}" sind zwei
+# Bytes und damit nicht leer; genau so sieht data.json aus, wenn ein
+# frueheres Update vor der Rueckholung abgebrochen ist (die Vorgabe aus dem
+# Archiv) und seither niemand die Plugin-Seite geoeffnet hat. Das naechste
+# Update ueberschrieb damit eine Zweitschrift mit Stationen und Token - der
+# einzige Rueckweg war weg, ohne eine Zeile im Protokoll. In WSL gemessen
+# (Pruefung-Intercom-2.2.11, messe_preupgrade_leer.sh): "Zweitschrift
+# danach: {}", in 2.2.10 und 2.2.11 gleich. Regeln/05 nennt [ -s ] in
+# preupgrade ausdruecklich zu schwach.
+#
+# Gefragt wird deshalb dasselbe wie in ic_config_speichern() und in
+# postinstall.sh: traegt die Datei ein Zugriffstoken ODER eine Tuerstation?
+# Rueckgabe 0 = ja, 1 = nein, 2 = nicht pruefbar (kein php, unlesbares
+# JSON). Im Zweifel bleibt die vorhandene Zweitschrift unangetastet.
+cf_mit_inhalt() {
+    [ -s "$CF" ] || return 1
+    php -r '$d = json_decode((string) @file_get_contents($argv[1]), true);
+        if (!is_array($d)) { exit(1); }
+        $t = isset($d["aktionstoken"]) && is_string($d["aktionstoken"]) && $d["aktionstoken"] !== "";
+        $s = (isset($d["stationen"]) && is_array($d["stationen"]) && count($d["stationen"]) > 0)
+          || (isset($d["intercomip"]) && is_string($d["intercomip"]) && trim($d["intercomip"]) !== "");
+        exit(($t || $s) ? 0 : 1);' "$CF" 2>/dev/null
+    RC=$?
+    [ "$RC" = 0 ] || [ "$RC" = 1 ] || return 2
+    return "$RC"
+}
+
+cf_mit_inhalt
+case "$?" in
+0)
     if cp -p "$CF" "$ZWEIT" 2>/dev/null; then
         chmod 0600 "$ZWEIT" 2>/dev/null
         echo "<OK> Zweitschrift der Einstellungen angelegt: $ZWEIT"
@@ -39,9 +92,24 @@ if [ -s "$CF" ]; then
         echo "<WARNING> Die Zweitschrift liess sich nicht anlegen: $ZWEIT"
         echo "<WARNING> Bitte die Einstellungen nach dem Update pruefen."
     fi
-else
-    echo "<INFO> Keine Konfiguration vorhanden - offenbar eine Erstinstallation."
-fi
+    ;;
+1)
+    if [ -s "$ZWEIT" ]; then
+        echo "<WARNING> data.json traegt weder Zugriffstoken noch Tuerstation."
+        echo "<WARNING> Die vorhandene Zweitschrift bleibt deshalb unveraendert:"
+        echo "<WARNING>   $ZWEIT"
+        echo "<WARNING> Aus ihr werden die Einstellungen am Ende der"
+        echo "<WARNING> Installation zurueckgeholt."
+    else
+        echo "<INFO> Keine Konfiguration vorhanden - offenbar eine Erstinstallation."
+    fi
+    ;;
+*)
+    echo "<WARNING> Der Inhalt von $CF liess sich nicht pruefen (fehlt php?)."
+    echo "<WARNING> Die Zweitschrift bleibt unveraendert. Bitte die"
+    echo "<WARNING> Einstellungen nach dem Update ansehen."
+    ;;
+esac
 
 # ==== KEINE Sicherung mehr unter data/plugins/<ordner> ====
 #

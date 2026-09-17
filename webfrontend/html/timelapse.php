@@ -28,6 +28,21 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
+/* ---- Waehrend einer Aktualisierung nichts tun ----
+ *
+ * Der Installer legt die Cron-Datei rund eine Minute vor postinstall.sh an
+ * (Regeln/06). In dieser Zeit fehlt der Datenordner, und data.json ist
+ * gewoehnlich die leere Vorgabe - dann tut ein Lauf nichts ausser einer
+ * Sperre im Temp-Ordner. Steht dort aber schon eine volle Konfiguration,
+ * legt er Merker an und sendet an das Gateway, bevor postinstall.sh fertig
+ * ist (in WSL mit kuenstlich eingesetzter Konfiguration gemessen,
+ * Pruefung-Intercom-2.2.11, Fall T1). Die Marke kommt aus preupgrade.sh;
+ * der naechste Takt nach postinstall.sh arbeitet wieder. */
+if (ic_upgrade_laeuft()) {
+    echo "Aktualisierung laeuft - dieser Durchgang entfaellt.\n";
+    exit(0);
+}
+
 /* ---- Sperre gegen Parallellaeufe ----
  *
  * Der Bildabruf von der Kamera wartet auf ein Netz. Dauert der Lauf laenger
