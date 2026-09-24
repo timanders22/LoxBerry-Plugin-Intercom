@@ -159,10 +159,27 @@ else
     echo "<WARNING> nichts an das MQTT-Gateway: sudo apt-get install -y php-sockets"
 fi
 
-echo "<INFO> WICHTIG seit 1.6.0: alle Endpunkte verlangen ein Zugriffstoken."
-echo "<INFO> Bitte die Plugin-Oberflaeche einmal oeffnen - dort wird eines"
-echo "<INFO> erzeugt, und der Reiter Test sagt in einer Zeile je Frage, ob die"
-echo "<INFO> Einrichtung traegt."
+# Die Erstanleitung (Oberflaeche oeffnen, damit ein Zugriffstoken entsteht)
+# nur, wenn data.json nach der Rueckholung keines traegt. postinstall.sh
+# laeuft auch bei jedem Upgrade; danach war der Rat falsch und legte nahe,
+# das Token sei verloren. Gefragt wird dasselbe wie in zweit_mit_inhalt()
+# nach dem Aktionstoken - hier allein danach, denn um das Token geht die
+# Anleitung.
+hat_token() {
+    [ -s "$1" ] || return 1
+    php -r '$d = json_decode((string) @file_get_contents($argv[1]), true);
+        exit(is_array($d) && isset($d["aktionstoken"]) && is_string($d["aktionstoken"])
+             && $d["aktionstoken"] !== "" ? 0 : 1);' "$1" 2>/dev/null
+}
+if hat_token "$CF"; then
+    echo "<OK> Installation abgeschlossen, Einstellungen uebernommen - das Zugriffstoken ist vorhanden."
+    echo "<INFO> Der Reiter Test sagt in einer Zeile je Frage, ob die Einrichtung traegt."
+else
+    echo "<INFO> WICHTIG seit 1.6.0: alle Endpunkte verlangen ein Zugriffstoken."
+    echo "<INFO> Bitte die Plugin-Oberflaeche einmal oeffnen - dort wird eines"
+    echo "<INFO> erzeugt, und der Reiter Test sagt in einer Zeile je Frage, ob die"
+    echo "<INFO> Einrichtung traegt."
+fi
 echo "<INFO> NEU in 2.2.0: mehrere Tuerstationen, eine Loxone-Vorlage zum"
 echo "<INFO> Herunterladen, ein Aufraeumen nach Platz und ein Bildabruf, der"
 echo "<INFO> das Token verlangt (bild.php)."
