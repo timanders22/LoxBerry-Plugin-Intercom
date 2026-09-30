@@ -252,7 +252,7 @@ if (!empty($arr['tv_enable']) && $arr['tv_enable'] === 'on'
         'filename' => new CURLFile($ic_intern, 'image/jpeg', 'lastpicture.jpg'),
     ));
     @curl_exec($ch);
-    curl_close($ch);
+    if (PHP_VERSION_ID < 80000) { curl_close($ch); }
 }
 
 /* ---------------- MQTT ueber das LoxBerry-Gateway (UDP) ---------------- */
@@ -296,7 +296,7 @@ foreach (array(1, 3) as $nr) {
     $ic_antwort = @curl_exec($ch);
     $ic_wcode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $ic_wfehler = curl_error($ch);
-    curl_close($ch);
+    if (PHP_VERSION_ID < 80000) { curl_close($ch); }
     // M5 (seit 2.2.13): ausgewertet und gebremst protokolliert, nicht wiederholt.
     ic_webhook_pruefen('Webhook ' . $nr, $ic_antwort !== false, $ic_wcode, $ic_wfehler);
 }

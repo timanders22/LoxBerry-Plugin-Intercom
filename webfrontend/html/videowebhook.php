@@ -123,7 +123,7 @@ if (!empty($arr['videowebhook1']) && function_exists('curl_init')) {
     $ic_antwort = @curl_exec($ch);
     $ic_wcode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $ic_wfehler = curl_error($ch);
-    curl_close($ch);
+    if (PHP_VERSION_ID < 80000) { curl_close($ch); }
     // M5 (seit 2.2.13): ausgewertet und gebremst protokolliert, nicht wiederholt.
     ic_webhook_pruefen('Video-Webhook 1', $ic_antwort !== false, $ic_wcode, $ic_wfehler);
 }

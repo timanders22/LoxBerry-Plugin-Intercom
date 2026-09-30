@@ -779,7 +779,7 @@ function ic_http_holen_voll($url, $zeitgrenze = 5, $auth = null, $kopfzeilen = a
         $antwort = curl_exec($ch);
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $fehler = curl_error($ch);
-        curl_close($ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($ch); }
         return array($antwort, $code, $fehler);
     }
     $kopf = $kopfzeilen;
@@ -3431,7 +3431,7 @@ function ic_ki_erkennen($bilddatei)
     ));
     $antwort = @curl_exec($ch);
     $fehler = curl_error($ch);
-    curl_close($ch);
+    if (PHP_VERSION_ID < 80000) { curl_close($ch); }
     if ($antwort === false || $antwort === '') {
         ic_log_gebremst('ki', 'Die Objekterkennung war nicht erreichbar: '
             . ($fehler !== '' ? $fehler : 'keine Antwort'));
