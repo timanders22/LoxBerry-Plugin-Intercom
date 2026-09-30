@@ -81,46 +81,79 @@ verloren() {
 # "vorhanden", und die Rueckholung unterblieb (in WSL nachgestellt,
 # Pruefung-Upgradeluecke-2026-09-17, Fall F). Dann wird ohne Blick auf
 # data.json zurueckgeholt - aber nur aus <ordner>.backup.json und nur, wenn
-# sie selbst Token oder Station traegt; der alte Name .backup.data.json kann
-# aus einer Fassung vor 2.2.0 stammen und wird hier nie blind genommen.
+# sie selbst Token oder Station traegt.
+#
+# BERICHTIGT 2.2.13 (I1, I2, I8): hier stand, der alte Name .backup.data.json
+# werde "nie blind genommen". Der Zweig darunter nahm ihn trotzdem blind -
+# jede nichtleere Datei, ohne Blick auf den Inhalt, und auch bei einer
+# NEUINSTALLATION (Installer-Pruefer, N2b und V1). Seit 2.2.13:
+#   * zurueckgespielt wird NUR bei liegender Marke (Entscheidung 1, ohne
+#     Altersgrenze); ohne Marke ist es eine Neuinstallation, und preinstall.sh
+#     hat liegengebliebene Zweitschriften schon nach .alt gelegt,
+#   * jeder Kandidat muss Token oder Station tragen (mit_inhalt), sonst
+#     <WARNING> statt <OK>,
+#   * nach jeder Rueckholung 0600 auf beide Zweitschriftnamen (I7).
 MARKE="$BASE/data/plugins/$PDIR.upgrade_laeuft"
 ZWEIT="$BASE/config/plugins/$PDIR.backup.json"
-zweit_mit_inhalt() {
-    [ -s "$ZWEIT" ] || return 1
+ZWEIT_ALT="$BASE/config/plugins/$PDIR.backup.data.json"
+KAPUTT="$BASE/config/plugins/$PDIR.data.json.kaputt"
+mit_inhalt() {
+    [ -s "$1" ] || return 1
     php -r '$d = json_decode((string) @file_get_contents($argv[1]), true);
         if (!is_array($d)) { exit(1); }
         $t = isset($d["aktionstoken"]) && is_string($d["aktionstoken"]) && $d["aktionstoken"] !== "";
         $s = (isset($d["stationen"]) && is_array($d["stationen"]) && count($d["stationen"]) > 0)
           || (isset($d["intercomip"]) && is_string($d["intercomip"]) && trim($d["intercomip"]) !== "");
-        exit(($t || $s) ? 0 : 1);' "$ZWEIT" 2>/dev/null
+        exit(($t || $s) ? 0 : 1);' "$1" 2>/dev/null
+}
+zweitschriften_rechte() {
+    for z in "$ZWEIT" "$ZWEIT_ALT"; do
+        [ -f "$z" ] && [ ! -L "$z" ] && chmod 0600 "$z" 2>/dev/null
+    done
 }
 
-if [ -f "$MARKE" ] && ! verloren && zweit_mit_inhalt && ! cmp -s "$ZWEIT" "$CF"; then
+if [ -f "$MARKE" ] && ! verloren && mit_inhalt "$ZWEIT" && ! cmp -s "$ZWEIT" "$CF"; then
     if cp -p "$ZWEIT" "$CF" 2>/dev/null; then
         chmod 0600 "$CF" 2>/dev/null
+        zweitschriften_rechte
         echo "<OK> Einstellungen aus der Zweitschrift wiederhergestellt ($ZWEIT)."
         echo "<OK> data.json war waehrend der Installation veraendert worden."
     else
         echo "<WARNING> Die Zweitschrift liess sich nicht zurueckspielen."
         echo "<WARNING> Sie liegt unter $ZWEIT und kann von Hand kopiert werden."
     fi
-elif verloren; then
+elif verloren && [ -f "$MARKE" ]; then
     ZURUECK=""
-    for kandidat in "$BASE/config/plugins/$PDIR.backup.json" \
-                    "$BASE/config/plugins/$PDIR.backup.data.json"; do
-        if [ -s "$kandidat" ]; then ZURUECK="$kandidat"; break; fi
+    UNBRAUCHBAR=""
+    for kandidat in "$ZWEIT" "$ZWEIT_ALT"; do
+        if mit_inhalt "$kandidat"; then ZURUECK="$kandidat"; break; fi
+        [ -s "$kandidat" ] && UNBRAUCHBAR="$UNBRAUCHBAR $kandidat"
     done
     if [ -n "$ZURUECK" ]; then
         if cp -p "$ZURUECK" "$CF" 2>/dev/null; then
             chmod 0600 "$CF" 2>/dev/null
+            zweitschriften_rechte
             echo "<OK> Einstellungen aus der Zweitschrift wiederhergestellt ($ZURUECK)."
         else
             echo "<WARNING> Die Zweitschrift liess sich nicht zurueckspielen."
             echo "<WARNING> Sie liegt unter $ZURUECK und kann von Hand kopiert werden."
         fi
     else
-        echo "<INFO> Keine Zweitschrift vorhanden - offenbar eine Erstinstallation."
+        echo "<WARNING> Aktualisierung: data.json ist leer, und keine Zweitschrift traegt"
+        echo "<WARNING> brauchbare Einstellungen (Zugriffstoken oder Tuerstation)."
+        [ -n "$UNBRAUCHBAR" ] && echo "<WARNING> Nicht eingespielt, weil ohne lesbaren Inhalt:$UNBRAUCHBAR"
+        [ -f "$KAPUTT" ] && echo "<WARNING> Upgrade, Konfiguration unlesbar: der alte Inhalt liegt unter $KAPUTT."
+        echo "<WARNING> Bitte die Einstellungen neu eintragen oder eine Sicherung zurueckspielen."
     fi
+elif verloren; then
+    REST=""
+    for kandidat in "$ZWEIT" "$ZWEIT_ALT"; do
+        [ -e "$kandidat" ] && REST="$REST $kandidat"
+    done
+    if [ -n "$REST" ]; then
+        echo "<WARNING> Neuinstallation: diese Zweitschriften einer frueheren Installation werden NICHT eingespielt:$REST"
+    fi
+    echo "<INFO> Neuinstallation - die Einstellungen entstehen beim ersten Oeffnen der Plugin-Seite."
 else
     echo "<OK> Die Einstellungen sind vorhanden."
 fi
@@ -130,7 +163,8 @@ fi
 rm -f "$MARKE" 2>/dev/null
 if [ -e "$MARKE" ]; then
     echo "<WARNING> Die Marke der laufenden Aktualisierung liess sich nicht entfernen: $MARKE"
-    echo "<WARNING> Die Plugin-Seite speichert bis zu einer Stunde lang nichts."
+    echo "<WARNING> Die Plugin-Seite speichert bis zu einer Stunde lang nichts, Zeitraffer"
+    echo "<WARNING> und Bereinigung setzen aus, bis die Marke entfernt ist."
 fi
 
 # In data.json stehen das Zugriffstoken und die Zugangsdaten fremder Dienste.

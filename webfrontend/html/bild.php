@@ -26,7 +26,12 @@
 require_once __DIR__ . '/ic_start.php';
 
 /*
- * DER BEFRISTETE LINK GILT NUR FUER DAS LETZTE BILD.
+ * DER BEFRISTETE LINK GILT NUR FUER DAS BILD, DAS BEIM ERZEUGEN DAS LETZTE WAR.
+ *
+ * BERICHTIGT 2.2.13 (C11): bis 2.2.12 lieferte der Link das jeweils NEUESTE
+ * Bild - nach dem zweiten Klingeln zeigte der Link aus der ersten Meldung den
+ * zweiten Besucher (mqtt-Pruefer, F2). Jetzt liegt je Code eine Kopie neben
+ * bildlinks.json, und genau die wird ausgeliefert.
  *
  * Er ist fuer Mails gedacht und traegt deshalb kein Zugriffstoken. Wuerde er
  * auch den ?datei=-Zweig oeffnen, waere er ein Zugang zum gesamten Archiv:
@@ -36,11 +41,19 @@ require_once __DIR__ . '/ic_start.php';
  */
 $ic_code = isset($_GET['link']) && is_string($_GET['link']) ? $_GET['link'] : '';
 $ic_nur_letztes = false;
+$ic_linkbild = '';
 if ($ic_code !== '') {
-    if (!ic_bildlink_pruefen($ic_code)) {
+    $ic_linkbild = ic_bildlink_einloesen($ic_code);
+    if ($ic_linkbild === false) {
         header('HTTP/1.1 403 Forbidden');
         header('Content-Type: text/plain; charset=utf-8');
         echo "Dieser Link ist abgelaufen oder verbraucht.\n";
+        exit;
+    }
+    if ($ic_linkbild === '') {
+        header('HTTP/1.1 404 Not Found');
+        header('Content-Type: text/plain; charset=utf-8');
+        echo "Das Bild zu diesem Link liegt nicht mehr vor.\n";
         exit;
     }
     $ic_nur_letztes = true;
@@ -115,6 +128,11 @@ if (isset($_GET['datei']) && is_string($_GET['datei']) && $_GET['datei'] !== '')
 // Der Dateiname der Antwort bleibt lastpicture.jpg, damit sich an der
 // Adresse, die in Loxone eingetragen ist, nichts aendert.
 $ic_quelle = 'datei';
+if ($ic_linkbild !== '' && $ic_linkbild !== 'letztes') {
+    // C11: die Kopie vom Zeitpunkt des Erzeugens.
+    $datei = $ic_linkbild;
+    $ic_quelle = 'link';
+}
 if (!@is_file($datei)) {
     $alt = __DIR__ . '/lastpicture.jpg';
     if (@is_file($alt)) {

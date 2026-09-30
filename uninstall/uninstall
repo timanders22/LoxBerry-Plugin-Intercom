@@ -9,22 +9,80 @@ PVERSION=$4   # Forth argument is Plugin version
 #LBHOMEDIR=$5 # Comes from /etc/environment now. Fifth argument is
               # Base folder of LoxBerry
 
-# Combine them with /etc/environment
-PCGI=$LBPCGI/$PDIR
-PHTML=$LBPHTML/$PDIR
-PTEMPL=$LBPTEMPL/$PDIR
-PDATA=$LBPDATA/$PDIR
-PLOG=$LBPLOG/$PDIR # Note! This is stored on a Ramdisk now!
-PCONFIG=$LBPCONFIG/$PDIR
-PSBIN=$LBPSBIN/$PDIR
-PBIN=$LBPBIN/$PDIR
+# ==== Pfade aus den Argumenten, mit Wurzelpruefung (BERICHTIGT 2.2.13, I5) ====
+#
+# Bis 2.2.12 kamen alle Pfade aus $LBPCONFIG, $LBPDATA und $LBHOMEDIR, $3 und
+# $5 wurden nicht benutzt, und fehlte LBHOMEDIR, galt ein fester Systempfad.
+# Gemessen ohne LBP*-Umgebung (Installer-Pruefer, D2): "<OK> Zweitschriften
+# ... entfernt", waehrend intercom.backup.json (Token, Kennwort) liegen blieb;
+# die Nachpruefung sah auf dieselben falschen Pfade. Jetzt wie in
+# preupgrade.sh: Ordner aus $3, Wurzel aus $5 (sonst LBHOMEDIR), und ohne
+# erkennbare Wurzel wird nichts geloescht, sondern gewarnt.
+BASE="${5:-$LBHOMEDIR}"
+PDIR="${3:-intercom}"
+case "$PDIR" in
+    ''|*/*|*..*) echo "<WARNING> Unzulaessiger Ordnername '$PDIR' - es wurde nichts entfernt."; exit 0 ;;
+esac
+if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ] \
+   || [ ! -f "$BASE/config/system/general.json" ]; then
+    echo "<WARNING> Kein LoxBerry-Wurzelverzeichnis erkannt ('$BASE') - Zweitschriften, Marke"
+    echo "<WARNING> und Bildlinks wurden NICHT entfernt. Von Hand entfernen unter"
+    echo "<WARNING> config/plugins/: $PDIR.backup.json, $PDIR.backup.data.json;"
+    echo "<WARNING> unter data/plugins/: $PDIR.upgrade_laeuft, $PDIR.bildlinks.json, $PDIR.bildlinks/."
+    exit 0
+fi
+PCONFIG="$BASE/config/plugins/$PDIR"
+PDATA="$BASE/data/plugins/$PDIR"
+LBWURZEL="$BASE"
 
-# Rueckfall, falls LBHOMEDIR im Deinstallationslauf nicht gesetzt ist. Der
-# Pfad steht bewusst NICHT als ein Stueck da: der Pluginpruefer von LoxBerry
-# meldet jede woertliche Nennung als HARDCODED PATH, und die Meldung ist
-# richtig - eine Anlage darf woanders liegen.
-LBWURZEL="$LBHOMEDIR"
-if [ -z "$LBWURZEL" ]; then LBWURZEL="/opt/""loxberry"; fi
+# ==== Behaltene MQTT-Themen abraeumen (NEU 2.2.13, M2, Entscheidung 3) ====
+#
+# Nur bei eingeschaltetem MQTT und nur die eigenen: <praefix>/bilder und
+# <praefix>/ai_count, die heute retained hinausgehen. Leeres retain ueber den
+# UDP-Eingang des Gateways, dreimal (UDP verliert), mit timeout. Bis 2.2.12
+# standen sie nach der Deinstallation fuer immer im Broker (mqtt-Pruefer, F9).
+# Ehrlich gemeldet: UDP sagt nur, dass das Paket hinausging.
+CF="$PCONFIG/data.json"
+if [ -f "$CF" ] && command -v php >/dev/null 2>&1; then
+    MQ=$(timeout 15 php -r '
+        $c = json_decode((string) @file_get_contents($argv[1]), true);
+        if (!is_array($c)) { echo "unlesbar"; exit(0); }
+        $an = isset($c["mqtt_enable"]) ? (string) $c["mqtt_enable"] : "0";
+        if (!in_array($an, array("1", "on", "true"), true)) { echo "aus"; exit(0); }
+        $p = (isset($c["mqtt_praefix"]) && is_string($c["mqtt_praefix"]) && trim($c["mqtt_praefix"]) !== "")
+           ? trim($c["mqtt_praefix"]) : $argv[3];
+        $p = trim(preg_replace("#/+#", "/", preg_replace("#[^A-Za-z0-9_/-]#", "_", $p)), "/");
+        $g = json_decode((string) @file_get_contents($argv[2]), true);
+        $port = 0;
+        foreach (array(array("Mqtt", "Udpinport"), array("mqtt", "udpinport")) as $k) {
+            if (isset($g[$k[0]]) && is_array($g[$k[0]]) && isset($g[$k[0]][$k[1]])) {
+                $port = (int) $g[$k[0]][$k[1]];
+                if ($port) { break; }
+            }
+        }
+        if ($p === "" || $port < 1 || $port > 65535 || !function_exists("socket_create")) {
+            echo "kein UDP-Eingangsport des Gateways oder keine PHP-Erweiterung sockets"; exit(0);
+        }
+        $t = array($p . "/bilder", $p . "/ai_count");
+        $ok = 0; $n = 0;
+        for ($i = 0; $i < 3; $i++) {
+            foreach ($t as $x) {
+                $n++;
+                $s = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+                if (!$s) { continue; }
+                $m = "retain " . $x;
+                if (@socket_sendto($s, $m, strlen($m), 0, "127.0.0.1", $port) !== false) { $ok++; }
+                socket_close($s);
+            }
+        }
+        echo ($ok === $n ? "ok " : "teil " . $ok . " von " . $n . ": ") . implode(", ", $t);
+    ' "$CF" "$BASE/config/system/general.json" "$PDIR" 2>/dev/null)
+    case "$MQ" in
+        aus) echo "<INFO> MQTT war ausgeschaltet - es gibt keine behaltenen Themen abzuraeumen." ;;
+        "ok "*) echo "<OK> Behaltene MQTT-Themen abgeraeumt: ${MQ#"ok "} (je dreimal an das Gateway gesendet; ob der Broker sie geloescht hat, laesst sich ueber UDP nicht nachlesen)." ;;
+        *) echo "<WARNING> Die behaltenen MQTT-Themen liessen sich nicht abraeumen: ${MQ:-keine Antwort}" ;;
+    esac
+fi
 
 # Die Deinstallation von LoxBerry entfernt nur das VERZEICHNIS
 # config/plugins/<ordner>/. Die Zweitschrift liegt DANEBEN und bliebe
@@ -38,6 +96,11 @@ if [ -z "$LBWURZEL" ]; then LBWURZEL="/opt/""loxberry"; fi
 # er auf jeder Anlage liegt, die von einer aelteren Fassung kommt.
 rm -f "$PCONFIG.backup.json" 2>/dev/null
 rm -f "$PCONFIG.backup.data.json" 2>/dev/null
+# Seit 2.2.13 dazu: die halbe Zweitschrift aus preupgrade.sh (I2), die
+# beiseitegelegten .alt einer Neuinstallation (I1) und die gesicherte
+# unlesbare Konfiguration (I6) - alle tragen Token und Zugangsdaten.
+rm -f "$PCONFIG.backup.json.neu" "$PCONFIG.backup.json.alt" "$PCONFIG.backup.data.json.alt" 2>/dev/null
+rm -f "$PCONFIG.data.json.kaputt" "$PCONFIG.data.json.kaputt.alt" 2>/dev/null
 
 # Ebenso ein Rest aus Fassungen bis 2.1.13: dort legte preupgrade.sh eine
 # Sicherung im Datenordner an. Seit 2.2.0 tut es das nicht mehr (die Kette
@@ -47,11 +110,15 @@ rm -rf "$PDATA/upgrade_sicherung"
 
 # Die Marke "Aktualisierung laeuft" aus preupgrade.sh liegt NEBEN dem
 # Datenordner und uebersteht deshalb auch das Deinstallieren. Bliebe sie nach
-# einer abgebrochenen Aktualisierung liegen, speicherte eine Neuinstallation
-# innerhalb der ersten Stunde nichts.
-if [ -n "$PDIR" ]; then
-    rm -f "$LBWURZEL/data/plugins/$PDIR.upgrade_laeuft" 2>/dev/null
-fi
+# einer abgebrochenen Aktualisierung liegen, spielte eine Neuinstallation
+# die Zweitschrift ein, und Zeitraffer und Bereinigung setzten aus - seit
+# 2.2.13 gilt die Marke ohne Altersgrenze (Entscheidung 1, Nr. 8 Frage 17).
+rm -f "$BASE/data/plugins/$PDIR.upgrade_laeuft" 2>/dev/null
+
+# Seit 2.2.13 liegen neben dem Datenordner auch die befristeten Bildlinks
+# samt Bildkopien (I4, C11) und der Merker der MQTT-Altlast (M1).
+rm -f "${PDATA:?}.bildlinks.json" "${PDATA:?}.bildlinks.json.alt" "${PDATA:?}.mqtt_altlast.json" 2>/dev/null
+rm -rf "${PDATA:?}.bildlinks" "${PDATA:?}.bildlinks.alt" 2>/dev/null
 
 # BERICHTIGT 04.09.2026 (2.2.6): die Meldung haengt am Ergebnis.
 # Bis 2.2.5 stand hier unbedingt "<OK> Zweitschriften und Upgrade-Sicherung
@@ -60,11 +127,16 @@ fi
 # diesen Dateien stehen Zugriffstoken, Adressen der Tuerstationen und die
 # Zugangsdaten der Webhooks.
 uebrig=""
-for datei in "$PCONFIG.backup.json" "$PCONFIG.backup.data.json" "$PDATA/upgrade_sicherung"; do
+# Nachgezaehlt wird VOR der Schlusszeile, auf denselben Pfaden (I5).
+for datei in "$PCONFIG.backup.json" "$PCONFIG.backup.data.json" "$PDATA/upgrade_sicherung" \
+             "$PCONFIG.backup.json.neu" "$PCONFIG.backup.json.alt" "$PCONFIG.backup.data.json.alt" \
+             "$PCONFIG.data.json.kaputt" "$PCONFIG.data.json.kaputt.alt" \
+             "$BASE/data/plugins/$PDIR.upgrade_laeuft" "$PDATA.bildlinks.json" "$PDATA.bildlinks.json.alt" \
+             "$PDATA.bildlinks" "$PDATA.bildlinks.alt" "$PDATA.mqtt_altlast.json"; do
     if [ -e "$datei" ]; then uebrig="$uebrig $datei"; fi
 done
 if [ -z "$uebrig" ]; then
-    echo "<OK> Zweitschriften und Upgrade-Sicherung entfernt."
+    echo "<OK> Zweitschriften, Upgrade-Marke und Bildlinks entfernt (nachgezaehlt: 0 Reste)."
 else
     echo "<WARNING> Diese Dateien liessen sich NICHT entfernen:"
     for datei in $uebrig; do

@@ -37,8 +37,12 @@ if (PHP_SAPI !== 'cli') {
  * legt er Merker an und sendet an das Gateway, bevor postinstall.sh fertig
  * ist (in WSL mit kuenstlich eingesetzter Konfiguration gemessen,
  * Pruefung-Intercom-2.2.11, Fall T1). Die Marke kommt aus preupgrade.sh;
- * der naechste Takt nach postinstall.sh arbeitet wieder. */
-if (ic_upgrade_laeuft()) {
+ * der naechste Takt nach postinstall.sh arbeitet wieder.
+ *
+ * BERICHTIGT 2.2.13 (Entscheidung 1 und Nr. 8, Frage 17): die Marke gilt hier
+ * OHNE Altersgrenze. Bis 2.2.12 arbeitete der Lauf nach einer Stunde Luecke
+ * wieder, obwohl postinstall.sh noch ausstand. */
+if (ic_upgrade_marke_liegt()) {
     echo "Aktualisierung laeuft - dieser Durchgang entfaellt.\n";
     exit(0);
 }
@@ -87,6 +91,10 @@ if ($ok2) {
 // ein virtueller Eingang behaelt seinen letzten Wert, und in der App sieht
 // dann alles normal aus.
 ic_mqtt_herzschlag();
+
+/* NEU 2.2.13 (M1): die behaltenen Themen aus 2.2.5 und frueher abraeumen -
+ * mehrfach ueber den ersten Tag verteilt, danach nie wieder. Nur mit MQTT. */
+ic_mqtt_altlast_lauf();
 
 flock($ic_sperre, LOCK_UN);
 fclose($ic_sperre);

@@ -57,6 +57,14 @@ if (!$r['ok']) {
     // Klingeln eine Zeile, und log/ ist eine Ramdisk.
     ic_log_gebremst('station_' . $station['name'],
         'Die Tuerstation "' . $station['name'] . '" lieferte kein Bild: ' . $r['fehler']);
+    /* NEU 2.2.13 (M4): eine misslungene Aufnahme erreicht Loxone. Bis 2.2.12
+     * ging hier gar nichts hinaus - der virtuelle Ausgang wertet die Antwort
+     * nicht aus, und MQTT schwieg (mqtt-Pruefer, F6). Jetzt ein fluechtiges
+     * <praefix>/fehler mit Station und kurzem Grund und status/ok 0. */
+    if (ic_mqtt_an()) {
+        ic_mqtt_senden('fehler', $station['name'] . ': ' . $r['fehler']);
+        ic_mqtt_senden('status/ok', '0');
+    }
     header('HTTP/1.1 502 Bad Gateway');
     echo json_encode(array('success' => false, 'station' => $station['name'],
                            'weg' => $r['weg'], 'error' => $r['fehler']));
@@ -110,14 +118,19 @@ if (!$nur_vorschau) {
     // Der Name traegt Datum, Uhrzeit und den Ausloeser - und KEINE
     // Doppelpunkte: auf FAT32, exFAT und NTFS sind sie im Dateinamen
     // unzulaessig, und genau dorthin zeigt der einstellbare Speicherort.
-    $archivname = ic_archivname(($station['name'] !== '' && count(ic_stationen()) > 1
-                                 ? preg_replace('/[^A-Za-z0-9_\-]/', '', $station['name']) . '-' : '')
-                                . $trigger);
+    /* BERICHTIGT 2.2.13 (C10): der Name wird EXKLUSIV belegt. Bis 2.2.12
+     * ersetzte ein zweiter Aufruf in derselben Sekunde das Bild des ersten -
+     * gemessen 5 statt 10 Archivbilder bei zehn Antworten "archived": true. */
+    $archivname = ic_archivdatei_anlegen($o['bild'],
+        ($station['name'] !== '' && count(ic_stationen()) > 1
+         ? preg_replace('/[^A-Za-z0-9_\-]/', '', $station['name']) . '-' : '')
+        . $trigger);
     $ziel = $o['bild'] . $archivname;
-    if (ic_datei_ersetzen($ziel, $frame)) {
+    if ($archivname !== '' && ic_datei_ersetzen($ziel, $frame)) {
         $archiviert = true;
         if ($mit_stempel) { ic_zeitstempel_ins_bild($ziel); }
     } else {
+        if ($archivname !== '') { @unlink($ziel); }
         $archivhinweis = 'Archivbild konnte nicht geschrieben werden: ' . $ziel;
         ic_log_gebremst('archiv', 'Ein Archivbild liess sich nicht schreiben: ' . $ziel
             . ' - Rechte und freien Platz pruefen.');
@@ -151,7 +164,8 @@ $basis = 'http://' . ic_host() . '/plugins/' . ic_plugin_ordner() . '/';
 if ($ic_offen) {
     $bildurl = $basis . 'lastpicture.jpg';
 } else {
-    $ic_code = ic_bildlink_erzeugen(24, 5);
+    // C11 (seit 2.2.13): der Link bekommt DIESES Bild, nicht das jeweils neueste.
+    $ic_code = ic_bildlink_erzeugen(24, 5, $archiviert ? $ziel : $ic_intern);
     $bildurl = $ic_code === '' ? '' : $basis . 'bild.php?link=' . rawurlencode($ic_code);
     if ($ic_code === '') {
         ic_log_gebremst('bildlink', 'Es liess sich kein befristeter Bildlink anlegen - '
@@ -171,18 +185,29 @@ $json = json_encode(array(
     'archive_info' => $archivhinweis,
     'image'        => $bildurl,
 ));
-echo $json;
-
 /*
  * Ab hier wartet der Miniserver nicht mehr mit.
  *
  * Der Klingelweg summierte bis 2.1.13 im ungünstigen Fall acht Sekunden
  * Strom, fuenf Sekunden Anzeigegeraet und dreimal fuenf Sekunden Webhook -
- * und die Verbindung blieb bis zum Skriptende offen. Die Antwort steht
- * jetzt, sobald das Bild da ist; alles Weitere laeuft danach.
+ * und die Verbindung blieb bis zum Skriptende offen.
+ *
+ * BERICHTIGT 2.2.13 (M6): bis 2.2.12 stand hier, die Antwort sei nach dem
+ * flush() fertig. Das galt nur unter PHP-FPM (fastcgi_finish_request); der
+ * LoxBerry faehrt mod_php, und dort blieb die Verbindung bis zum Skriptende
+ * offen - gemessen 5,0 s bei einem haengenden Webhook (mqtt-Pruefer, F4).
+ * Jetzt sagen Content-Length und "Connection: close" dem Aufrufer, dass er
+ * nach dem JSON fertig ist; ignore_user_abort(true) laesst die Nacharbeit
+ * (Anzeigegeraet, MQTT, Webhooks) danach weiterlaufen.
  */
 if (!$nur_vorschau) {
     @ignore_user_abort(true);
+    @ini_set('zlib.output_compression', '0');
+    header('Content-Length: ' . strlen($json));
+    header('Connection: close');
+}
+echo $json;
+if (!$nur_vorschau) {
     if (function_exists('fastcgi_finish_request')) {
         @fastcgi_finish_request();
     } else {
@@ -268,8 +293,12 @@ foreach (array(1, 3) as $nr) {
     // Zeitgrenzen: ohne sie wartet cURL unbegrenzt.
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-    @curl_exec($ch);
+    $ic_antwort = @curl_exec($ch);
+    $ic_wcode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $ic_wfehler = curl_error($ch);
     curl_close($ch);
+    // M5 (seit 2.2.13): ausgewertet und gebremst protokolliert, nicht wiederholt.
+    ic_webhook_pruefen('Webhook ' . $nr, $ic_antwort !== false, $ic_wcode, $ic_wfehler);
 }
 
 // 2 und 4: Adresse mit Platzhalter <imgurl>
@@ -280,5 +309,6 @@ foreach (array(2, 4) as $nr) {
     // Zusammenhang - PHP nahm dann default_socket_timeout, ueblicherweise
     // 60 Sekunden. Ein abgeschalteter Node-RED genuegte, damit der Aufruf
     // eine Minute stillstand, und der Miniserver wartete mit.
-    ic_http_holen($url, 5);
+    list($ic_winhalt, $ic_wcode, $ic_wfehler) = ic_http_holen_voll($url, 5);
+    ic_webhook_pruefen('Webhook ' . $nr, $ic_winhalt !== false, $ic_wcode, $ic_wfehler);
 }

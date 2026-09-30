@@ -44,8 +44,12 @@
                 if (f && f.parentNode) { f.parentNode.removeChild(f); }
             } else {
                 // Ein Fehlschlag wird GEMELDET. Bis 2.1.13 verschwand die
-                // Kachel auch dann, wenn die Datei noch dalag.
-                window.alert(x.responseText || 'Fehler beim Loeschen.');
+                // Kachel auch dann, wenn die Datei noch dalag. Seit 2.2.13
+                // der Satz aus der Antwort (in der Sprache der Oberflaeche),
+                // nicht das rohe JSON.
+                var text = '';
+                try { text = JSON.parse(x.responseText).error || ''; } catch (err2) { text = ''; }
+                window.alert(text || x.responseText || 'Fehler beim Loeschen.');
             }
         };
         x.send(daten);

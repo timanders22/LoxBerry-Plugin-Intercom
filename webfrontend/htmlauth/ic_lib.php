@@ -319,9 +319,20 @@ function ic_config_hat_inhalt(array $c)
  *
  * preupgrade.sh legt die Marke als Erstes an, postinstall.sh entfernt sie
  * nach der Rueckholung. Sie liegt NEBEN dem Datenordner, weil
- * purge_installation den Ordner selbst loescht. Aelter als eine Stunde oder
- * unlesbar gilt sie nicht: eine abgebrochene Installation darf die Seite
- * nicht fuer immer stilllegen.
+ * purge_installation den Ordner selbst loescht.
+ *
+ * ZWEI LESARTEN, seit 2.2.13 getrennt (Entscheidung 1 vom 29.09.2026 und
+ * Nr. 8, Frage 17 vom 30.09.2026):
+ *   ic_upgrade_laeuft()      nur die SPERRE DER OBERFLAECHE. Aelter als eine
+ *                            Stunde oder unlesbar gilt sie hier nicht: eine
+ *                            abgebrochene Installation darf die Seite nicht
+ *                            fuer immer stilllegen.
+ *   ic_upgrade_marke_liegt() Heilung, Bereinigung und Zeitraffer - OHNE
+ *                            Altersgrenze. Bis 2.2.12 fragten auch diese nach
+ *                            der Stunde; ein Update mit mehr als einer Stunde
+ *                            Luecke loeschte darin Archivbilder nach der
+ *                            Vorgabe von 90 Tagen (Installer-Pruefer, Fall U4).
+ *                            Wer frisch anfangen will, deinstalliert vorher.
  */
 function ic_upgrade_marke()
 {
@@ -341,6 +352,20 @@ function ic_upgrade_laeuft()
     return $alter > -300 && $alter < 3600;
 }
 
+/** Liegt die Marke ueberhaupt - gleich wie alt? (seit 2.2.13, siehe oben) */
+function ic_upgrade_marke_liegt()
+{
+    clearstatcache(true, ic_upgrade_marke());
+    return @is_file(ic_upgrade_marke());
+}
+
+/** Seit wann liegt sie? 0 = unlesbar. */
+function ic_upgrade_marke_zeit()
+{
+    $roh = trim((string) @file_get_contents(ic_upgrade_marke()));
+    return preg_match('/^[0-9]{1,12}$/', $roh) ? (int) $roh : 0;
+}
+
 /**
  * Eine Konfiguration ohne Inhalt aus der Zweitschrift wiederherstellen.
  *
@@ -356,8 +381,19 @@ function ic_upgrade_laeuft()
  * liegen - mit 0600, es kann Zugangsdaten tragen.
  *
  * Rueckgabe array(lage, pfad): 'ok' (Inhalt da, nichts zu tun), 'ohne'
- * (keine brauchbare Zweitschrift - der Fall der Neuinstallation), 'geheilt',
- * 'fehler' (Schreiben scheiterte; pfad nennt die Datei).
+ * (keine brauchbare Zweitschrift), 'geheilt', 'fehler' (Schreiben scheiterte;
+ * pfad nennt die Datei).
+ *
+ * BERICHTIGT 2.2.13 (I1, I8): bis 2.2.12 stand hier, 'ohne' sei "der Fall der
+ * Neuinstallation". Gemessen war das Gegenteil: eine Neuinstallation neben
+ * einer liegengebliebenen Zweitschrift ergab 'geheilt' - schon beim ersten
+ * Oeffnen, noch vor postinstall.sh (Installer-Pruefer, Fall N4). Seit 2.2.13
+ * heilt die Bibliothek OHNE Upgrade-Marke nie aus einer Zweitschrift, die
+ * aelter ist als diese Installation. Die Installation erkennt sie am
+ * Zeitstempel dieser Datei: der Installer kopiert mit cp -r ohne -p
+ * (sbin/plugininstall.pl:1050). Die Marke gilt dabei ohne Altersgrenze.
+ * preinstall.sh legt solche Zweitschriften ohnehin nach .alt; die Bibliothek
+ * liest .alt nie.
  */
 function ic_config_heilen()
 {
@@ -374,6 +410,17 @@ function ic_config_heilen()
        ? json_decode((string) $zroh, true) : null;
     if (!is_array($z) || !ic_config_hat_inhalt($z)) {
         return array('ohne', '');
+    }
+    if (!ic_upgrade_marke_liegt()) {
+        clearstatcache(true, $zweit);
+        $inst = @filemtime(__FILE__);
+        $zeit = @filemtime($zweit);
+        if ($inst !== false && $zeit !== false && $zeit < $inst) {
+            ic_log_gebremst('heilung_alt', 'Die Konfiguration traegt weder Zugriffstoken noch '
+                . 'Tuerstation. Die Zweitschrift ' . $zweit . ' ist aelter als diese Installation '
+                . 'und wird deshalb nicht eingespielt (Neuinstallation, Entscheidung 1).');
+            return array('ohne', '');
+        }
     }
     $rest = ($roh === false) ? '' : preg_replace('/\s+/', '', (string) $roh);
     $aufheben = ($rest !== '' && $rest !== '{}' && $rest !== '[]');
@@ -744,23 +791,52 @@ function ic_http_holen_voll($url, $zeitgrenze = 5, $auth = null, $kopfzeilen = a
         'timeout' => $zeitgrenze,
         'ignore_errors' => true,
         'user_agent' => 'LoxBerry Intercom',
+        // Mit Zugangsdaten keiner Umleitung folgen (C5, seit 2.2.13): der
+        // Stream-Wrapper schickt die Kopfzeile Authorization sonst auch an
+        // das Umleitungsziel - gemessen im Pruefstand des code-Pruefers.
+        'follow_location' => (is_array($auth) && $auth[0] !== '') ? 0 : 1,
         'header' => implode("\r\n", $kopf),
     )));
     $inhalt = @file_get_contents($url, false, $ctx);
-    $code = 0;
-    if (isset($http_response_header) && is_array($http_response_header)
-        && preg_match('#\s(\d{3})\s#', $http_response_header[0], $m)) {
-        $code = (int) $m[1];
+    /* BERICHTIGT 2.2.13 (C7, Bauart A): PHP 8.5 erklaert die lokal angelegte
+     * Antwortkopf-Variable des Stream-Wrappers fuer veraltet und meldet das
+     * schon beim Uebersetzen dieser Datei. Hausform:
+     * http_get_last_response_headers(), wo es sie gibt (ab 8.4), sonst ueber
+     * den Namen. */
+    if (function_exists('http_get_last_response_headers')) {
+        $antwortkopf = http_get_last_response_headers();
+    } else {
+        $kn = 'http_response_header';
+        $antwortkopf = isset($$kn) ? $$kn : null;
     }
+    $code = ic_status_aus_kopf(is_array($antwortkopf) ? $antwortkopf : array());
     return array($inhalt, $code, $inhalt === false ? 'Abruf gescheitert' : '');
 }
 
-/** Kurzform, wie bis 2.1.13: nur der Inhalt. */
-function ic_http_holen($url, $zeitgrenze = 5)
+/** Der Statuscode der LETZTEN Antwort in einer Liste von Kopfzeilen (0 = keiner). */
+function ic_status_aus_kopf(array $kopf)
 {
-    list($inhalt) = ic_http_holen_voll($url, $zeitgrenze);
-    return $inhalt;
+    $code = 0;
+    foreach ($kopf as $z) {
+        if (is_string($z) && preg_match('#^HTTP/\S+\s+(\d{3})#', $z, $m)) {
+            $code = (int) $m[1];
+        }
+    }
+    return $code;
 }
+
+/** Die Kopfzeilen eines geoeffneten HTTP-Stroms - ueber stream_get_meta_data() (C7). */
+function ic_strom_kopfzeilen($f)
+{
+    $m = is_resource($f) ? @stream_get_meta_data($f) : null;
+    return (is_array($m) && isset($m['wrapper_data']) && is_array($m['wrapper_data']))
+        ? $m['wrapper_data'] : array();
+}
+
+/* ENTFERNT 2.2.13 (M5): die Kurzform ic_http_holen() - sie gab nur den Inhalt
+ * zurueck, und genau deshalb wertete bis 2.2.12 niemand den HTTP-Code eines
+ * Webhooks aus. Ihre beiden Aufrufer (Webhook 2/4, Video-Webhook 2) nehmen
+ * jetzt ic_http_holen_voll() und ic_webhook_pruefen(). */
 
 /* ==================================================================
  * Tuerstationen
@@ -881,19 +957,25 @@ function ic_zugangsdaten(array $station)
 function ic_jpeg_schneiden($roh)
 {
     $roh = (string) $roh;
+    /* Seit 2.2.13 (O8) ein dritter Wert: derselbe Grund in der Sprache der
+     * Oberflaeche. Der zweite bleibt deutsch - er geht ins Protokoll und in
+     * die JSON-Antwort an Loxone. */
     $start = strpos($roh, "\xFF\xD8\xFF");
     if ($start === false) {
-        return array(false, 'kein JPEG-Anfang (FFD8) im Datenstrom');
+        $t = 'kein JPEG-Anfang (FFD8) im Datenstrom';
+        return array(false, $t, ic_uebersetzt('TEST.E_JPEG_ANFANG', array(), $t));
     }
     $ende = strpos($roh, "\xFF\xD9", $start + 3);
     if ($ende === false) {
-        return array(false, 'kein vollstaendiger Rahmen: das Ende (FFD9) fehlt');
+        $t = 'kein vollstaendiger Rahmen: das Ende (FFD9) fehlt';
+        return array(false, $t, ic_uebersetzt('TEST.E_JPEG_ENDE', array(), $t));
     }
     $bild = substr($roh, $start, $ende - $start + 2);
     if (strlen($bild) < 1000) {
-        return array(false, 'Rahmen zu klein (' . strlen($bild) . ' Byte)');
+        $t = 'Rahmen zu klein (' . strlen($bild) . ' Byte)';
+        return array(false, $t, ic_uebersetzt('TEST.E_RAHMEN_KLEIN', array(strlen($bild)), $t));
     }
-    return array($bild, '');
+    return array($bild, '', '');
 }
 
 /**
@@ -931,8 +1013,9 @@ function ic_bild_holen(array $station, $weg = null, $zeitgrenze = 8)
     if (!in_array($weg, array('strom', 'standbild', 'auto'), true)) { $weg = 'strom'; }
 
     if ($station['ip'] === '') {
+        $t = 'Fuer diese Station ist keine Adresse eingetragen.';
         return array('ok' => false, 'bild' => '', 'weg' => $weg,
-                     'fehler' => 'Fuer diese Station ist keine Adresse eingetragen.',
+                     'fehler' => $t, 'fehler_ui' => ic_uebersetzt('TEST.E_KEINE_ADRESSE', array(), $t),
                      'code' => 0, 'dauer' => 0.0);
     }
     $t0 = microtime(true);
@@ -942,16 +1025,23 @@ function ic_bild_holen(array $station, $weg = null, $zeitgrenze = 8)
         $r = ic_standbild_holen($station, $zeitgrenze);
         if ($r['ok'] || $weg === 'standbild') {
             $r['dauer'] = microtime(true) - $t0;
+            ic_merker_setzen('stationskontakt', $r['ok'] ? '1' : '0');
             return $r;
         }
         $vorlauf = $r['fehler'];
+        $vorlauf_ui = $r['fehler_ui'];
     }
 
     $r = ic_strombild_holen($station, $zeitgrenze);
     if (!$r['ok'] && $vorlauf !== '') {
         $r['fehler'] = 'Standbild: ' . $vorlauf . ' | Strom: ' . $r['fehler'];
+        $r['fehler_ui'] = ic_uebersetzt('TEST.E_BEIDE', array($vorlauf_ui, $r['fehler_ui']),
+                                        $r['fehler']);
     }
     $r['dauer'] = microtime(true) - $t0;
+    /* NEU 2.2.13 (M3): der letzte Stationskontakt als Merker - daraus bildet
+     * der Herzschlag status/ok (Entscheidung 8). */
+    ic_merker_setzen('stationskontakt', $r['ok'] ? '1' : '0');
     return $r;
 }
 
@@ -967,18 +1057,25 @@ function ic_standbild_holen(array $station, $zeitgrenze = 8)
     $url = 'http://' . $station['ip'] . $pfad;
     list($inhalt, $code, $fehler) = ic_http_holen_voll($url, $zeitgrenze, array($u, $pw));
     $aus = array('ok' => false, 'bild' => '', 'weg' => 'standbild ' . $pfad,
-                 'fehler' => '', 'code' => $code, 'dauer' => 0.0);
+                 'fehler' => '', 'fehler_ui' => '', 'code' => $code, 'dauer' => 0.0);
     if ($inhalt === false || $inhalt === '') {
         $aus['fehler'] = $fehler !== '' ? $fehler : 'keine Antwort';
+        $aus['fehler_ui'] = $fehler === 'Abruf gescheitert'
+            ? ic_uebersetzt('TEST.E_ABRUF', array(), $fehler)
+            : ($fehler !== '' ? $fehler : ic_uebersetzt('TEST.E_KEINE_ANTWORT', array(), 'keine Antwort'));
         return $aus;
     }
     if ($code !== 0 && $code !== 200) {
         $aus['fehler'] = 'HTTP ' . $code
                        . ($code === 401 ? ' - Benutzername oder Passwort stimmen nicht' : '');
+        $aus['fehler_ui'] = $code === 401
+            ? ic_uebersetzt('TEST.E_HTTP401', array(), $aus['fehler'])
+            : ic_uebersetzt('TEST.E_HTTP', array($code), $aus['fehler']);
         return $aus;
     }
     if (strncmp($inhalt, "\xFF\xD8\xFF", 3) !== 0) {
         $aus['fehler'] = 'die Antwort ist kein JPEG (' . strlen($inhalt) . ' Byte)';
+        $aus['fehler_ui'] = ic_uebersetzt('TEST.E_KEIN_JPEG', array(strlen($inhalt)), $aus['fehler']);
         return $aus;
     }
     $aus['ok'] = true;
@@ -992,7 +1089,7 @@ function ic_strombild_holen(array $station, $zeitgrenze = 8)
     list($u, $pw) = ic_zugangsdaten($station);
     $url = 'http://' . $station['ip'] . '/mjpg/video.mjpg';
     $aus = array('ok' => false, 'bild' => '', 'weg' => 'strom /mjpg/video.mjpg',
-                 'fehler' => '', 'code' => 0, 'dauer' => 0.0);
+                 'fehler' => '', 'fehler_ui' => '', 'code' => 0, 'dauer' => 0.0);
     $kopf = array('Accept: image/jpeg, multipart/x-mixed-replace, */*');
     if ($u !== '') {
         $kopf[] = 'Authorization: Basic ' . base64_encode($u . ':' . $pw);
@@ -1000,25 +1097,39 @@ function ic_strombild_holen(array $station, $zeitgrenze = 8)
     // Zeitgrenze auf den Strom legen, BEVOR gelesen wird: ohne sie wartet
     // fread beliebig lange, wenn die Tuerstation die Verbindung offen haelt,
     // aber nichts mehr schickt. In timelapse.php fehlte genau das bis 2.1.13.
+    /* BERICHTIGT 2.2.13 (C5): 'follow_location' => 0. Der Stream-Wrapper
+     * folgte bis 2.2.12 einer Umleitung und schickte die Kopfzeile
+     * Authorization mit - gemessen mit einer Station, die per 302 auf einen
+     * fremden Rechner zeigte: dort kamen die Zugangsdaten der Station an. Eine
+     * Intercom leitet nicht um; eine Umleitung ist hier ein Fehler. */
     $ctx = stream_context_create(array('http' => array(
         'method' => 'GET',
         'timeout' => $zeitgrenze,
         'ignore_errors' => true,
+        'follow_location' => 0,
         'header' => implode("\r\n", $kopf),
     )));
     $f = @fopen($url, 'r', false, $ctx);
     if (!$f) {
         $aus['fehler'] = 'die Station war nicht erreichbar';
+        $aus['fehler_ui'] = ic_uebersetzt('TEST.E_NICHT_ERREICHBAR', array(), $aus['fehler']);
         return $aus;
     }
-    if (isset($http_response_header) && is_array($http_response_header)
-        && preg_match('#\s(\d{3})\s#', $http_response_header[0], $m)) {
-        $aus['code'] = (int) $m[1];
-        if ($aus['code'] === 401) {
-            fclose($f);
-            $aus['fehler'] = 'HTTP 401 - Benutzername oder Passwort stimmen nicht';
-            return $aus;
-        }
+    // C7: die Kopfzeilen ueber stream_get_meta_data(), nicht ueber die
+    // lokale Wrapper-Variable (PHP 8.5).
+    $aus['code'] = ic_status_aus_kopf(ic_strom_kopfzeilen($f));
+    if ($aus['code'] === 401) {
+        fclose($f);
+        $aus['fehler'] = 'HTTP 401 - Benutzername oder Passwort stimmen nicht';
+        $aus['fehler_ui'] = ic_uebersetzt('TEST.E_HTTP401', array(), $aus['fehler']);
+        return $aus;
+    }
+    if ($aus['code'] >= 300 && $aus['code'] < 400) {
+        fclose($f);
+        $aus['fehler'] = 'HTTP ' . $aus['code'] . ' - die Station leitet um; einer Umleitung '
+                       . 'folgt das Plugin nicht';
+        $aus['fehler_ui'] = ic_uebersetzt('TEST.E_UMLEITUNG', array($aus['code']), $aus['fehler']);
+        return $aus;
     }
     stream_set_timeout($f, $zeitgrenze);
     /* WAECHTER gegen die Endlosschleife.
@@ -1044,9 +1155,11 @@ function ic_strombild_holen(array $station, $zeitgrenze = 8)
         if (strlen($r) > 4194304) { break; }
     }
     fclose($f);
-    list($bild, $fehler) = ic_jpeg_schneiden($r);
+    list($bild, $fehler, $fehler_ui) = ic_jpeg_schneiden($r);
     if ($bild === false) {
         $aus['fehler'] = $fehler . ' (' . strlen($r) . ' Byte gelesen)';
+        $aus['fehler_ui'] = ic_uebersetzt('TEST.E_GELESEN', array($fehler_ui, strlen($r)),
+                                          $aus['fehler']);
         return $aus;
     }
     $aus['ok'] = true;
@@ -1251,13 +1364,20 @@ function ic_mqtt_senden($unterthema, $wert, $retain = null)
  */
 function ic_mqtt_herzschlag()
 {
-    if (!ic_mqtt_an()) { return false; }
-
     /* Das Lebenszeichen nach Hausschema (Regeln/07): status/ok sagt, ob der
-     * letzte Lauf wirklich gemessen hat, status/ts wann, status/zaehler
-     * laeuft 0..999 um. Erst der Zaehler macht "der Dienst steht" von "er
-     * arbeitet" unterscheidbar - ein Zeitstempel allein sagt das nicht, wenn
-     * niemand die Uhr des Miniservers dagegenhaelt.
+     * letzte Kontakt zur Tuerstation geklappt hat, status/ts wann der Lauf
+     * war, status/zaehler laeuft 0..999 um. Erst der Zaehler macht "der
+     * Dienst steht" von "er arbeitet" unterscheidbar - ein Zeitstempel allein
+     * sagt das nicht, wenn niemand die Uhr des Miniservers dagegenhaelt.
+     *
+     * BERICHTIGT 2.2.13, zwei Sachen an dieser Stelle:
+     * 1. (M7) Der Laufmerker wird IMMER geschrieben, nur das Senden haengt an
+     *    ic_mqtt_an(). Bis 2.2.12 stand der Ruecksprung davor: ohne MQTT
+     *    (Werksvorgabe) meldete ?selftest=1 dauerhaft alter=-1 ("noch nie
+     *    gelaufen"), obwohl der Cron jede Minute lief.
+     * 2. (M3, Entscheidung 8) status/ok stand fest auf 1 - auch bei einer
+     *    Station, die seit Tagen schweigt. Jetzt kommt es aus dem letzten
+     *    Stationskontakt (ic_stationskontakt_ok()).
      *
      * <praefix>/ok bleibt unveraendert daneben stehen. Es traegt seit jeher
      * die Loxone-Zeit, und an dem Namen haengen bestehende Anlagen; ein
@@ -1268,8 +1388,9 @@ function ic_mqtt_herzschlag()
     $zaehler = ($zk === null || !is_numeric($zk['text']))
              ? 0 : (((int) $zk['text']) + 1) % 1000;
     ic_merker_setzen('mqttzaehler', (string) $zaehler);
+    if (!ic_mqtt_an()) { return false; }
 
-    ic_mqtt_senden('status/ok', '1');
+    ic_mqtt_senden('status/ok', ic_stationskontakt_ok() ? '1' : '0');
     ic_mqtt_senden('status/ts', (string) (time() - 1230768000));
     ic_mqtt_senden('status/zaehler', (string) $zaehler);
     ic_mqtt_senden('ok', (string) (time() - 1230768000));
@@ -1305,9 +1426,12 @@ function ic_mqtt_an()
 }
 
 /** Alle Themen, die dieses Plugin veroeffentlicht - EINE Quelle. */
-function ic_mqtt_themen()
+function ic_mqtt_themen($p = null)
 {
-    $p = ic_mqtt_praefix();
+    /* Seit 2.2.13 mit wahlweise anderem Praefix: der Praefixwechsel raeumt die
+     * behaltenen Themen unter dem ALTEN Praefix ab (M2) und nimmt sie aus
+     * dieser Liste, nicht aus einer zweiten. */
+    if ($p === null) { $p = ic_mqtt_praefix(); }
     /* Drittes Feld: wird das Thema RETAINED gesendet?
      *
      * Hausstandard seit 03.09.2026 (Regeln/07): Zustaende retained, damit
@@ -1333,6 +1457,8 @@ function ic_mqtt_themen()
         array($p . '/ai',             'MQTT.T_AI',        false),
         array($p . '/ai_count',       'MQTT.T_AI_COUNT',  true),
         array($p . '/timelapse',      'MQTT.T_TIMELAPSE', false),
+        // NEU 2.2.13 (M4): eine misslungene Aufnahme an der Klingel, fluechtig.
+        array($p . '/fehler',         'MQTT.T_FEHLER',    false),
         array($p . '/bilder',         'MQTT.T_BILDER',    true),
         array($p . '/status/ok',      'MQTT.T_ST_OK',     false),
         array($p . '/status/ts',      'MQTT.T_ST_TS',     false),
@@ -1359,6 +1485,183 @@ function ic_mqtt_retain($unterthema)
         }
     }
     return false;
+}
+
+/**
+ * Hat der letzte Kontakt zur Tuerstation geklappt? (NEU 2.2.13, M3)
+ *
+ * Quelle ist der Merker, den ic_bild_holen() bei JEDEM Abruf setzt (Klingel,
+ * Aufnahme im Takt, Zeitraffer, Pruefung mit Netz). Nein heisst: der letzte
+ * Kontakt scheiterte, es gab noch keinen, oder er ist aelter als drei Takte
+ * der Aufnahme im Takt. Ist die Aufnahme im Takt aus, gibt es keinen Takt -
+ * dann zaehlt allein der letzte Kontakt, gleich wie alt (siehe BAUBERICHT,
+ * Abschnitt Offen).
+ */
+function ic_stationskontakt_ok()
+{
+    $mk = ic_merker_lesen('stationskontakt');
+    if ($mk === null || trim((string) $mk['text']) !== '1') { return false; }
+    $cfg = ic_config();
+    $min = (isset($cfg['intervall_min']) && is_numeric($cfg['intervall_min']))
+         ? (int) $cfg['intervall_min'] : 0;
+    if ($min >= 1 && (time() - (int) $mk['zeit']) > 3 * $min * 60) { return false; }
+    return true;
+}
+
+/**
+ * Eine Zeile an den UDP-Eingang des Gateways, mit VOLLEM Thema (NEU 2.2.13).
+ *
+ * Fuer das Abraeumen unter einem anderen als dem eingestellten Praefix (M1,
+ * M2). Eine leere Nutzlast mit "retain" loescht beim Broker den behaltenen
+ * Wert. Rueckgabe: ging das Paket hinaus? Ob der Broker es bekam, sagt UDP
+ * nicht.
+ */
+function ic_mqtt_roh_senden($verb, $thema, $wert)
+{
+    $port = ic_mqtt_udpport();
+    if (!$port || !function_exists('socket_create')) { return false; }
+    $thema = ic_mqtt_thema($thema);
+    if ($thema === '' || !in_array($verb, array('retain', 'publish'), true)) { return false; }
+    $s = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+    if (!$s) { return false; }
+    $w = ic_mqtt_nutzlast($wert);
+    $msg = $verb . ' ' . $thema . ($w !== '' ? ' ' . $w : '');
+    $ok = @socket_sendto($s, $msg, strlen($msg), 0, '127.0.0.1', $port);
+    socket_close($s);
+    return $ok !== false;
+}
+
+/**
+ * Die heute behaltenen Themen unter einem Praefix abraeumen (NEU 2.2.13, M2).
+ *
+ * Beim Praefixwechsel und beim Abschalten: unter dem ALTEN Praefix stuenden
+ * sonst bilder und ai_count fuer immer im Broker, und Gateway V1 lieferte
+ * nach einem Wechsel zwei Bildzaehler. Dreimal gesendet, weil UDP verliert.
+ * Rueckgabe array(gesendet, versucht, themen).
+ */
+function ic_mqtt_behaltene_abraeumen($praefix, $mal = 3)
+{
+    $themen = array();
+    foreach (ic_mqtt_themen(ic_mqtt_thema($praefix)) as $t) {
+        if ($t[2] && substr($t[0], -5) !== '/NAME') { $themen[] = $t[0]; }
+    }
+    $ok = 0;
+    $versucht = 0;
+    for ($i = 0; $i < $mal; $i++) {
+        foreach ($themen as $t) {
+            $versucht++;
+            if (ic_mqtt_roh_senden('retain', $t, '')) { $ok++; }
+        }
+    }
+    return array($ok, $versucht, $themen);
+}
+
+/* ------------------------------------------------------------------
+ * Altlast bis 2.2.5 abraeumen (NEU 2.2.13, M1)
+ * ------------------------------------------------------------------
+ *
+ * Bis 2.2.5 ging jedes Thema RETAINED hinaus (ic_mqtt_senden() hatte
+ * retain=true als Vorgabe). Seit 2.2.6 gehen das Klingelthema, trigger/<name>,
+ * video, ai, timelapse und ok fluechtig - ein fluechtiges publish ueberschreibt
+ * den behaltenen Wert aber nicht. Auf jeder Anlage, die von 2.2.5 oder frueher
+ * kommt, steht er deshalb bis heute im Broker; bei abgeschaltetem offenem Bild
+ * sogar mit bild.php?token=<Zugriffstoken> (mqtt-Pruefer, Befund 1).
+ *
+ * Abgeraeumt wird mit leerem retain, und zwar mehrfach ueber den ersten Tag
+ * verteilt (UDP verliert 17 bis 70 %): sechs Runden, die erste sofort, dann
+ * nach 15 min, 1 h, 4 h, 12 h und 24 h. Eine Runde zaehlt nur, wenn JEDES
+ * sendto hinausging; danach nie wieder. Nicht abgeraeumt werden bilder und
+ * ai_count - die sind heute behalten und werden weiter gebraucht.
+ *
+ * Der Merker liegt NEBEN dem Datenordner (purge_installation raeumt den
+ * Ordner bei jedem Upgrade ab); die Deinstallation entfernt ihn.
+ */
+function ic_mqtt_altlast_datei()
+{
+    $p = ic_paths();
+    return dirname($p['datadir']) . '/' . basename($p['datadir']) . '.mqtt_altlast.json';
+}
+
+/** Die Themen der Altlast: je Praefix sechs Staemme und die bekannten Ausloeser. */
+function ic_mqtt_altlast_themen()
+{
+    $praefixe = array_values(array_unique(array_filter(array(
+        ic_mqtt_praefix(), ic_mqtt_thema(ic_plugin_ordner())))));
+    /* Ausloeser: die drei, die Oberflaeche und Vorlage nennen, dazu jeder, der
+     * im Namen eines Archivbilds steht (<datum>-<zeit>-[<station>-]<name>-intercom.jpg).
+     * Ein Name, zu dem nie etwas behalten wurde, kostet ein leeres Paket. */
+    $namen = array('klingel' => true, 'briefkasten' => true, 'test' => true);
+    $o = ic_archivordner();
+    foreach ((@glob($o['bild'] . '*.jpg') ?: array()) as $d) {
+        if (count($namen) >= 100) { break; }
+        if (!preg_match('/^\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}-(.+)-intercom(?:-\d+)?\.jpg$/',
+                        basename($d), $m)) {
+            continue;
+        }
+        $teile = explode('-', $m[1]);
+        for ($i = 0; $i < count($teile); $i++) {
+            $n = implode('-', array_slice($teile, $i));
+            if ($n !== 'intervall' && preg_match('/^[A-Za-z0-9_\-]{1,32}$/', $n)) {
+                $namen[$n] = true;
+            }
+        }
+    }
+    $themen = array();
+    foreach ($praefixe as $p) {
+        foreach (array('', '/video', '/ai', '/timelapse', '/ok') as $s) { $themen[] = $p . $s; }
+        foreach (array_keys($namen) as $n) { $themen[] = $p . '/trigger/' . $n; }
+    }
+    return $themen;
+}
+
+/** Eine Runde, wenn sie faellig ist. Rueckgabe: '' (nichts zu tun) oder ein Wort. */
+function ic_mqtt_altlast_lauf()
+{
+    if (!ic_mqtt_an()) { return ''; }
+    $datei = ic_mqtt_altlast_datei();
+    $st = @json_decode((string) @file_get_contents($datei), true);
+    if (!is_array($st)) { $st = array(); }
+    if (!empty($st['fertig'])) { return ''; }
+    $abstaende = array(0, 900, 3600, 14400, 43200, 86400);
+    $runden = isset($st['runden']) ? max(0, (int) $st['runden']) : 0;
+    $erste = isset($st['erste']) ? (int) $st['erste'] : 0;
+    if ($runden > 0 && $runden < count($abstaende) && time() < $erste + $abstaende[$runden]) {
+        return '';
+    }
+    if ($runden < count($abstaende)) {
+        $themen = ic_mqtt_altlast_themen();
+        $ok = 0;
+        foreach ($themen as $t) {
+            if (ic_mqtt_roh_senden('retain', $t, '')) { $ok++; }
+        }
+        if ($ok !== count($themen)) {
+            ic_log_gebremst('altlast', 'MQTT: die Altlast aus 2.2.5 und frueher liess sich nicht '
+                . 'vollstaendig abraeumen (' . $ok . ' von ' . count($themen) . ' Paketen) - '
+                . 'naechster Versuch im naechsten Takt.');
+            return 'teil';
+        }
+        if ($runden === 0) { $st['erste'] = time(); }
+        $runden++;
+        $st['runden'] = $runden;
+        $st['zuletzt'] = time();
+        $st['themen'] = count($themen);
+        if ($runden === 1) {
+            ic_log('MQTT: die behaltenen Themen aus 2.2.5 und frueher werden abgeraeumt ('
+                . count($themen) . ' Themen, Runde 1 von ' . count($abstaende) . ').');
+        }
+    }
+    if ($runden >= count($abstaende)) {
+        $st['fertig'] = time();
+        ic_log('MQTT: die Altlast aus 2.2.5 und frueher ist abgeraeumt (' . $runden
+            . ' Runden) - das geschieht nicht wieder.');
+    }
+    $js = json_encode($st);
+    if ($js === false || !ic_datei_ersetzen($datei, $js, 0600)) {
+        ic_log_gebremst('altlast_merker', 'MQTT: der Merker ' . $datei . ' liess sich nicht '
+            . 'schreiben - das Abraeumen wird wiederholt.');
+        return 'merker';
+    }
+    return 'runde';
 }
 
 /* ==================================================================
@@ -1527,19 +1830,13 @@ function ic_wert_taugt($w)
  */
 function ic_wert_pruefen($schluessel, $wert)
 {
-    /* Stationen: ein Feld von Feldern mit bekannten Feldnamen. */
+    /* Stationen: ein Feld von Feldern mit bekannten Feldnamen - und seit
+     * 2.2.13 (C8) mit DERSELBEN Pruefung wie das Formular: Adresse Pflicht und
+     * nach dem Muster aus index.php, ms ganzzahlig 1 bis 10. Bis 2.2.12 lief
+     * "127.0.0.1:47313/fang?x=" durch, und der Bildabruf schickte die
+     * Zugangsdaten der Station an einen fremden Rechner (code-Pruefer, m6 d). */
     if ($schluessel === 'stationen') {
-        if (!is_array($wert)) { return false; }
-        if (count($wert) > 50) { return false; }
-        $erlaubt = array('name', 'ip', 'user', 'pass', 'ms', 'standbild');
-        foreach ($wert as $st) {
-            if (!is_array($st)) { return false; }
-            foreach ($st as $sk => $sw) {
-                if (!in_array((string) $sk, $erlaubt, true)) { return false; }
-                if (!ic_wert_taugt($sw)) { return false; }
-            }
-        }
-        return true;
+        return ic_stationen_mangel($wert) === array();
     }
     if (!ic_wert_taugt($wert)) { return false; }
     $t = (string) $wert;
@@ -1551,9 +1848,12 @@ function ic_wert_pruefen($schluessel, $wert)
          * Adresse passt. */
         return preg_match('/^[A-Za-z0-9_.\-]{0,64}$/', $t) === 1;
     }
-    if (in_array($schluessel, array('cleanup_days', 'cleanup_count', 'cleanup_mb',
-                                    'intervall_min', 'tv_port', 'ai_minconf'), true)) {
-        return $t === '' || is_numeric($t);
+    if ($schluessel !== 'ms' && array_key_exists($schluessel, ic_zahlregeln())) {
+        // Dieselbe Regel wie im Formular (C8/O2): ganze Zahl im Bereich.
+        return ic_zahl_gueltig($schluessel, $t);
+    }
+    if ($schluessel === 'intercomip') {
+        return $t === '' || ic_adresse_gueltig($t);
     }
     if ($schluessel === 'bildweg') {
         return in_array($t, array('strom', 'standbild', 'auto'), true);
@@ -1572,12 +1872,107 @@ function ic_wert_pruefen($schluessel, $wert)
     }
     if ($schluessel === 'mqtt_praefix') {
         /* Kein Schraegstrich am Rand, keine Rauten, keine Pluszeichen -
-         * dieselbe Form, die ic_mqtt_thema() herstellt. */
-        return $t === '' || preg_match('#^[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-]+)*$#', $t) === 1;
+         * dieselbe Form, die das Formular seit 2.2.13 verlangt (O2). */
+        return ic_praefix_gueltig($t);
     }
     /* Alles Uebrige ist ein einzeiliges Textfeld - ic_wert_taugt() hat es
      * bereits geprueft. */
     return true;
+}
+
+/* ------------------------------------------------------------------
+ * EINE Pruefung fuer Formular und Zurueckspielen (NEU 2.2.13, C8/O2)
+ * ------------------------------------------------------------------
+ * Regeln/05: "Adressen werden an beiden Enden mit derselben Beurteilung
+ * geprueft". Bis 2.2.12 stand das Adressmuster nur in index.php, und die
+ * Zahlen wurden im Formular still gerundet, beim Zurueckspielen gar nicht
+ * geprueft.
+ */
+
+/** Name oder IP-Adresse der Station, wahlweise mit Port - sonst nichts. */
+function ic_adresse_gueltig($ip)
+{
+    return is_string($ip) && preg_match('/^[A-Za-z0-9.\-]+(:[0-9]{1,5})?\z/', $ip) === 1;
+}
+
+/** Das MQTT-Praefix: leer oder Stufen aus Buchstaben, Ziffern, _ und -. */
+function ic_praefix_gueltig($t)
+{
+    return is_string($t)
+        && ($t === '' || preg_match('#^[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-]+)*\z#', $t) === 1);
+}
+
+/** Die Zahlenfelder: array(kleinster, groesster oder null). */
+function ic_zahlregeln()
+{
+    return array(
+        'cleanup_days'  => array(0, null),
+        'cleanup_count' => array(0, null),
+        'cleanup_mb'    => array(0, null),
+        'intervall_min' => array(0, null),
+        'tv_port'       => array(1, 65535),
+        'ai_minconf'    => array(0, 100),
+        'ms'            => array(1, 10),
+    );
+}
+
+/** Der erlaubte Bereich als kurzer Text fuer eine Meldung. */
+function ic_zahlbereich($schluessel)
+{
+    $r = ic_zahlregeln();
+    if (!isset($r[$schluessel])) { return ''; }
+    list($min, $max) = $r[$schluessel];
+    return $max === null ? ('>= ' . $min) : ($min . '-' . $max);
+}
+
+/**
+ * Ist das eine ganze Zahl im erlaubten Bereich? Leer heisst "nicht gesetzt"
+ * und ist zulaessig - ausser bei ms. Was nicht passt, wird ABGEWIESEN, nicht
+ * gerundet: bis 2.2.12 wurden aus -5 Tagen "keine Grenze" und aus 2.7 eine 2.
+ */
+function ic_zahl_gueltig($schluessel, $wert)
+{
+    $r = ic_zahlregeln();
+    if (!isset($r[$schluessel])) { return false; }
+    if (is_int($wert)) {
+        $t = (string) $wert;
+    } elseif (is_string($wert)) {
+        $t = $wert;
+    } else {
+        return false;
+    }
+    if ($t === '') { return $schluessel !== 'ms'; }
+    if (preg_match('/^[0-9]{1,9}\z/', $t) !== 1) { return false; }
+    list($min, $max) = $r[$schluessel];
+    $n = (int) $t;
+    return $n >= $min && ($max === null || $n <= $max);
+}
+
+/**
+ * Was stimmt an einer Stationsliste nicht? Rueckgabe: Liste von
+ * array(Nummer der Station ab 1 oder 0 fuer die Liste, Feld). Leer = in Ordnung.
+ */
+function ic_stationen_mangel($wert)
+{
+    if (!is_array($wert) || count($wert) > 50) { return array(array(0, 'stationen')); }
+    $erlaubt = array('name', 'ip', 'user', 'pass', 'ms', 'standbild');
+    $m = array();
+    $nr = 0;
+    foreach ($wert as $st) {
+        $nr++;
+        if (!is_array($st)) { $m[] = array($nr, 'stationen'); continue; }
+        foreach ($st as $sk => $sw) {
+            if (!in_array((string) $sk, $erlaubt, true)) { $m[] = array($nr, (string) $sk); continue; }
+            if ((string) $sk === 'ms') {
+                if (!ic_zahl_gueltig('ms', $sw)) { $m[] = array($nr, 'ms'); }
+                continue;
+            }
+            if (!ic_wert_taugt($sw)) { $m[] = array($nr, (string) $sk); }
+        }
+        $ip = (isset($st['ip']) && is_string($st['ip'])) ? trim($st['ip']) : '';
+        if (!ic_adresse_gueltig($ip)) { $m[] = array($nr, 'ip'); }
+    }
+    return $m;
 }
 
 /**
@@ -1765,7 +2160,30 @@ function ic_host()
  */
 function ic_eigene_basis()
 {
-    return 'http://127.0.0.1/plugins/' . ic_plugin_ordner();
+    /* BERICHTIGT 2.2.13 (C6): mit dem Port des LoxBerry-Webservers. Bis 2.2.12
+     * stand hier fest Port 80 - auf einer Anlage mit anderem Webport konnte
+     * ffmpeg den Strom nicht lesen, und die Zeile "Endpunkt" im Reiter Test
+     * wurde rot. Bei 80 ohne Port, wie bisher. */
+    $port = ic_webport();
+    return 'http://127.0.0.1' . ($port === 80 ? '' : ':' . $port) . '/plugins/' . ic_plugin_ordner();
+}
+
+/** Der Port des LoxBerry-Webservers: lbwebserverport(), sonst general.json. */
+function ic_webport()
+{
+    $port = 0;
+    if (function_exists('lbwebserverport')) {
+        $port = (int) lbwebserverport();
+    }
+    if ($port < 1) {
+        $gen = @json_decode((string) @file_get_contents(
+            ic_paths()['home'] . '/config/system/general.json'), true);
+        if (is_array($gen) && isset($gen['Webserver']) && is_array($gen['Webserver'])
+            && isset($gen['Webserver']['Port'])) {
+            $port = (int) $gen['Webserver']['Port'];
+        }
+    }
+    return ($port >= 1 && $port <= 65535) ? $port : 80;
 }
 
 /**
@@ -1911,14 +2329,16 @@ function ic_vorlage_ausgang($host, $token)
         /* Der Comment wird in Loxone Config zum ANZEIGENAMEN - eine
          * Beschriftung, kein Satz. Bis 2.2.5 standen hier 42 und 56
          * Zeichen; die Erklaerung steht jetzt im HintText der Wurzel. */
+        /* Seit 2.2.13 (O8) aus der Sprachdatei, mit echten Umlauten; ohne
+         * Sprachdatei (Selbsttest am Endpunkt) der deutsche Wortlaut. */
         $cmds[] = array(
-            'title' => 'Foto ' . $s['name'],
-            'comment' => 'Foto ins Archiv',
+            'title' => ic_sprachwert('LOX.V_FOTO', 'Foto') . ' ' . $s['name'],
+            'comment' => ic_sprachwert('LOX.V_FOTO_KOMMENTAR', 'Foto ins Archiv'),
             'on' => $a['bild_trig'],
         );
         $cmds[] = array(
-            'title' => 'Video ' . $s['name'],
-            'comment' => 'Video 10 s',
+            'title' => ic_sprachwert('LOX.V_VIDEO', 'Video') . ' ' . $s['name'],
+            'comment' => ic_sprachwert('LOX.V_VIDEO_KOMMENTAR', 'Video 10 s'),
             'on' => $a['video'],
         );
     }
@@ -1937,12 +2357,14 @@ function ic_vorlage_ausgang($host, $token)
     $erste = $cmds ? $cmds[0]['on'] : ('http://' . $host . '/');
     return ic_xml_virtual_out(array(
         'title'   => 'Intercom (LoxBerry-Plugin)',
-        'comment' => 'Erzeugt vom Plugin Intercom. Loxone Config legt beim Import NEU an.',
+        'comment' => ic_sprachwert('LOX.V_KOMMENTAR',
+                         'Erzeugt vom Plugin Intercom. Loxone Config legt beim Import NEU an.'),
         'address' => $erste,
-        'hint'    => 'Adresse pruefen: der Miniserver muss den LoxBerry unter diesem '
-                   . 'Namen erreichen. Foto holt ein Standbild und legt es ins Archiv; '
-                   . 'Video nimmt 10 Sekunden auf - erlaubt sind 1 bis 300 ueber &s=, '
-                   . 'ein Wert ausserhalb wird abgewiesen.',
+        'hint'    => ic_sprachwert('LOX.V_HINWEIS',
+                         'Adresse prüfen: der Miniserver muss den LoxBerry unter diesem '
+                       . 'Namen erreichen. Foto holt ein Standbild und legt es ins Archiv; '
+                       . 'Video nimmt 10 Sekunden auf - erlaubt sind 1 bis 300 über &s=, '
+                       . 'ein Wert außerhalb wird abgewiesen.'),
     ), $cmds);
 }
 
@@ -1964,35 +2386,37 @@ function ic_vorlage_eingang($host)
     $g = ic_gatewayname(ic_mqtt_praefix());
     $cmds = array(
         array('title' => $g . '_status_ok',
-              'comment' => 'Lebenszeichen',
+              'comment' => ic_sprachwert('LOX.VI_OK', 'Lebenszeichen'),
               'analog' => true, 'min' => '0', 'max' => '1', 'unit' => '<v.0>'),
         array('title' => $g . '_status_ts',
-              'comment' => 'Herzschlag (Loxone-Zeit)',
+              'comment' => ic_sprachwert('LOX.VI_TS', 'Herzschlag (Loxone-Zeit)'),
               'analog' => true, 'min' => '0', 'max' => '2000000000', 'unit' => '<v.0> s'),
         array('title' => $g . '_status_zaehler',
-              'comment' => 'Laufzähler 0-999',
+              'comment' => ic_sprachwert('LOX.VI_ZAEHLER', 'Laufzähler 0-999'),
               'analog' => true, 'min' => '-1', 'max' => '999', 'unit' => '<v.0>'),
         array('title' => $g . '_bilder',
-              'comment' => 'Bilder im Archiv',
+              'comment' => ic_sprachwert('LOX.VI_BILDER', 'Bilder im Archiv'),
               'analog' => true, 'min' => '0', 'max' => '1000000', 'unit' => '<v.0>'),
         array('title' => $g . '_ai_count',
-              'comment' => 'Erkannte Objekte',
+              'comment' => ic_sprachwert('LOX.VI_KI', 'Erkannte Objekte'),
               'analog' => true, 'min' => '0', 'max' => '100', 'unit' => '<v.0>'),
         array('title' => $g . '_ok',
-              'comment' => 'Herzschlag (überholt)',
+              'comment' => ic_sprachwert('LOX.VI_OK_ALT', 'Herzschlag (überholt)'),
               'analog' => true, 'min' => '0', 'max' => '2000000000', 'unit' => '<v.0> s'),
     );
     return ic_xml_virtual_in(array(
-        'title'   => 'Intercom Rückmeldungen (LoxBerry-Plugin)',
-        'comment' => 'Die Werte kommen vom MQTT-Gateway, nicht von dieser Adresse.',
+        'title'   => ic_sprachwert('LOX.VI_TITEL', 'Intercom Rückmeldungen (LoxBerry-Plugin)'),
+        'comment' => ic_sprachwert('LOX.VI_KOMMENTAR',
+                         'Die Werte kommen vom MQTT-Gateway, nicht von dieser Adresse.'),
         'address' => 'http://localhost',
         'polling' => 604800,
-        'hint'    => 'Nur Zahlenwerte. Texte (Bildadresse, erkannte Objekte, '
-                   . 'Zeitrafferdatei) legt das Gateway beim ersten Empfang selbst '
-                   . 'an. Die Zeile <praefix>_ok ist ueberholt und steht nur fuer '
-                   . 'bestehende Anlagen hier; neu ist <praefix>_status_ts. '
-                   . 'Ausfallerkennung: <praefix>_status_zaehler aendert sich in '
-                   . 'jeder Minute - bleibt er stehen, laeuft der Cron nicht.',
+        'hint'    => ic_sprachwert('LOX.VI_HINWEIS',
+                         'Nur Zahlenwerte. Texte (Bildadresse, erkannte Objekte, '
+                       . 'Zeitrafferdatei) legt das Gateway beim ersten Empfang selbst '
+                       . 'an. Die Zeile <praefix>_ok ist überholt und steht nur für '
+                       . 'bestehende Anlagen hier; neu ist <praefix>_status_ts. '
+                       . 'Ausfallerkennung: <praefix>_status_zaehler ändert sich in '
+                       . 'jeder Minute - bleibt er stehen, läuft der Cron nicht.'),
     ), $cmds);
 }
 
@@ -2028,10 +2452,32 @@ function ic_pz($lage, $frage, $antwort, $rat = '', $fargs = array(), $aargs = ar
  * $mit_netz = false laesst alles weg, was hinausgeht - das ist der Zustand
  * beim gewoehnlichen Aufruf der Seite.
  */
-function ic_selbsttest($mit_netz = false)
+function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
 {
+    /* $am_endpunkt (NEU 2.2.13, C9): der Selbsttest des Endpunkts. Dort misst
+     * nie jemand das Netz - die beiden Netzzeilen sind dort ein Hinweis, kein
+     * "unklar". Bis 2.2.12 war "bestanden" am Endpunkt auf jeder Anlage
+     * dauerhaft false (code-Pruefer, Befund 5). */
     $cfg = ic_config();
     $z = array();
+
+    /* -------- Ist die Konfiguration heil? (NEU 2.2.13, O6) -------- */
+    list($ic_klage, $ic_kpfad) = ic_config_lage();
+    $ic_geheilt = (isset($GLOBALS['ic_heilung']) && is_array($GLOBALS['ic_heilung'])
+                   && $GLOBALS['ic_heilung'][0] === 'geheilt');
+    if ($ic_geheilt) {
+        $z[] = ic_pz('hinweis', 'TEST.F_KONF', 'TEST.A_KONF_GEHEILT', '', array(),
+                     array($GLOBALS['ic_heilung'][1]));
+    } elseif ($ic_klage === 'ok') {
+        $z[] = ic_pz('ok', 'TEST.F_KONF', 'TEST.A_KONF_OK');
+    } else {
+        $z[] = ic_pz('fehl', 'TEST.F_KONF', 'TEST.A_KONF_' . strtoupper($ic_klage), 'TEST.R_KONF');
+    }
+    if (ic_upgrade_marke_liegt()) {
+        $ic_mz = ic_upgrade_marke_zeit();
+        $z[] = ic_pz('fehl', 'TEST.F_MARKE', 'TEST.A_MARKE', 'TEST.R_MARKE', array(),
+                     array($ic_mz > 0 ? date('d.m.Y H:i', $ic_mz) : '?', ic_upgrade_marke()));
+    }
 
     /* -------- Grundlagen -------- */
     $token = isset($cfg['aktionstoken']) ? (string) $cfg['aktionstoken'] : '';
@@ -2081,18 +2527,20 @@ function ic_selbsttest($mit_netz = false)
             $z[] = $r['ok']
                 ? ic_pz('ok', 'TEST.F_STROM', 'TEST.A_STROM_JA', '', array($s['name']),
                         array(ic_byte(strlen($r['bild'])), number_format($r['dauer'], 1, ',', '.')))
-                : ic_pz('fehl', 'TEST.F_STROM', $r['fehler'], 'TEST.R_STROM', array($s['name']));
+                : ic_pz('fehl', 'TEST.F_STROM', $r['fehler_ui'], 'TEST.R_STROM', array($s['name']));
             $r2 = ic_standbild_holen($s);
             $weg = isset($cfg['bildweg']) ? (string) $cfg['bildweg'] : 'strom';
             $z[] = $r2['ok']
                 ? ic_pz('ok', 'TEST.F_STANDBILD', 'TEST.A_STANDBILD_JA',
                         $weg === 'strom' ? 'TEST.R_STANDBILD' : '',
                         array($s['name']), array(ic_byte(strlen($r2['bild']))))
-                : ic_pz('hinweis', 'TEST.F_STANDBILD', $r2['fehler'],
+                : ic_pz('hinweis', 'TEST.F_STANDBILD', $r2['fehler_ui'],
                         'TEST.R_STANDBILD_NEIN', array($s['name']));
         }
     } elseif ($st) {
-        $z[] = ic_pz('unklar', 'TEST.F_NETZ', 'TEST.A_NETZ_UNGEPRUEFT', 'TEST.R_NETZ');
+        $z[] = $am_endpunkt
+            ? ic_pz('hinweis', 'TEST.F_NETZ', 'TEST.A_NETZ_ENDPUNKT')
+            : ic_pz('unklar', 'TEST.F_NETZ', 'TEST.A_NETZ_UNGEPRUEFT', 'TEST.R_NETZ');
     }
 
     /* -------- Der eigene Endpunkt, wirklich aufgerufen -------- */
@@ -2100,12 +2548,21 @@ function ic_selbsttest($mit_netz = false)
         $url = ic_eigene_basis() . '/getpicture.php?selftest=1&token=' . rawurlencode($token);
         list($inhalt, $code) = ic_http_holen_voll($url, 6);
         $d = is_string($inhalt) ? json_decode($inhalt, true) : null;
-        $z[] = (is_array($d) && !empty($d['selftest']))
-            ? ic_pz('ok', 'TEST.F_ENDPUNKT', 'TEST.A_ENDPUNKT_JA', '', array(), array($code))
-            : ic_pz('fehl', 'TEST.F_ENDPUNKT', 'TEST.A_ENDPUNKT_NEIN', 'TEST.R_ENDPUNKT',
-                    array(), array($code));
+        if (is_array($d) && !empty($d['selftest'])) {
+            $z[] = ic_pz('ok', 'TEST.F_ENDPUNKT', 'TEST.A_ENDPUNKT_JA', '', array(), array($code));
+        } elseif ((int) $code === 0) {
+            /* NEU 2.2.13 (O6): gar keine Antwort ist ein Messfehler dieses
+             * Aufrufs (Port, Namensaufloesung), kein Befund ueber Loxone. */
+            $z[] = ic_pz('hinweis', 'TEST.F_ENDPUNKT', 'TEST.A_ENDPUNKT_NULL', 'TEST.R_ENDPUNKT_NULL',
+                         array(), array(ic_eigene_basis()));
+        } else {
+            $z[] = ic_pz('fehl', 'TEST.F_ENDPUNKT', 'TEST.A_ENDPUNKT_NEIN', 'TEST.R_ENDPUNKT',
+                         array(), array($code));
+        }
     } else {
-        $z[] = ic_pz('unklar', 'TEST.F_ENDPUNKT', 'TEST.A_NETZ_UNGEPRUEFT', 'TEST.R_NETZ');
+        $z[] = $am_endpunkt
+            ? ic_pz('hinweis', 'TEST.F_ENDPUNKT', 'TEST.A_NETZ_ENDPUNKT')
+            : ic_pz('unklar', 'TEST.F_ENDPUNKT', 'TEST.A_NETZ_UNGEPRUEFT', 'TEST.R_NETZ');
     }
 
     /* -------- Fremde Programme -------- */
@@ -2132,10 +2589,20 @@ function ic_selbsttest($mit_netz = false)
                  && empty($cfg['videowebhook1']) && empty($cfg['videowebhook2'])
                  && empty($cfg['tv_enable']) && empty($cfg['ai_enable']))
                 ? 'hinweis' : 'fehl', 'TEST.F_CURL', 'TEST.A_NEIN', 'TEST.R_CURL');
-    $z[] = ic_archiv_geschuetzt()
-        ? ic_pz('ok', 'TEST.F_ARCHIVSCHUTZ', 'TEST.A_ARCHIVSCHUTZ_AN')
-        : ic_pz('hinweis', 'TEST.F_ARCHIVSCHUTZ', 'TEST.A_ARCHIVSCHUTZ_AUS',
-                'TEST.R_ARCHIVSCHUTZ');
+    /* BERICHTIGT 2.2.13 (O5): ist der Schutz eingeschaltet und fehlt die
+     * Schutzdatei, ist das ein Kreuz. Bis 2.2.12 stand dann nur der graue
+     * Hinweis "nein", und die Oberflaeche zeigte den Haken als gesetzt. */
+    $ic_schutz_soll = isset($cfg['archiv_schutz'])
+        && in_array((string) $cfg['archiv_schutz'], array('1', 'on', 'true'), true);
+    if (ic_archiv_geschuetzt()) {
+        $z[] = ic_pz('ok', 'TEST.F_ARCHIVSCHUTZ', 'TEST.A_ARCHIVSCHUTZ_AN');
+    } elseif ($ic_schutz_soll) {
+        $z[] = ic_pz('fehl', 'TEST.F_ARCHIVSCHUTZ', 'TEST.A_ARCHIVSCHUTZ_FEHLT',
+                     'TEST.R_ARCHIVSCHUTZ_FEHLT', array(), array(ic_archiv_schutzdatei()));
+    } else {
+        $z[] = ic_pz('hinweis', 'TEST.F_ARCHIVSCHUTZ', 'TEST.A_ARCHIVSCHUTZ_AUS',
+                     'TEST.R_ARCHIVSCHUTZ');
+    }
     $z[] = function_exists('socket_create')
         ? ic_pz('ok', 'TEST.F_SOCKETS', 'TEST.A_JA')
         : ic_pz(!ic_mqtt_an() ? 'hinweis' : 'fehl',
@@ -2220,6 +2687,13 @@ function ic_selbsttest($mit_netz = false)
 
     /* -------- Die beiden Cron-Laeufe -------- */
     foreach (array('timelapse' => 'TEST.F_LAUF_TL', 'cleanup' => 'TEST.F_LAUF_CU') as $m => $frage) {
+        /* NEU 2.2.13 (O6/C9): ein ausgeschalteter Zeitraffer ist grau "aus",
+         * kein Dauer-Fragezeichen - ausgeschaltet ist eine Entscheidung. */
+        if ($m === 'timelapse'
+            && (empty($cfg['timelapse_enable']) || $cfg['timelapse_enable'] !== 'on')) {
+            $z[] = ic_pz('hinweis', $frage, 'TEST.A_LAUF_AUS');
+            continue;
+        }
         $mk = ic_merker_lesen($m);
         if ($mk === null) {
             $z[] = ic_pz('unklar', $frage, 'TEST.A_LAUF_NIE', 'TEST.R_LAUF');
@@ -2247,8 +2721,12 @@ function ic_selbsttest($mit_netz = false)
                     array(), array($ziel !== '' ? $ziel : '-', $soll));
     }
 
+    /* -------- Stehen die Cron-Eintraege? (NEU 2.2.13, O6) -------- */
+    $z[] = ic_pruefe_cron();
+
     /* -------- Die eigene Oberflaeche gegen sich selbst -------- */
     $z[] = ic_pruefe_reiter();
+    $z[] = ic_pruefe_formulare();
     $z[] = ic_pruefe_vorlage();
 
     return $z;
@@ -2505,7 +2983,9 @@ function ic_archiv_schutz_anwenden()
  * Der Umzug ist ausserdem gegen Parallellaeufe gesperrt: zwei gleichzeitige
  * Aufrufe koennten sonst dieselben Dateien gleichzeitig kopieren und loeschen.
  *
- * Rueckgabe: array(ok, meldung)
+ * Rueckgabe: array(ok, meldung). Meldung ist '' , 'verschoben', ein Pfad
+ * (Speicherort fehlt/nicht beschreibbar), 'belegt', 'kopieren_gescheitert'
+ * oder 'verweis_gescheitert' - die Oberflaeche macht daraus den Satz.
  */
 function ic_speicherort_anwenden()
 {
@@ -2521,7 +3001,7 @@ function ic_speicherort_anwenden()
     }
     $sperre = ic_sperre('speicherort');
     if ($sperre === false) {
-        return array(false, 'Ein anderer Vorgang arbeitet gerade am Speicherort.');
+        return array(false, 'belegt');
     }
     // Aus dem ORDNERNAMEN abgeleitet, nicht fest eingetragen: sonst zeigt
     // eine Zweitinstallation (intercom_01) auf dasselbe Archiv.
@@ -2534,10 +3014,44 @@ function ic_speicherort_anwenden()
             @symlink($ziel, $link);
         }
     } elseif (@is_dir($link)) {
-        // vorhandene Daten einmalig auf den neuen Speicher uebernehmen
-        @shell_exec('cp -rn ' . escapeshellarg($link) . '/. ' . escapeshellarg($ziel) . '/ 2>/dev/null');
-        @shell_exec('rm -rf ' . escapeshellarg($link));
-        @symlink($ziel, $link);
+        /* BERICHTIGT 2.2.13 (C1): erst pruefen, dann loeschen.
+         *
+         * Bis 2.2.12 stand hier cp -rn ohne Blick auf das Ergebnis und danach
+         * unbedingt rm -rf. Gemessen (code-Pruefer, m7): Zielordner vorhanden,
+         * aber nicht beschreibbar - cp scheiterte, das Archiv wurde trotzdem
+         * geloescht, Rueckgabe "verschoben", danach 0 Bilder. Dasselbe bei
+         * vollem USB-Stick.
+         *
+         * Jetzt: Ziel beschreibbar? Kopieren, dann Datei fuer Datei vergleichen
+         * (Name und Groesse). Ein ZWEITER Gang holt nach, was Klingel, Takt oder
+         * Zeitraffer waehrend des ersten ins alte Archiv geschrieben haben -
+         * diese Schreiber fragen die Sperre des Speicherorts nicht. Erst wenn
+         * beide Vergleiche vollstaendig sind, wird das alte Archiv entfernt.
+         * Scheitert etwas, bleibt es vollstaendig, und es gibt keinen Verweis. */
+        if (!@is_dir($ziel) || !@is_writable($ziel)) {
+            ic_log('Speicherort: der Zielordner ' . $ziel . ' ist nicht beschreibbar - das Archiv '
+                . 'bleibt, wo es ist; es wurde nichts geloescht.');
+            flock($sperre, LOCK_UN);
+            fclose($sperre);
+            return array(false, 'kopieren_gescheitert');
+        }
+        if (!ic_archiv_kopieren($link, $ziel) || !ic_archiv_kopieren($link, $ziel)) {
+            flock($sperre, LOCK_UN);
+            fclose($sperre);
+            return array(false, 'kopieren_gescheitert');
+        }
+        $o = array();
+        $rc = 1;
+        @exec('rm -rf ' . escapeshellarg($link) . ' 2>&1', $o, $rc);
+        clearstatcache();
+        if (@file_exists($link) || !@symlink($ziel, $link)) {
+            ic_log('Speicherort: das Archiv liegt vollstaendig unter ' . $ziel . ', der Verweis '
+                . $link . ' liess sich aber nicht anlegen (rm endete mit ' . $rc . ').');
+            flock($sperre, LOCK_UN);
+            fclose($sperre);
+            return array(false, 'verweis_gescheitert');
+        }
+        ic_log('Speicherort: das Archiv wurde nach ' . $ziel . ' verschoben.');
         $meldung = 'verschoben';
     } else {
         @symlink($ziel, $link);
@@ -2594,6 +3108,32 @@ function ic_archivname($zusatz = '', $endung = 'jpg')
 }
 
 /**
+ * Einen Archivnamen EXKLUSIV anlegen (NEU 2.2.13, C10).
+ *
+ * Der Name ist nur sekundengenau. Gemessen (mqtt-Pruefer, F8): fuenf Paare
+ * gleichzeitiger Aufrufe mit gleichem Ausloeser ergaben 5 statt 10
+ * Archivbilder, waehrend alle zehn Antworten "archived": true meldeten - der
+ * zweite Schreiber ersetzte die Datei des ersten. Jetzt wird der Name mit
+ * fopen(..., 'x') belegt; ist er vergeben, kommt eine Nummer dahinter
+ * (-intercom-2.jpg). Rueckgabe: der belegte Dateiname oder ''.
+ */
+function ic_archivdatei_anlegen($ordner, $zusatz = '', $endung = 'jpg')
+{
+    $basis = ic_archivname($zusatz, $endung);
+    $stamm = substr($basis, 0, -strlen('.' . $endung));
+    for ($i = 1; $i <= 50; $i++) {
+        $name = $i === 1 ? $basis : $stamm . '-' . $i . '.' . $endung;
+        $fh = @fopen($ordner . $name, 'x');
+        if ($fh !== false) {
+            fclose($fh);
+            return $name;
+        }
+        if (!@is_dir($ordner)) { return ''; }
+    }
+    return '';
+}
+
+/**
  * Blaettern - Rechnung an EINER Stelle.
  *
  * Bis 2.1.13 stand in beiden Galerien
@@ -2631,13 +3171,66 @@ function ic_blaettern($gesamt, $je_seite, $wunsch)
  * und hat eine Obergrenze an Abrufen. Das Zugriffstoken kommt darin nicht vor.
  * ================================================================== */
 
+/* UMGEZOGEN 2.2.13 (I4): NEBEN den Datenordner. Bis 2.2.12 lag die Datei in
+ * data/plugins/<ordner>/, und den raeumt der Installer bei jedem Upgrade ab -
+ * jeder verschickte Link starb beim naechsten Auto-Update, auch wenn er noch
+ * Tage galt, und bild.php meldete "abgelaufen" (Installer-Pruefer, B1).
+ * uninstall raeumt die Datei ab, eine Neuinstallation legt sie nach .alt. */
 function ic_bildlink_datei()
 {
-    return ic_paths()['datadir'] . '/bildlinks.json';
+    $p = ic_paths();
+    return dirname($p['datadir']) . '/' . basename($p['datadir']) . '.bildlinks.json';
+}
+
+/** Der Ordner der Bildkopien je Code (C11), 0700, daneben. */
+function ic_bildlink_ordner()
+{
+    $p = ic_paths();
+    return dirname($p['datadir']) . '/' . basename($p['datadir']) . '.bildlinks';
+}
+
+/** Eine Sperre um Lesen-Aendern-Schreiben der Linkliste (blockierend, kurz). */
+function ic_bildlink_sperre()
+{
+    $o = ic_bildlink_ordner();
+    if (!@is_dir($o)) { @mkdir($o, 0700, true); }
+    return ic_sperre_warten($o . '/.sperre', 10);
+}
+
+/** Die Liste schreiben und Kopien ohne Eintrag abraeumen - nur unter der Sperre. */
+function ic_bildlink_schreiben(array $liste)
+{
+    $js = json_encode($liste, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    if ($js === false || !ic_datei_ersetzen(ic_bildlink_datei(), $js, 0600)) {
+        return false;
+    }
+    foreach ((@glob(ic_bildlink_ordner() . '/*.jpg') ?: array()) as $f) {
+        if (!isset($liste[basename($f, '.jpg')])) { @unlink($f); }
+    }
+    return true;
+}
+
+/** Einmalige Uebernahme aus dem alten Ort (bis 2.2.12). */
+function ic_bildlink_uebernehmen()
+{
+    $neu = ic_bildlink_datei();
+    $alt = ic_paths()['datadir'] . '/bildlinks.json';
+    if (@is_file($neu) || !@is_file($alt)) { return; }
+    $roh = @file_get_contents($alt);
+    if ($roh !== false && $roh !== '' && ic_datei_ersetzen($neu, $roh, 0600)) {
+        @unlink($alt);
+    }
+}
+
+/** Die gekappte Stundenzahl - fuer Link UND Meldung dieselbe (O7). */
+function ic_bildlink_stunden($w)
+{
+    return is_numeric($w) ? max(1, min(720, (int) $w)) : 24;
 }
 
 function ic_bildlink_liste()
 {
+    ic_bildlink_uebernehmen();
     $d = @file_get_contents(ic_bildlink_datei());
     $a = $d === false ? null : json_decode($d, true);
     if (!is_array($a)) { return array(); }
@@ -2653,18 +3246,40 @@ function ic_bildlink_liste()
     return $rest;
 }
 
-function ic_bildlink_erzeugen($stunden = 24, $abrufe = 5)
+/**
+ * Einen befristeten Link anlegen - an DAS BILD gebunden (NEU 2.2.13, C11).
+ *
+ * BILDLINK_TEXT verspricht "das Bild vom Klingeln". Bis 2.2.12 lieferte der
+ * Link das jeweils NEUESTE Bild: gemessen (mqtt-Pruefer, F2) zeigte Link 1
+ * nach dem zweiten Klingeln das Bild des zweiten Besuchers. Jetzt liegt je
+ * Code eine Kopie (0600) im Ordner neben bildlinks.json; sie geht mit dem
+ * Link. $quelle: das Bild; ohne Angabe das, was bild.php gerade als letztes
+ * Bild ausliefern wuerde. Ohne Bild gibt es keinen Link.
+ */
+function ic_bildlink_erzeugen($stunden = 24, $abrufe = 5, $quelle = '')
 {
-    $stunden = max(1, min(720, (int) $stunden));
+    $stunden = ic_bildlink_stunden($stunden);
     $abrufe = max(1, min(1000, (int) $abrufe));
+    if ($quelle === '') { list($quelle) = ic_letztes_bild_pfad(); }
+    $bild = ($quelle !== '') ? @file_get_contents($quelle) : false;
+    if ($bild === false || $bild === '') { return ''; }
+    $sperre = ic_bildlink_sperre();
+    if ($sperre === false) { return ''; }
     $code = ic_token_neu(20);
-    $liste = ic_bildlink_liste();
-    $liste[$code] = array('bis' => time() + $stunden * 3600, 'rest' => $abrufe,
-                          'erzeugt' => time());
-    $js = json_encode($liste, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    if ($js === false || !ic_datei_ersetzen(ic_bildlink_datei(), $js, 0600)) {
+    $kopie = ic_bildlink_ordner() . '/' . $code . '.jpg';
+    if (!ic_datei_ersetzen($kopie, $bild, 0600)) {
+        ic_sperre_frei($sperre);
         return '';
     }
+    $liste = ic_bildlink_liste();
+    $liste[$code] = array('bis' => time() + $stunden * 3600, 'rest' => $abrufe,
+                          'erzeugt' => time(), 'bild' => $code . '.jpg');
+    if (!ic_bildlink_schreiben($liste)) {
+        @unlink($kopie);
+        ic_sperre_frei($sperre);
+        return '';
+    }
+    ic_sperre_frei($sperre);
     return $code;
 }
 
@@ -2716,7 +3331,8 @@ function ic_timelapse_lauf($erzwingen = false)
     }
     $st = ic_stationen();
     if (!$st) {
-        return array(false, 'Es ist keine Tuerstation eingerichtet.', '');
+        return array(false, ic_uebersetzt('TEST.E_KEINE_STATION', array(),
+                                          'Es ist keine Tuerstation eingerichtet.'), '');
     }
     ic_archiv_sicherstellen();
     $o = ic_archivordner();
@@ -2731,12 +3347,13 @@ function ic_timelapse_lauf($erzwingen = false)
     if (!$r['ok']) {
         ic_log('Zeitraffer: kein Bild von "' . $st[0]['name'] . '" - ' . $r['fehler']);
         ic_merker_setzen('timelapse', 'kein Bild: ' . $r['fehler']);
-        return array(false, $r['fehler'], '');
+        return array(false, $r['fehler_ui'], '');
     }
     if (!ic_datei_ersetzen($ziel, $r['bild'])) {
         ic_log('Zeitraffer: das Bild liess sich nicht schreiben: ' . $ziel);
         ic_merker_setzen('timelapse', 'nicht schreibbar');
-        return array(false, 'Das Bild liess sich nicht schreiben: ' . $ziel, '');
+        return array(false, ic_uebersetzt('TEST.E_NICHT_SCHREIBBAR', array($ziel),
+                                          'Das Bild liess sich nicht schreiben: ' . $ziel), '');
     }
     if (!empty($cfg['timestamp_image']) && $cfg['timestamp_image'] === 'on') {
         ic_zeitstempel_ins_bild($ziel);
@@ -2875,8 +3492,10 @@ function ic_intervall_lauf()
         ic_merker_setzen('intervall', 'kein Bild');
         return array(false, $r['fehler'], '');
     }
-    $ziel = $o['bild'] . ic_archivname('intervall');
-    if (!ic_datei_ersetzen($ziel, $r['bild'])) {
+    $name = ic_archivdatei_anlegen($o['bild'], 'intervall');
+    $ziel = $o['bild'] . $name;
+    if ($name === '' || !ic_datei_ersetzen($ziel, $r['bild'])) {
+        if ($name !== '') { @unlink($ziel); }
         return array(false, 'nicht schreibbar', '');
     }
     if (!empty($cfg['timestamp_image']) && $cfg['timestamp_image'] === 'on') {
@@ -2914,15 +3533,20 @@ function ic_aufraeumen($probe = false)
     $zeilen = array();
     $zahl = 0;
     $byte = 0.0;
+    /* Seit 2.2.13 (O8) in der Sprache der Oberflaeche; ueber den Cron (ohne
+     * Sprachdatei) deutsch wie bisher. */
     if ($g['tage'] <= 0 && $g['zahl'] <= 0 && $g['mb'] <= 0) {
-        return array(0, 0, array('Keine Grenze eingestellt - es wird nichts geloescht.'));
+        return array(0, 0, array(ic_uebersetzt('UI.CU_KEINE_GRENZE', array(),
+            'Keine Grenze eingestellt - es wird nichts geloescht.')));
     }
 
     $gruppen = array(
-        'Bilder'    => array($o['bild'], array('*.jpg'), $g['zahl']),
-        'Videos'    => array($o['video'], array('*.avi', '*.jpg'),
-                             $g['zahl'] > 0 ? $g['zahl'] * 2 : 0),
-        'Zeitraffer' => array($o['timelapse'], array('*.jpg'), $g['zahl']),
+        ic_uebersetzt('UI.CU_BILDER', array(), 'Bilder')
+            => array($o['bild'], array('*.jpg'), $g['zahl']),
+        ic_uebersetzt('UI.CU_VIDEOS', array(), 'Videos')
+            => array($o['video'], array('*.avi', '*.jpg'), $g['zahl'] > 0 ? $g['zahl'] * 2 : 0),
+        ic_uebersetzt('UI.CU_ZEITRAFFER', array(), 'Zeitraffer')
+            => array($o['timelapse'], array('*.jpg'), $g['zahl']),
     );
     $jetzt = time();
     foreach ($gruppen as $name => $gr) {
@@ -2950,8 +3574,10 @@ function ic_aufraeumen($probe = false)
                 $zahl++;
                 $byte += $gr_byte;
                 if (count($zeilen) < 20) {
-                    $zeilen[] = $name . ': ' . basename($d) . ' (' . ic_byte($gr_byte) . ')'
-                              . ($alt ? ' - zu alt' : ' - ueberzaehlig');
+                    $zeilen[] = ic_uebersetzt($alt ? 'UI.CU_ZU_ALT' : 'UI.CU_UEBERZAEHLIG',
+                        array($name, basename($d), ic_byte($gr_byte)),
+                        $name . ': ' . basename($d) . ' (' . ic_byte($gr_byte) . ')'
+                        . ($alt ? ' - zu alt' : ' - ueberzaehlig'));
                 }
             }
         }
@@ -2980,7 +3606,8 @@ function ic_aufraeumen($probe = false)
                     $zahl++;
                     $byte += $gr_byte;
                     if (count($zeilen) < 30) {
-                        $zeilen[] = 'Platz: ' . basename($d) . ' (' . ic_byte($gr_byte) . ')';
+                        $zeilen[] = ic_uebersetzt('UI.CU_PLATZ', array(basename($d), ic_byte($gr_byte)),
+                            'Platz: ' . basename($d) . ' (' . ic_byte($gr_byte) . ')');
                     }
                 }
             }
@@ -2994,21 +3621,38 @@ function ic_aufraeumen($probe = false)
     return array($zahl, $byte, $zeilen);
 }
 
-/** Gilt der Code? Der Abruf wird dabei mitgezaehlt. */
-function ic_bildlink_pruefen($code)
+/**
+ * Einen Code einloesen - der Abruf wird dabei mitgezaehlt.
+ *
+ * Rueckgabe: false (ungueltig, abgelaufen, verbraucht), '' (der Link gilt,
+ * seine Bildkopie fehlt aber), 'letztes' (Link aus einer frueheren Fassung
+ * ohne Bildkopie: wie bisher das letzte Bild) oder der Pfad der Bildkopie.
+ * Seit 2.2.13 unter einer Sperre: bis 2.2.12 lasen, aenderten und schrieben
+ * getpicture.php und bild.php die Liste ohne Sperre (code-Pruefer, Nicht
+ * pruefbar, Wettlauf).
+ */
+function ic_bildlink_einloesen($code)
 {
     if (!is_string($code) || !preg_match('/^[A-Za-z0-9]{10,40}$/', $code)) { return false; }
+    $sperre = ic_bildlink_sperre();
+    if ($sperre === false) { return false; }
     $liste = ic_bildlink_liste();
     $treffer = '';
     // In gleichbleibender Zeit vergleichen, wie beim Zugriffstoken.
     foreach ($liste as $c => $e) {
-        if (hash_equals($c, $code)) { $treffer = $c; }
+        if (hash_equals((string) $c, $code)) { $treffer = (string) $c; }
     }
-    if ($treffer === '') { return false; }
-    $liste[$treffer]['rest'] = (int) $liste[$treffer]['rest'] - 1;
-    $js = json_encode($liste, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    if ($js !== false) { ic_datei_ersetzen(ic_bildlink_datei(), $js, 0600); }
-    return true;
+    if ($treffer === '') {
+        ic_sperre_frei($sperre);
+        return false;
+    }
+    $e = $liste[$treffer];
+    $liste[$treffer]['rest'] = (int) $e['rest'] - 1;
+    ic_bildlink_schreiben($liste);
+    ic_sperre_frei($sperre);
+    if (!isset($e['bild'])) { return 'letztes'; }
+    $pfad = ic_bildlink_ordner() . '/' . basename((string) $e['bild']);
+    return @is_file($pfad) ? $pfad : '';
 }
 
 
@@ -3135,6 +3779,19 @@ function ic_sicherung_lesen($roh)
          * Aktionstoken die Zahl 12345, aus storage_path ein Feld und aus
          * mqtt_praefix eine Zeichenkette mit Zeilenumbruch. Fail closed -
          * eine Beanstandung heisst, dass GAR NICHTS geschrieben wird. */
+        /* NEU 2.2.13 (C8): je Station und Feld eine Beanstandung - "Station 1:
+         * ip" sagt mehr als "stationen". Gesammelt wird weiter ALLES, und bei
+         * einer Beanstandung wird nichts geschrieben. */
+        if ($k === 'stationen') {
+            $sm = ic_stationen_mangel($w);
+            if ($sm) {
+                foreach ($sm as $sp) {
+                    $mangel[] = sprintf(ic_txt('UI.SICH_STATION'), (int) $sp[0],
+                                        htmlspecialchars((string) $sp[1], ENT_QUOTES, 'UTF-8'));
+                }
+                continue;
+            }
+        }
         if (!ic_wert_pruefen($k, $w)) {
             $mangel[] = sprintf(ic_txt('UI.SICH_WERT'),
                                  htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8'));
@@ -3195,4 +3852,317 @@ function ic_txt($schluessel)
 {
     global $L;
     return isset($L[$schluessel]) ? ic_e($L[$schluessel]) : $schluessel;
+}
+
+/* ==================================================================
+ * Seit 2.2.13 (Durchgang 30.09.2026)
+ * ================================================================== */
+
+/**
+ * Ein Sprachwert UNMASKIERT mit Einsetzungen - oder der Ersatz (O8).
+ *
+ * Fuer Meldungen, die die Bibliothek erzeugt: in der Oberflaeche ist $L
+ * geladen, und der Satz kommt in deren Sprache; ueber den Cron und am
+ * Endpunkt gibt es kein $L, dort bleibt der deutsche Ersatz. Wer das Ergebnis
+ * in HTML ausgibt, maskiert es selbst.
+ */
+function ic_uebersetzt($schluessel, array $args, $ersatz)
+{
+    global $L;
+    if (!is_array($L) || !isset($L[$schluessel]) || !is_string($L[$schluessel])) {
+        return $ersatz;
+    }
+    if (!$args) { return $L[$schluessel]; }
+    try {
+        $t = @vsprintf($L[$schluessel], $args);
+    } catch (\Throwable $e) {
+        return $ersatz;
+    }
+    return is_string($t) ? $t : $ersatz;
+}
+
+/** Ein Sprachwert unmaskiert ohne Einsetzungen - fuer die Loxone-Vorlagen (O8). */
+function ic_sprachwert($schluessel, $ersatz)
+{
+    return ic_uebersetzt($schluessel, array(), $ersatz);
+}
+
+/** Eine blockierende Sperre mit Frist; Rueckgabe Dateizeiger oder false. */
+function ic_sperre_warten($datei, $sekunden = 10)
+{
+    $fh = @fopen($datei, 'c');
+    if ($fh === false) { return false; }
+    $ende = microtime(true) + $sekunden;
+    while (!@flock($fh, LOCK_EX | LOCK_NB)) {
+        if (microtime(true) > $ende) {
+            @fclose($fh);
+            return false;
+        }
+        usleep(50000);
+    }
+    return $fh;
+}
+
+function ic_sperre_frei($fh)
+{
+    if (is_resource($fh)) {
+        @flock($fh, LOCK_UN);
+        @fclose($fh);
+    }
+}
+
+/** Das Bild, das bild.php gerade als letztes ausliefern wuerde: array(pfad, quelle). */
+function ic_letztes_bild_pfad()
+{
+    $p = ic_paths();
+    if (@is_file($p['datadir'] . '/lastpicture.jpg')) {
+        return array($p['datadir'] . '/lastpicture.jpg', 'datei');
+    }
+    if (@is_file($p['html'] . '/lastpicture.jpg')) {
+        return array($p['html'] . '/lastpicture.jpg', 'offene-kopie');
+    }
+    $a = ic_archiv_neuestes_bild();
+    return $a !== '' ? array($a, 'archiv') : array('', '');
+}
+
+/* ------------------------------------------------------------------
+ * C1: Archiv kopieren und nachzaehlen
+ * ------------------------------------------------------------------ */
+
+/**
+ * Ein Kopiergang: cp -rn, danach JEDE Datei der Quelle im Ziel mit derselben
+ * Groesse. Die Zaehlung entscheidet, nicht allein der Rueckgabewert: neuere
+ * coreutils melden bei -n auch fuer eine uebersprungene, schon vorhandene
+ * Datei einen Fehler. Beides steht im Protokoll.
+ */
+function ic_archiv_kopieren($quelle, $ziel)
+{
+    $o = array();
+    $rc = 1;
+    @exec('cp -rn ' . escapeshellarg($quelle) . '/. ' . escapeshellarg($ziel) . '/ 2>&1', $o, $rc);
+    list($n, $fehlt) = ic_archiv_vergleich($quelle, $ziel);
+    if ($n < 0 || $fehlt > 0) {
+        ic_log('Speicherort: das Kopieren nach ' . $ziel . ' ist gescheitert (cp endete mit ' . $rc
+            . ($o ? ': ' . substr(str_replace(array("\r", "\n"), ' ', (string) $o[0]), 0, 160) : '')
+            . '; ' . ($n < 0 ? 'die Quelle liess sich nicht lesen' : $fehlt . ' von ' . $n
+            . ' Dateien fehlen im Ziel oder weichen ab') . '). Das Archiv bleibt, wo es ist; '
+            . 'es wurde nichts geloescht.');
+        return false;
+    }
+    return true;
+}
+
+/** Zaehlung Quelle gegen Ziel: array(Dateien der Quelle, davon fehlend/abweichend); -1 = unlesbar. */
+function ic_archiv_vergleich($quelle, $ziel)
+{
+    $n = 0;
+    $fehlt = 0;
+    try {
+        $it = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($quelle, FilesystemIterator::SKIP_DOTS));
+        foreach ($it as $f) {
+            if (!$f->isFile()) { continue; }
+            $n++;
+            $rel = substr($f->getPathname(), strlen(rtrim($quelle, '/')) + 1);
+            $z = rtrim($ziel, '/') . '/' . $rel;
+            clearstatcache(true, $z);
+            if (!@is_file($z) || @filesize($z) !== $f->getSize()) { $fehlt++; }
+        }
+    } catch (\Exception $e) {
+        return array(-1, 0);
+    }
+    return array($n, $fehlt);
+}
+
+/* ------------------------------------------------------------------
+ * C2/C4: laufende Videoaufzeichnung, interner Aufruf ohne Token
+ * ------------------------------------------------------------------
+ * getvideo.php legt die Marke vor dem Start an: Start, Dauer, PID, Datei und
+ * Station. Sie ist die Sperre ueber die LAUFZEIT von ffmpeg (verfaellt nach
+ * Dauer + 60 s) und zugleich der Ausweis fuer die beiden internen Aufrufe:
+ * ffmpeg liest den Strom ueber mjpgproxy.php?intern=1, die Rueckmeldung ruft
+ * videowebhook.php?intern=1&file=... - beide OHNE Zugriffstoken, nur von
+ * 127.0.0.1, nur waehrend dieser Aufzeichnung, der Strom nur ein einziges
+ * Mal. Bis 2.2.12 stand das Token bis zu 300 s in der Prozessliste, lesbar
+ * fuer jeden Benutzer (code-Pruefer, Befund 6).
+ */
+function ic_videolauf_datei()
+{
+    return ic_paths()['datadir'] . '/.video_lauf.json';
+}
+
+/** Die Marke, solange sie gilt (Start + Dauer + $nachlauf s), sonst null. */
+function ic_videolauf_lesen($nachlauf = 60)
+{
+    $f = ic_videolauf_datei();
+    clearstatcache(true, $f);
+    if (!@is_file($f)) { return null; }
+    $d = json_decode((string) @file_get_contents($f), true);
+    if (!is_array($d) || !isset($d['start'], $d['dauer'])) { return null; }
+    if (time() > (int) $d['start'] + (int) $d['dauer'] + (int) $nachlauf) { return null; }
+    return $d;
+}
+
+function ic_videolauf_setzen(array $d)
+{
+    $js = json_encode($d);
+    return $js !== false && ic_datei_ersetzen(ic_videolauf_datei(), $js, 0600);
+}
+
+/** Die Rueckmeldung ist da: Marke weg, wenn sie zu dieser Datei gehoert. */
+function ic_videolauf_ende($datei)
+{
+    $d = ic_videolauf_lesen(600);
+    if ($d !== null && isset($d['datei']) && (string) $d['datei'] === (string) $datei) {
+        @unlink(ic_videolauf_datei());
+    }
+}
+
+/** Kommt der Aufruf vom eigenen Rechner? */
+function ic_von_hier()
+{
+    $a = isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : '';
+    return $a === '127.0.0.1' || $a === '::1';
+}
+
+/**
+ * Darf dieser interne Aufruf ohne Token herein? $zweck 'proxy' (einmal, mit
+ * passender Station) oder 'hook' (mit passendem Dateinamen).
+ */
+function ic_intern_erlaubt($zweck, $datei = '')
+{
+    if (!ic_von_hier()) { return false; }
+    $sperre = ic_sperre_warten(ic_videolauf_datei() . '.sperre', 5);
+    if ($sperre === false) { return false; }
+    $ok = false;
+    $d = ic_videolauf_lesen($zweck === 'hook' ? 600 : 60);
+    if ($d !== null && $zweck === 'proxy' && empty($d['proxy'])) {
+        $st = (isset($_GET['station']) && is_string($_GET['station'])) ? $_GET['station'] : '';
+        if ((string) (isset($d['station']) ? $d['station'] : '') === $st) {
+            $d['proxy'] = time();
+            $ok = ic_videolauf_setzen($d);
+        }
+    } elseif ($d !== null && $zweck === 'hook' && $datei !== '' && isset($d['datei'])) {
+        $ok = hash_equals((string) $d['datei'], (string) $datei);
+    }
+    ic_sperre_frei($sperre);
+    return $ok;
+}
+
+/**
+ * Ein Webhook kam nicht an: gebremst ins Protokoll (NEU 2.2.13, M5).
+ *
+ * Genannt wird der NAME des Webhooks, nie seine Adresse - sie kann
+ * Zugangsdaten tragen. Adressen in der Fehlermeldung von curl werden
+ * unkenntlich gemacht. Wiederholt wird nicht (Dubletten beim Empfaenger;
+ * Bauliste, "beim Bau so festgelegt").
+ */
+function ic_webhook_pruefen($name, $angekommen, $code, $fehler)
+{
+    $code = (int) $code;
+    if ($angekommen && $code >= 200 && $code < 300) { return true; }
+    $f = preg_replace('#[a-z][a-z0-9+.\-]*://\S+#i', '<Adresse>', (string) $fehler);
+    $f = preg_replace('#[^\s/@]+:[^\s/@]*@#', '', $f);
+    ic_log_gebremst('webhook_' . preg_replace('/[^a-z0-9]/i', '', $name), $name . ' kam nicht an: '
+        . ($code > 0 ? 'HTTP ' . $code : 'keine Antwort') . ($f !== '' ? ' (' . $f . ')' : '')
+        . '. Es wird nicht wiederholt.');
+    return false;
+}
+
+/* ------------------------------------------------------------------
+ * O6: drei Zeilen fuer den Reiter Test
+ * ------------------------------------------------------------------ */
+
+/** Wie steht data.json? array(ok|leer|ohne|kaputt, pfad) */
+function ic_config_lage()
+{
+    $datei = ic_paths()['config'] . '/data.json';
+    if (!@is_file($datei)) { return array('leer', $datei); }
+    $roh = (string) @file_get_contents($datei);
+    $rest = preg_replace('/\s+/', '', $roh);
+    if ($rest === '' || $rest === '{}' || $rest === '[]') { return array('leer', $datei); }
+    $d = json_decode($roh, true);
+    if (!is_array($d)) { return array('kaputt', $datei); }
+    return ic_config_hat_inhalt($d) ? array('ok', $datei) : array('ohne', $datei);
+}
+
+/** Stehen die beiden Cron-Eintraege? */
+function ic_pruefe_cron()
+{
+    $home = ic_paths()['home'];
+    if ($home === '' || !@is_dir($home . '/system/cron')) {
+        return ic_pz('unklar', 'TEST.F_CRON', 'TEST.A_UNKLAR');
+    }
+    $o = ic_plugin_ordner();
+    $da = array();
+    $fehlt = array();
+    foreach (array('cron.01min', 'cron.daily') as $c) {
+        $f = $home . '/system/cron/' . $c . '/' . $o;
+        if (@is_file($f)) { $da[] = $f; } else { $fehlt[] = $f; }
+    }
+    return $fehlt
+        ? ic_pz('fehl', 'TEST.F_CRON', 'TEST.A_CRON_NEIN', 'TEST.R_CRON', array(),
+                array(implode(', ', $fehlt)))
+        : ic_pz('ok', 'TEST.F_CRON', 'TEST.A_CRON_JA', '', array(), array(implode(', ', $da)));
+}
+
+/**
+ * Tragen alle Formulare das Merkmal? Gezaehlt in den ausgelieferten Dateien:
+ * jedes Formular-Tag gegen jeden Aufruf von ic_formularfelder() in einer
+ * Ausgabezeile. Die gesuchten Formen stehen hier nur als Muster.
+ */
+function ic_pruefe_formulare()
+{
+    $formen = 0;
+    $merkmale = 0;
+    $gelesen = 0;
+    foreach (array('index.php', 'archive.php', 'videoarchive.php', 'live.php') as $d) {
+        $t = @file_get_contents(__DIR__ . '/' . $d);
+        if ($t === false) { continue; }
+        $gelesen++;
+        $formen += preg_match_all('/<form\b/i', $t);
+        $merkmale += preg_match_all('/<\?=\s*ic_formularfelder\(/', $t);
+    }
+    if ($gelesen === 0) {
+        return ic_pz('unklar', 'TEST.F_FORMULARE', 'TEST.A_UNKLAR');
+    }
+    return ($formen > 0 && $formen === $merkmale)
+        ? ic_pz('ok', 'TEST.F_FORMULARE', 'TEST.A_FORMULARE', '', array(), array($merkmale, $formen))
+        : ic_pz('fehl', 'TEST.F_FORMULARE', 'TEST.A_FORMULARE_NEIN', 'TEST.R_FORMULARE',
+                array(), array($merkmale, $formen));
+}
+
+/* ------------------------------------------------------------------
+ * O1: Einmalmeldung fuer PRG (Regeln/04, Raumklima 0.11.8)
+ * ------------------------------------------------------------------
+ * Jeder POST endet mit 303 auf index.php?tab=<reiter>; was er zu sagen hat,
+ * liegt bis zum naechsten GET in data/plugins/<ordner>/einmalmeldung.json
+ * (0600, hoechstens 120 s alt). Gelesen wird NUR beim GET, geloescht VOR der
+ * Anzeige. Zugangsdaten stehen nie darin; ein befristeter Bildlink ist darin
+ * genauso geschuetzt wie in bildlinks.json.
+ */
+function ic_einmal_datei()
+{
+    return ic_paths()['datadir'] . '/einmalmeldung.json';
+}
+
+function ic_einmal_schreiben(array $d)
+{
+    $d['zeit'] = time();
+    $js = json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return $js !== false && ic_datei_ersetzen(ic_einmal_datei(), $js, 0600);
+}
+
+function ic_einmal_lesen()
+{
+    $f = ic_einmal_datei();
+    if (!@is_file($f)) { return array(); }
+    $roh = (string) @file_get_contents($f);
+    @unlink($f);
+    $d = json_decode($roh, true);
+    if (!is_array($d) || !isset($d['zeit'])
+        || (time() - (int) $d['zeit']) > 120 || (time() - (int) $d['zeit']) < -5) {
+        return array();
+    }
+    return $d;
 }

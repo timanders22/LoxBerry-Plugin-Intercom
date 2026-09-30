@@ -13,16 +13,21 @@
 
 require_once "config.php";
 
+/* Seit 2.2.13 (O8): die Meldungen kommen aus der Sprachdatei. Bis 2.2.12 las
+ * ein englischsprachiger Anwender hier deutsche Saetze. */
+$L = LBSystem::readlanguage("language.ini");
+
 header('Content-Type: application/json; charset=utf-8');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('HTTP/1.1 405 Method Not Allowed');
-    echo json_encode(array('success' => false, 'error' => 'Nur POST.'));
+    echo json_encode(array('success' => false, 'error' => ic_uebersetzt('UI.AJ_NUR_POST', array(), 'Nur POST.')));
     exit;
 }
 if (!ic_merkmal_gueltig()) {
     header('HTTP/1.1 403 Forbidden');
-    echo json_encode(array('success' => false, 'error' => 'Formularmerkmal fehlt oder stimmt nicht.'));
+    echo json_encode(array('success' => false,
+        'error' => ic_uebersetzt('UI.AJ_MERKMAL', array(), 'Formularmerkmal fehlt oder stimmt nicht.')));
     exit;
 }
 
@@ -30,7 +35,7 @@ $art = (isset($_POST['art']) && is_string($_POST['art'])) ? $_POST['art'] : '';
 $o = ic_archivordner();
 if (!isset($o[$art === 'video' ? 'video' : ($art === 'timelapse' ? 'timelapse' : 'bild')])) {
     header('HTTP/1.1 400 Bad Request');
-    echo json_encode(array('success' => false, 'error' => 'Unbekannte Art.'));
+    echo json_encode(array('success' => false, 'error' => ic_uebersetzt('UI.AJ_ART', array(), 'Unbekannte Art.')));
     exit;
 }
 $ordner = $art === 'video' ? $o['video'] : ($art === 'timelapse' ? $o['timelapse'] : $o['bild']);
@@ -42,12 +47,12 @@ $roh = (isset($_POST['datei']) && is_string($_POST['datei'])) ? $_POST['datei'] 
 $datei = basename($roh);
 if ($datei === '' || !preg_match('/^[A-Za-z0-9._-]{1,128}\.(jpg|avi|mp4)$/', $datei)) {
     header('HTTP/1.1 400 Bad Request');
-    echo json_encode(array('success' => false, 'error' => 'Ungueltiger Dateiname.'));
+    echo json_encode(array('success' => false, 'error' => ic_uebersetzt('UI.AJ_NAME', array(), 'Ungueltiger Dateiname.')));
     exit;
 }
 if (!@is_file($ordner . $datei)) {
     header('HTTP/1.1 404 Not Found');
-    echo json_encode(array('success' => false, 'error' => 'Datei nicht im Archiv.'));
+    echo json_encode(array('success' => false, 'error' => ic_uebersetzt('UI.AJ_FEHLT', array(), 'Datei nicht im Archiv.')));
     exit;
 }
 
@@ -65,7 +70,7 @@ if ($art === 'video') {
 if (!$geloescht) {
     header('HTTP/1.1 500 Internal Server Error');
     echo json_encode(array('success' => false,
-        'error' => 'Die Datei liess sich nicht loeschen - Rechte pruefen.'));
+        'error' => ic_uebersetzt('UI.AJ_NICHT', array(), 'Die Datei liess sich nicht loeschen - Rechte pruefen.')));
     exit;
 }
 

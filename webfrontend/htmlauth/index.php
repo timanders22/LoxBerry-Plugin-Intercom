@@ -116,6 +116,21 @@ function ic_rohf($schluessel)
 
 /** Ein Stueck Festbreitenschrift fuer die Platzhalter. */
 function ic_mono($t) { return '<span class="sm-mono">' . ic_e($t) . '</span>'; }
+
+/**
+ * Der Satz zu einem gescheiterten Speicherort (NEU 2.2.13, C1). Rot, denn
+ * "kopieren_gescheitert" heisst: das Archiv liegt unveraendert am alten Ort.
+ */
+function ic_speicher_meldung($m)
+{
+    global $ic_cfg;
+    $sp = isset($ic_cfg['storage_path']) ? rtrim(trim((string) $ic_cfg['storage_path']), '/') : '';
+    $ziel = $sp . '/' . ic_plugin_ordner() . '_data';
+    if ($m === 'kopieren_gescheitert') { return ic_txtf('UI.M_SPEICHER_KOPIE', ic_e($ziel)); }
+    if ($m === 'verweis_gescheitert') { return ic_txtf('UI.M_SPEICHER_VERWEIS', ic_e($ziel)); }
+    if ($m === 'belegt') { return ic_txt('UI.M_SPEICHER_BELEGT'); }
+    return ic_txtf('UI.M_SPEICHER_NICHT', ic_e($m));
+}
 function ic_fett($t) { return '<b>' . ic_e($t) . '</b>'; }
 
 /*
@@ -198,7 +213,15 @@ if ($ic_upgrade) {
 
 /* ==================================================================
  * Handler - ALLES vor der ersten Ausgabe
- * ================================================================== */
+ * ==================================================================
+ *
+ * Seit 2.2.13 (O1, Regeln/04) endet JEDER POST mit einer Umleitung 303 auf
+ * index.php?tab=<reiter>; Meldungen und Pruefzeilen reisen als Einmalmeldung
+ * (ic_einmal_schreiben()). Bis 2.2.12 antworteten alle neun Zweige mit 200 -
+ * F5 auf "Bildlink erzeugen" legte jedes Mal einen weiteren Zugang ohne
+ * Anmeldung an, und nach "Neues Token" stand eine Merkmal-Fehlermeldung da.
+ * Ausgenommen sind nur die Downloads (Vorlage, Sicherung): sie liefern ihre
+ * Datei unmittelbar. */
 
 $ic_offen = 'settings';
 if (isset($_POST['activetab']) && is_string($_POST['activetab'])
@@ -359,11 +382,16 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
              * jemand verstand, warum. */
             list($ic_sok2, $ic_smeldung2) = ic_speicherort_anwenden();
             if (!$ic_sok2) {
-                $ic_fehler[] = ic_txtf('UI.M_SPEICHER_NICHT', ic_e($ic_smeldung2));
+                $ic_fehler[] = ic_speicher_meldung($ic_smeldung2);
             } elseif ($ic_smeldung2 === 'verschoben') {
                 $ic_meldungen[] = ic_txt('UI.M_SPEICHER_UMGEZOGEN');
             }
-            ic_archiv_schutz_anwenden();
+            // O5: der Rueckgabewert wird gelesen, nicht verworfen.
+            $ic_schutz_soll2 = isset($ic_neu_s['archiv_schutz'])
+                && in_array((string) $ic_neu_s['archiv_schutz'], array('1', 'on', 'true'), true);
+            if (!ic_archiv_schutz_anwenden() && $ic_schutz_soll2) {
+                $ic_fehler[] = ic_txtf('UI.M_SCHUTZ_NICHT', ic_e(ic_archiv_schutzdatei()));
+            }
         } else {
             $ic_fehler[] = ic_txt('UI.SICH_SCHREIBFEHLER');
         }
@@ -400,6 +428,13 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
      * gebaut hat es im Bestand schon zweimal dazu gefuehrt, dass der Anwender
      * alles noch einmal tippen musste. */
     $ic_stationen = array();
+    /* NEU 2.2.13 (O2): was nicht passt, wird ABGEWIESEN - gesammelt, und dann
+     * wird nichts gespeichert. Bis 2.2.12 wurde still verbogen: st_ms "abc"
+     * wurde 1, "2.7" wurde 2, cleanup_days -5 schaltete die Aufbewahrung ab,
+     * und das Praefix "haus tuer" wurde "haus_tuer" (Oberflaechen-Pruefer,
+     * Befund 2). Die Regeln stehen in ic_zahlregeln(), dieselben prueft das
+     * Zurueckspielen. */
+    $ic_abweisung = array();
     $ic_namen = isset($_POST['st_name']) && is_array($_POST['st_name']) ? $_POST['st_name'] : array();
     foreach ($ic_namen as $ic_i => $ic_name) {
         $ic_hole = function ($ic_feld) use ($ic_i) {
@@ -420,8 +455,21 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
             $ic_meldungen[] = ic_txtf('UI.M_STATION_ADRESSE', ic_e($ic_ip));
             continue;
         }
+        $ic_ms_roh = $ic_hole('st_ms');
+        if ($ic_ms_roh === '') { $ic_ms_roh = '1'; }
+        if (!ic_zahl_gueltig('ms', $ic_ms_roh)) {
+            $ic_abweisung[] = ic_txtf('UI.M_ZAHL', ic_e('st_ms'), ic_e(ic_zahlbereich('ms')),
+                                      ic_e($ic_ms_roh));
+        }
         $ic_pass = $ic_hole('st_pass');
-        if ($ic_pass === '') {
+        /* NEU 2.2.13 (O12): ein Haken je Station loescht das Kennwort. Bis
+         * 2.2.12 liess sich ein hinterlegtes Kennwort nur loswerden, indem man
+         * die ganze Zeile loeschte und neu anlegte. Ein neu eingetipptes
+         * Kennwort geht vor. Der Index ist ausgeschrieben (st_pass_weg[<i>]),
+         * weil ein nicht gesetzter Haken gar nicht mitgeschickt wird. */
+        $ic_pass_weg = isset($_POST['st_pass_weg']) && is_array($_POST['st_pass_weg'])
+                     && isset($_POST['st_pass_weg'][$ic_i]);
+        if ($ic_pass === '' && !$ic_pass_weg) {
             /* Leer heisst UNVERAENDERT, nicht "geloescht". Das Feld wird nie
              * mit dem Wert gefuellt - ein Passwort gehoert nicht in den
              * ausgelieferten Quelltext.
@@ -452,7 +500,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
             'ip'   => $ic_ip,
             'user' => $ic_hole('st_user'),
             'pass' => $ic_pass,
-            'ms'   => max(1, (int) $ic_hole('st_ms')),
+            'ms'   => (int) $ic_ms_roh,
             'standbild' => $ic_hole('st_standbild'),
         );
     }
@@ -475,15 +523,14 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     }
     foreach (array('cleanup_days', 'cleanup_count', 'cleanup_mb', 'intervall_min',
                    'tv_port', 'ai_minconf') as $ic_k) {
-        if ($ic_neu[$ic_k] !== '' && !is_numeric($ic_neu[$ic_k])) {
-            $ic_meldungen[] = ic_txtf('UI.M_ZAHL', ic_e($ic_k), ic_e($ic_neu[$ic_k]));
-            $ic_neu[$ic_k] = isset($ic_cfg[$ic_k]) ? $ic_cfg[$ic_k] : '';
+        if (!ic_zahl_gueltig($ic_k, $ic_neu[$ic_k])) {
+            $ic_abweisung[] = ic_txtf('UI.M_ZAHL', ic_e($ic_k), ic_e(ic_zahlbereich($ic_k)),
+                                      ic_e($ic_neu[$ic_k]));
         }
     }
     if ($ic_neu['timelapse_time'] !== ''
         && !preg_match('/^([01]?\d|2[0-3]):([0-5]\d)$/', $ic_neu['timelapse_time'])) {
-        $ic_meldungen[] = ic_txtf('UI.M_UHRZEIT', ic_e($ic_neu['timelapse_time']));
-        $ic_neu['timelapse_time'] = isset($ic_cfg['timelapse_time']) ? $ic_cfg['timelapse_time'] : '12:00';
+        $ic_abweisung[] = ic_txtf('UI.M_UHRZEIT', ic_e($ic_neu['timelapse_time']));
     }
     if ($ic_neu['storage_path'] !== '' && !@is_dir($ic_neu['storage_path'])) {
         $ic_meldungen[] = ic_txtf('UI.M_SPEICHER_WEG', ic_e($ic_neu['storage_path']));
@@ -539,7 +586,14 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
         }
     }
 
-    list($ic_ok, $ic_was) = ic_config_speichern($ic_neu);
+    if ($ic_abweisung) {
+        $ic_fehler[] = ic_txt('UI.M_NICHTS_GESPEICHERT');
+        foreach ($ic_abweisung as $ic_m) { $ic_fehler[] = $ic_m; }
+        $ic_ok = null;
+        $ic_was = '';
+    } else {
+        list($ic_ok, $ic_was) = ic_config_speichern($ic_neu);
+    }
     if ($ic_ok) {
         $ic_cfg = $ic_neu;
         ic_log('Einstellungen gespeichert.');
@@ -566,15 +620,21 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
                 ic_datei_ersetzen($ic_offene_kopie, (string) @file_get_contents($ic_innen));
             }
         }
-        ic_archiv_schutz_anwenden();
         list($ic_sok, $ic_smeldung) = ic_speicherort_anwenden();
         if (!$ic_sok) {
-            $ic_fehler[] = ic_txtf('UI.M_SPEICHER_NICHT', ic_e($ic_smeldung));
+            $ic_fehler[] = ic_speicher_meldung($ic_smeldung);
         } elseif ($ic_smeldung === 'verschoben') {
             $ic_meldungen[] = ic_txt('UI.M_SPEICHER_UMGEZOGEN');
         }
+        /* BERICHTIGT 2.2.13 (O5): der Rueckgabewert wird gelesen. Bis 2.2.12
+         * wurde er verworfen - liess sich die Schutzdatei nicht anlegen,
+         * stand der Haken als gesetzt da, und die einzige Meldung war
+         * "gespeichert", waehrend das Archiv offen blieb. */
+        if (!ic_archiv_schutz_anwenden() && $ic_neu['archiv_schutz'] === '1') {
+            $ic_fehler[] = ic_txtf('UI.M_SCHUTZ_NICHT', ic_e(ic_archiv_schutzdatei()));
+        }
         $ic_meldungen[] = ic_txt('UI.M_GESPEICHERT');
-    } else {
+    } elseif ($ic_ok === false) {
         ic_log('Die Einstellungen liessen sich NICHT schreiben: ' . $ic_was);
         $ic_fehler[] = ic_txtf('UI.M_NICHT_GESPEICHERT', ic_e($ic_was));
     }
@@ -586,14 +646,39 @@ if ($ic_wollte && $ic_darf && isset($_POST['mqtt_speichern'])) {
     $ic_neu['mqtt_enable'] = isset($_POST['mqtt_enable']) ? '1' : '0';
     $ic_p = (isset($_POST['mqtt_praefix']) && is_string($_POST['mqtt_praefix']))
        ? trim($_POST['mqtt_praefix']) : '';
-    $ic_neu['mqtt_praefix'] = ic_mqtt_thema($ic_p);
-    list($ic_ok, $ic_was) = ic_config_speichern($ic_neu);
-    if ($ic_ok) {
-        $ic_cfg = $ic_neu;
-        ic_log('MQTT-Einstellungen gespeichert (Praefix ' . ic_mqtt_praefix() . ').');
-        $ic_meldungen[] = ic_txt('UI.M_GESPEICHERT');
+    /* BERICHTIGT 2.2.13 (O2): abweisen statt ersetzen. Bis 2.2.12 wurde aus
+     * "haus tuer" still "haus_tuer" und aus "/x//y/" "x/y" - ein anderes Abo
+     * und andere Gateway-Namen, ohne dass der Anwender es erfuhr. */
+    if (!ic_praefix_gueltig($ic_p)) {
+        $ic_fehler[] = ic_txtf('UI.M_PRAEFIX', ic_e($ic_p));
     } else {
-        $ic_fehler[] = ic_txtf('UI.M_NICHT_GESPEICHERT', ic_e($ic_was));
+        $ic_alt_an = ic_mqtt_an();
+        $ic_alt_p = ic_mqtt_praefix();
+        $ic_neu['mqtt_praefix'] = $ic_p;
+        list($ic_ok, $ic_was) = ic_config_speichern($ic_neu);
+        if ($ic_ok) {
+            $ic_cfg = $ic_neu;
+            ic_log('MQTT-Einstellungen gespeichert (Praefix ' . ic_mqtt_praefix() . ').');
+            $ic_meldungen[] = ic_txt('UI.M_GESPEICHERT');
+            /* NEU 2.2.13 (M2, Entscheidung 3): beim Praefixwechsel und beim
+             * Abschalten die behaltenen Themen unter dem ALTEN Praefix abraeumen.
+             * Bis 2.2.12 standen danach intercom/bilder und haus/tuer/bilder
+             * nebeneinander im Broker (mqtt-Pruefer, F9). Ehrlich gemeldet: UDP
+             * sagt nur, dass das Paket hinausging. */
+            if ($ic_alt_an && (!ic_mqtt_an() || ic_mqtt_praefix() !== $ic_alt_p)) {
+                list($ic_rok, $ic_rges, $ic_rthemen) = ic_mqtt_behaltene_abraeumen($ic_alt_p);
+                ic_log('MQTT: behaltene Themen unter ' . $ic_alt_p . ' abgeraeumt ('
+                    . $ic_rok . ' von ' . $ic_rges . ' Paketen hinausgegangen).');
+                if ($ic_rges > 0 && $ic_rok === $ic_rges) {
+                    $ic_meldungen[] = ic_txtf('UI.M_MQTT_ABGERAEUMT', ic_e(implode(', ', $ic_rthemen)));
+                } else {
+                    $ic_fehler[] = ic_txtf('UI.M_MQTT_NICHT_ABGERAEUMT', $ic_rok, $ic_rges,
+                                           ic_e(implode(', ', $ic_rthemen)));
+                }
+            }
+        } else {
+            $ic_fehler[] = ic_txtf('UI.M_NICHT_GESPEICHERT', ic_e($ic_was));
+        }
     }
 }
 
@@ -611,13 +696,22 @@ if ($ic_wollte && $ic_darf && isset($_POST['tat'])) {
                             : ic_txtf('UI.M_TL_NICHT', ic_e($ic_meldung));
     } elseif ($ic_tat === 'aufraeumen_probe' || $ic_tat === 'aufraeumen') {
         $ic_probe = ($ic_tat === 'aufraeumen_probe');
-        list($ic_zahl, $ic_byte, $ic_zeilen) = ic_aufraeumen($ic_probe);
-        $ic_ausgabe[] = $ic_probe ? ic_txtf('UI.M_CU_PROBE', $ic_zahl, ic_e(ic_byte($ic_byte)))
-                               : ic_txtf('UI.M_CU_OK', $ic_zahl, ic_e(ic_byte($ic_byte)));
-        foreach ($ic_zeilen as $ic_z) { $ic_ausgabe[] = ic_e($ic_z); }
+        /* NEU 2.2.13 (O10): der loeschende Knopf verlangt das Haekchen
+         * "wirklich loeschen" - serverseitig, zusaetzlich zu confirm(). Ohne
+         * JavaScript oder bei erneutem Senden gab es bis 2.2.12 keine Rueckfrage. */
+        if (!$ic_probe && empty($_POST['wirklich'])) {
+            $ic_fehler[] = ic_txt('UI.M_WIRKLICH_FEHLT');
+        } else {
+            list($ic_zahl, $ic_byte, $ic_zeilen) = ic_aufraeumen($ic_probe);
+            $ic_ausgabe[] = $ic_probe ? ic_txtf('UI.M_CU_PROBE', $ic_zahl, ic_e(ic_byte($ic_byte)))
+                                   : ic_txtf('UI.M_CU_OK', $ic_zahl, ic_e(ic_byte($ic_byte)));
+            foreach ($ic_zeilen as $ic_z) { $ic_ausgabe[] = ic_e($ic_z); }
+        }
     } elseif ($ic_tat === 'bildlink') {
-        $ic_stunden = (isset($_POST['link_stunden']) && is_numeric($_POST['link_stunden']))
-                 ? (int) $_POST['link_stunden'] : 24;
+        /* BERICHTIGT 2.2.13 (O7): die Meldung nennt die GEKAPPTE Stundenzahl -
+         * dieselbe Rechnung wie der Link. Bis 2.2.12 meldete "0" hier 0 Stunden
+         * und "10000" 10000 Stunden, die Datei sagte 1 bzw. 720. */
+        $ic_stunden = ic_bildlink_stunden(isset($_POST['link_stunden']) ? $_POST['link_stunden'] : 24);
         $ic_code = ic_bildlink_erzeugen($ic_stunden, 5);
         if ($ic_code !== '') {
             ic_log('Ein befristeter Bildlink wurde erzeugt (gueltig ' . $ic_stunden . ' Stunden).');
@@ -634,6 +728,11 @@ if ($ic_wollte && $ic_darf && isset($_POST['tat'])) {
 /* ---------------- Archiv: loeschen ---------------- */
 if ($ic_wollte && $ic_darf && isset($_POST['loeschen'])) {
     $ic_was = is_string($_POST['loeschen']) ? $_POST['loeschen'] : '';
+    if (empty($_POST['wirklich'])) {
+        // O10: ohne Haekchen passiert nichts (Regeln/04, loeschender Knopf).
+        $ic_fehler[] = ic_txt('UI.M_WIRKLICH_FEHLT');
+        $ic_was = '';
+    }
     $ic_o = ic_archivordner();
     $ic_zahl = 0;
     if ($ic_was === 'bilder') {
@@ -647,7 +746,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['loeschen'])) {
         foreach (glob($ic_o['timelapse'] . '*') ?: array() as $ic_d) { if (@unlink($ic_d)) { $ic_zahl++; } }
     }
     if ($ic_zahl > 0) { ic_log('Archiv geleert (' . $ic_was . '): ' . $ic_zahl . ' Datei(en).'); }
-    $ic_meldungen[] = ic_txtf('UI.M_GELOESCHT', $ic_zahl);
+    if ($ic_was !== '') { $ic_meldungen[] = ic_txtf('UI.M_GELOESCHT', $ic_zahl); }
     $ic_offen = 'archiv';
 }
 
@@ -679,6 +778,48 @@ if ($ic_heilung[0] !== 'fehler' && !array_key_exists('aktionstoken', $ic_cfg)) {
 if (ic_zweitschrift_geschont()) {
     $ic_fehler[] = ic_txtf('UI.M_ZWEITSCHRIFT_GESCHONT', ic_e(ic_zweitschrift()),
                            ic_e(implode(', ', ic_zweitschrift_geschont())));
+}
+
+/* ==================================================================
+ * Jeder POST endet mit einer Umleitung (PRG, seit 2.2.13, O1; Regeln/04)
+ * ==================================================================
+ *
+ * Auch ein abgewiesener POST (Merkmal falsch). Laesst sich die Einmalmeldung
+ * nicht ablegen, wird wie bis 2.2.12 unmittelbar gerendert - eine
+ * verschluckte Meldung waere schlimmer als ein F5-Risiko. */
+if ($ic_wollte) {
+    if (ic_einmal_schreiben(array(
+            'meldungen'   => $ic_meldungen,
+            'fehler'      => $ic_fehler,
+            'ausgabe'     => $ic_ausgabe,
+            'pruefzeilen' => $ic_pruefzeilen,
+        ))) {
+        header('Location: index.php?tab=' . rawurlencode($ic_offen), true, 303);
+        exit;
+    }
+} else {
+    // Die Einmalmeldung wird NUR beim GET gelesen und dabei geloescht.
+    $ic_einmal = ic_einmal_lesen();
+    foreach (array('meldungen' => 'ic_meldungen', 'fehler' => 'ic_fehler',
+                   'ausgabe' => 'ic_ausgabe') as $ic_q => $ic_zv) {
+        if (isset($ic_einmal[$ic_q]) && is_array($ic_einmal[$ic_q])) {
+            foreach ($ic_einmal[$ic_q] as $ic_m) {
+                if (is_string($ic_m)) { ${$ic_zv}[] = $ic_m; }
+            }
+        }
+    }
+    if (isset($ic_einmal['pruefzeilen']) && is_array($ic_einmal['pruefzeilen'])) {
+        $ic_pz_ok = array();
+        foreach ($ic_einmal['pruefzeilen'] as $ic_pzz) {
+            if (is_array($ic_pzz) && isset($ic_pzz['lage'], $ic_pzz['frage'], $ic_pzz['antwort'],
+                                           $ic_pzz['rat'], $ic_pzz['fargs'], $ic_pzz['aargs'])
+                && in_array($ic_pzz['lage'], array('ok', 'fehl', 'hinweis', 'unklar'), true)
+                && is_array($ic_pzz['fargs']) && is_array($ic_pzz['aargs'])) {
+                $ic_pz_ok[] = $ic_pzz;
+            }
+        }
+        if ($ic_pz_ok) { $ic_pruefzeilen = $ic_pz_ok; }
+    }
 }
 
 /* Vorgabewerte fuer noch nie gespeicherte Felder - an EINER Stelle, und
@@ -821,7 +962,7 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <td><input type="text" data-role="none" name="st_name[]" value="<?= ic_e($ic_s['name'] === $ic_s['ip'] ? '' : $ic_s['name']) ?>" placeholder="<?= ic_txt('UI.PH_NAME') ?>"></td>
 <td><input type="text" data-role="none" name="st_ip[]" value="<?= ic_e($ic_s['ip']) ?>" placeholder="192.168.1.50"><input type="hidden" name="st_alt[]" value="<?= ic_e($ic_s['ip']) ?>"></td>
 <td><input type="text" data-role="none" name="st_user[]" value="<?= ic_e($ic_s['user']) ?>" placeholder="<?= ic_txt('UI.PH_MINISERVER') ?>"></td>
-<td><input type="password" data-role="none" name="st_pass[]" value="" placeholder="<?= $ic_s['pass'] !== '' ? ic_txt('UI.PH_UNVERAENDERT') : '' ?>"></td>
+<td><input type="password" data-role="none" name="st_pass[]" value="" placeholder="<?= $ic_s['pass'] !== '' ? ic_txt('UI.PH_UNVERAENDERT') : '' ?>"><?php if ($ic_s['pass'] !== '') { ?><br><label class="sm-klein"><input type="checkbox" data-role="none" name="st_pass_weg[<?= (int) $ic_i ?>]" value="1"> <?= ic_txt('UI.L_PASS_WEG') ?></label><?php } ?></td>
 <td><input type="number" data-role="none" name="st_ms[]" min="1" max="10" value="<?= (int) $ic_s['ms'] ?>"></td>
 <td><input type="text" data-role="none" name="st_standbild[]" value="<?= ic_e($ic_s['standbild']) ?>" placeholder="/jpg/image.jpg"></td>
 </tr>
@@ -849,7 +990,17 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <p class="sm-klein"><?= ic_rohf('UI.BILDSCHUTZ_TEXT', ic_mono('lastpicture.jpg'), ic_mono('bild.php?token=...')) ?></p>
 
 <h2><?= ic_txt('UI.H_ARCHIVSCHUTZ') ?></h2>
-<label><input type="checkbox" data-role="none" name="archiv_schutz"<?= in_array((string) $ic_cfg['archiv_schutz'], array('1', 'on', 'true'), true) ? ' checked' : '' ?>> <?= ic_txt('UI.L_ARCHIVSCHUTZ') ?></label>
+<?php
+/* O5 (seit 2.2.13): der Haken steht nur, wenn der Schutz WIRKT. Ist er
+ * eingeschaltet und fehlt die Schutzdatei, sagt es ein roter Kasten, und der
+ * Reiter Test zeigt ein Kreuz. */
+$ic_schutz_soll = in_array((string) $ic_cfg['archiv_schutz'], array('1', 'on', 'true'), true);
+$ic_schutz_ist = ic_archiv_geschuetzt();
+?>
+<label><input type="checkbox" data-role="none" name="archiv_schutz"<?= ($ic_schutz_soll && $ic_schutz_ist) ? ' checked' : '' ?>> <?= ic_txt('UI.L_ARCHIVSCHUTZ') ?></label>
+<?php if ($ic_schutz_soll && !$ic_schutz_ist) { ?>
+<div class="sm-hinweis sm-warn"><?= ic_txtf('UI.SCHUTZ_FEHLT', ic_e(ic_archiv_schutzdatei())) ?></div>
+<?php } ?>
 <div class="sm-hinweis sm-warn"><?= ic_rohf('UI.ARCHIVSCHUTZ_TEXT', ic_mono('/legacy/' . $ic_plugin . '_data/')) ?></div>
 <p class="sm-klein"><?= ic_txt('UI.ARCHIVSCHUTZ_PROBE') ?></p>
 
@@ -901,7 +1052,7 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <label><?= ic_txt('UI.L_KI_ADRESSE') ?></label>
 <input type="text" data-role="none" name="ai_url" value="<?= ic_e($ic_cfg['ai_url']) ?>" placeholder="http://192.168.1.60:32168/v1/vision/detection">
 <label><?= ic_txt('UI.L_KI_SICHERHEIT') ?></label>
-<input type="number" data-role="none" name="ai_minconf" min="1" max="99" value="<?= ic_e($ic_cfg['ai_minconf']) ?>">
+<input type="number" data-role="none" name="ai_minconf" min="0" max="100" value="<?= ic_e($ic_cfg['ai_minconf']) ?>">
 <p class="sm-klein"><?= ic_txt('UI.KI_TEXT') ?></p>
 
 <h2><?= ic_txt('UI.H_WEBHOOKS') ?></h2>
@@ -1136,9 +1287,11 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
      woertlich "intercom_ok" - bei einer Zweitinstallation (intercom_01) oder
      eigenem Praefix zeigte die Baustein-Liste auf einen Eingang, den das
      Gateway nie anlegt. Und ausgerechnet an ihm haengt die Ausfallerkennung.
-     Baustein 5 haengt seit 2.2.6 an status/ts statt an ok: ok kommt nur nach
-     einem Bildabruf, status/ts bei JEDEM Cron-Lauf - nur damit misst
-     Baustein 6 wirklich ein Alter. -->
+     Baustein 5 haengt seit 2.2.6 an status/ts statt an ok. BERICHTIGT 2.2.13
+     (M8): hier stand "ok kommt nur nach einem Bildabruf" - gemessen geht ok
+     bei jedem Herzschlag hinaus, genau wie status/ts (mqtt-Pruefer, Befund 10).
+     Beide tragen denselben Zeitpunkt; status/ts ist der Name nach Hausschema,
+     ok bleibt fuer bestehende Anlagen. -->
 <tr><td>5</td><td><?= ic_txt('LOX.B5_TYP') ?></td><td><?= ic_txtf('LOX.B5_NAME', ic_mono(ic_gatewayname(ic_mqtt_praefix()) . '_status_ts')) ?></td>
     <td><?= ic_txt('LOX.B5_PARAM') ?></td><td><?= ic_txt('LOX.B5_VERB') ?></td></tr>
 <tr><td>6</td><td><?= ic_txt('LOX.B6_TYP') ?></td><td><?= ic_txt('LOX.B6_NAME') ?></td>
@@ -1191,6 +1344,7 @@ $ic_g = ic_aufbewahrung();
                      'timelapse' => 'UI.K_DEL_TL') as $ic_w => $ic_s) { ?>
 <form method="post" action="index.php">
 <?= ic_formularfelder('archiv') ?>
+<label class="sm-klein"><input type="checkbox" data-role="none" name="wirklich" value="1"> <?= ic_txt('UI.L_WIRKLICH') ?></label>
 <button type="submit" data-role="none" class="sm-btn sm-b-aktion" name="loeschen" value="<?= $ic_w ?>"
         onclick="return confirm(this.getAttribute('data-frage'));"
         data-frage="<?= ic_txt('UI.DEL_FRAGE') ?>"><?= ic_txt($ic_s) ?></button>
@@ -1260,13 +1414,18 @@ if ($ic_neueste) { ?>
 <button type="submit" data-role="none" class="sm-btn sm-b-technik" name="tat" value="pruefen"><?= ic_txt('UI.K_PRUEFEN') ?></button>
 </form>
 <a class="sm-btn sm-b-technik" href="<?= ic_e($ic_adr['selftest']) ?>" target="_blank"><?= ic_txt('UI.K_SELFTEST') ?></a>
-<a class="sm-btn sm-b-technik" href="/plugins/<?= ic_e($ic_plugin) ?>/getpicture.php?hook=false&amp;token=<?= rawurlencode($ic_token) ?>" target="_blank"><?= ic_txt('UI.K_JSON') ?></a>
 </div>
-<p class="sm-klein"><?= ic_txtf('UI.TECHNIK_TEXT', ic_mono('?hook=false')) ?></p>
 
 <h3 class="sm-h3"><?= ic_txt('UI.H_AUSLOESEN') ?></h3>
 <p class="sm-klein"><?= ic_txt('UI.AUSLOESEN_TEXT') ?></p>
+<!-- BERICHTIGT 2.2.13 (O9): "Bildabruf pruefen (JSON)" steht hier, orange.
+     Bis 2.2.12 stand er grau unter "Technische Auskunft" - er ruft aber
+     getpicture.php?hook=false auf, und das ersetzt das zuletzt aufgenommene
+     Bild (lastpicture.jpg), das Loxone anzeigt. Das Verhalten bleibt (wer
+     ?hook=false in Loxone nutzt, verlaesst sich darauf); Farbe und Text sagen
+     es jetzt. Umgekehrt ist "Aufraeumen: nur zeigen" grau: es loescht nichts. -->
 <div class="sm-knopfreihe">
+<a class="sm-btn sm-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/getpicture.php?hook=false&amp;token=<?= rawurlencode($ic_token) ?>" target="_blank"><?= ic_txt('UI.K_JSON') ?></a>
 <a class="sm-btn sm-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/getpicture.php?trigger=test&amp;token=<?= rawurlencode($ic_token) ?>" target="_blank"><?= ic_txt('UI.K_BILD') ?></a>
 <a class="sm-btn sm-b-aktion" href="/plugins/<?= ic_e($ic_plugin) ?>/getvideo.php?s=10&amp;token=<?= rawurlencode($ic_token) ?>" target="_blank"><?= ic_txt('UI.K_VIDEO') ?></a>
 <form method="post" action="index.php">
@@ -1275,15 +1434,17 @@ if ($ic_neueste) { ?>
 </form>
 <form method="post" action="index.php">
 <?= ic_formularfelder('test') ?>
-<button type="submit" data-role="none" class="sm-btn sm-b-aktion" name="tat" value="aufraeumen_probe"><?= ic_txt('UI.K_CU_PROBE') ?></button>
+<button type="submit" data-role="none" class="sm-btn sm-b-technik" name="tat" value="aufraeumen_probe"><?= ic_txt('UI.K_CU_PROBE') ?></button>
 </form>
 <form method="post" action="index.php">
 <?= ic_formularfelder('test') ?>
+<label class="sm-klein"><input type="checkbox" data-role="none" name="wirklich" value="1"> <?= ic_txt('UI.L_WIRKLICH') ?></label>
 <button type="submit" data-role="none" class="sm-btn sm-b-aktion" name="tat" value="aufraeumen"
         onclick="return confirm(this.getAttribute('data-frage'));"
         data-frage="<?= ic_txt('UI.CU_FRAGE') ?>"><?= ic_txt('UI.K_CU') ?></button>
 </form>
 </div>
+<p class="sm-klein"><?= ic_txtf('UI.TECHNIK_TEXT', ic_mono('?hook=false')) ?></p>
 
 <h3 class="sm-h3"><?= ic_txt('UI.H_BILDLINK') ?></h3>
 <p class="sm-klein"><?= ic_txt('UI.BILDLINK_TEXT') ?></p>

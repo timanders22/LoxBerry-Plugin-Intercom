@@ -87,7 +87,9 @@ error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 function ic_selftest_antwort($endpunkt)
 {
     header('Content-Type: application/json; charset=utf-8');
-    $z = ic_selbsttest(false);
+    // C9 (seit 2.2.13): am Endpunkt misst niemand das Netz - die beiden
+    // Netzzeilen zaehlen hier nicht als "unklar".
+    $z = ic_selbsttest(false, true);
     $b = ic_selbsttest_bilanz($z);
     $fehl = array();
     foreach ($z as $zeile) {

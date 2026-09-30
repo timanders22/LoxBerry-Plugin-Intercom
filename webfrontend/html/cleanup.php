@@ -36,9 +36,26 @@ if (PHP_SAPI !== 'cli') {
  * auch auf einer Anlage, deren Anwender keine Tagesgrenze eingestellt hat.
  * In WSL gemessen (Pruefung-Intercom-2.2.11, Fall T2): 2.2.10 loeschte in
  * dieser Luecke ein 200 Tage altes Archivbild, obwohl die Einstellung leer
- * war. Der Lauf ist taeglich; er entfaellt einmal. */
-if (ic_upgrade_laeuft()) {
+ * war. Der Lauf ist taeglich; er entfaellt einmal.
+ *
+ * BERICHTIGT 2.2.13 (I3): die Marke gilt hier OHNE Altersgrenze
+ * (Entscheidung 1). Bis 2.2.12 loeschte ein Update mit mehr als einer Stunde
+ * Luecke in dieser Luecke Archivbilder nach der Vorgabe von 90 Tagen - auch
+ * gegen die Einstellung "0 = nie" (Installer-Pruefer, U4). */
+if (ic_upgrade_marke_liegt()) {
     echo "Aktualisierung laeuft - die Bereinigung entfaellt heute.\n";
+    exit(0);
+}
+
+/* NEU 2.2.13 (I3): ohne Konfiguration mit Inhalt wird nichts geloescht. Eine
+ * frische Neuinstallation neben einem liegengebliebenen Archiv (uninstall
+ * laesst es absichtlich stehen) loeschte bis 2.2.12 beim ersten taeglichen
+ * Lauf nach der stillen Vorgabe von 90 Tagen, bevor der Anwender die Seite je
+ * geoeffnet hatte (Installer-Pruefer, N5). */
+if (!ic_config_hat_inhalt(ic_config())) {
+    ic_log_gebremst('cleanup_ohne', 'Die Bereinigung entfaellt: die Konfiguration traegt weder '
+        . 'Zugriffstoken noch Tuerstation. Es wird nichts nach einer Vorgabe geloescht.', 86400);
+    echo "Die Konfiguration ist ohne Inhalt - die Bereinigung entfaellt.\n";
     exit(0);
 }
 

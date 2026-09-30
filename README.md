@@ -2,7 +2,7 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.12 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.13 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
@@ -35,6 +35,76 @@ Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.2.13
+
+Durchgang vom 30.09.2026 mit vier Prüfern (Code, Oberfläche, Installer, MQTT).
+Gemessen an Attrappen für Türstation, Webhooks, KI-Dienst, ffmpeg und Broker
+unter PHP 7.4, 8.3 und 8.5; nicht am Gerät. Befunde mit Datei:Zeile:
+`Pruefung-Durchgang-2026-09-29/Intercom_BEFUNDE_UND_VERBESSERUNGEN.md`.
+Die Abschnitte zu älteren Fassungen darunter beschreiben den damaligen Stand.
+
+**Wichtig für Anlagen, die von 2.2.5 oder älter kommen:** Bis 2.2.5 gingen die
+Klingelmeldungen zurückbehalten an den Broker, bei abgeschaltetem offenem Bild
+mit dem Zugriffstoken in der Bildadresse. Diese Altlast räumt 2.2.13 im ersten
+Tag nach dem Update ab. **Wer damals das offene Bild abgeschaltet hatte, sollte
+im Reiter Loxone ein neues Token erzeugen** und die Adressen in Loxone
+anpassen.
+
+**Archiv und Bilder**
+
+* **Ein Umzug des Archivs löscht nichts mehr, wenn das Kopieren scheitert.**
+  Bisher wurde das Archiv nach einem gescheiterten Kopieren (etwa voller
+  USB-Stick) trotzdem gelöscht und „umgezogen“ gemeldet.
+* Ein befristeter Bildlink zeigt das Bild vom Zeitpunkt des Erzeugens, nicht
+  mehr das jeweils neueste. Die Links überleben jetzt ein Update.
+* Klingel und Bewegungsmelder in derselben Sekunde ergeben zwei Archivbilder
+  statt einem.
+* Die tägliche Bereinigung läuft nicht, solange keine Einstellungen vorhanden
+  sind oder ein Update läuft; bisher löschte sie dann nach einer stillen
+  Vorgabe von 90 Tagen.
+
+**Video und Livebild**
+
+* Mehrere Auslöser kurz hintereinander starten nur eine Aufnahme; die weiteren
+  bekommen „läuft schon“. Scheitert ffmpeg, steht es im Protokoll.
+* Das Zugriffstoken steht nicht mehr in der Prozessliste.
+* Folgt die Station einer Umleitung, gehen die Zugangsdaten nicht mehr an
+  einen fremden Rechner.
+* Die eigene Adresse nutzt den eingestellten Webport des LoxBerry.
+
+**MQTT und Loxone**
+
+* `status/ok` sagt jetzt, ob der letzte Kontakt zur Türstation geklappt hat;
+  bisher stand es immer auf 1.
+* Eine misslungene Klingelaufnahme meldet das neue flüchtige Thema
+  `<präfix>/fehler`.
+* Präfixwechsel, Abschalten und Deinstallation räumen `bilder` und `ai_count`
+  ab.
+* Die Verbindung zum Miniserver schließt direkt nach der Antwort (bisher bis zu
+  25 s offen, während die Webhooks liefen).
+* Ein Webhook, der nicht ankommt, steht gebremst im Protokoll. Er wird nicht
+  wiederholt.
+* Der Selbsttest meldet den Cron-Lauf auch bei abgeschaltetem MQTT.
+
+**Oberfläche**
+
+* Nach jedem Knopf leitet die Seite um; F5 legt keinen weiteren Bildlink an
+  und löscht nichts erneut.
+* Eingaben werden abgewiesen statt still verbogen; das Zurückspielen prüft die
+  Stationsadressen wie das Formular.
+* Löschen braucht ein Häkchen. Ein Stationskennwort lässt sich löschen.
+* Der Reiter Test prüft Cron-Einträge, Formularmerkmal, Konfiguration und
+  Upgrade-Marke.
+* Englische Oberfläche und Vorlagen sind englisch; die Bausteinnamen folgen
+  Loxone Config.
+
+**Installation**
+
+* Eine Neuinstallation übernimmt Token, Stationen und Kennwort einer früheren
+  Installation nicht mehr (neu: `preinstall.sh`, Reste nach `.alt`).
+* Bei voller Karte bleibt die alte Zweitschrift lesbar erhalten.
+* Eine unlesbare Konfiguration bleibt als `.kaputt` liegen, mit Warnung.
 
 ## Neu in 2.2.12
 

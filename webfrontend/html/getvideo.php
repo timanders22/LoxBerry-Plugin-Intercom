@@ -43,6 +43,16 @@
  * NEU IN 2.2.0: der Endpunkt behauptet keinen Erfolg mehr, den er nicht
  * kennt. Bis 2.1.13 stand success:true fest im Text - auch wenn ffmpeg
  * gar nicht installiert war oder das Archiv nicht beschreibbar.
+ *
+ * DREI BERICHTIGUNGEN IN 2.2.13 (code-Pruefer, Befunde 2, 6 und 9):
+ *   C2  Die Sperre gilt ueber die LAUFZEIT von ffmpeg (Marke mit PID, Start
+ *       und Dauer, verfaellt nach Dauer + 60 s). Bis 2.2.12 hielt sie nur
+ *       Millisekunden: drei Ausloeser in 1,2 s ergaben drei ffmpeg.
+ *   C3  Der Rueckgabewert von ffmpeg wird festgehalten; die Rueckmeldung
+ *       (videowebhook.php) sagt ehrlich, wenn die Aufnahme gescheitert ist.
+ *   C4  Das Zugriffstoken steht nicht mehr auf der Befehlszeile. ffmpeg
+ *       und die Rueckmeldung kommen als interne Aufrufe von 127.0.0.1 herein,
+ *       nur waehrend dieser Aufzeichnung (ic_intern_erlaubt()).
  */
 
 require_once __DIR__ . '/ic_start.php';
@@ -138,6 +148,19 @@ if ($ic_sperre === false) {
         'error' => 'Es laeuft bereits eine Aufzeichnung.'));
     exit;
 }
+/* C2 (seit 2.2.13): laeuft noch eine Aufzeichnung? Die Marke gilt bis
+ * Start + Dauer + 60 s oder bis ihre Rueckmeldung eintrifft. */
+$ic_lauf = ic_videolauf_lesen(60);
+if ($ic_lauf !== null) {
+    flock($ic_sperre, LOCK_UN);
+    fclose($ic_sperre);
+    header('HTTP/1.1 429 Too Many Requests');
+    echo json_encode(array('success' => false,
+        'error' => 'Es laeuft bereits eine Aufzeichnung (seit '
+                 . max(0, time() - (int) $ic_lauf['start']) . ' s, Dauer '
+                 . (int) $ic_lauf['dauer'] . ' s).'));
+    exit;
+}
 
 /* ---------------- Dateinamen ---------------- */
 // Der Name besteht ausschliesslich aus Datum, der geprueften Zahl und
@@ -162,7 +185,6 @@ if (isset($arr['timestamp_video']) && $arr['timestamp_video'] === 'on') {
 
 /* ---------------- Befehl zusammensetzen ---------------- */
 $basis = ic_eigene_basis();
-$token = isset($arr['aktionstoken']) ? (string) $arr['aktionstoken'] : '';
 /* Weitergegeben wird die NUMMER, nicht der Name.
  *
  * ic_station() fasst eine Angabe aus ein oder zwei Ziffern als Nummer auf.
@@ -193,9 +215,12 @@ function ic_befehl(array $teile)
     return implode(' ', $out);
 }
 
+/* C4 (seit 2.2.13): KEIN Token in der Adresse - sie steht in der Prozessliste,
+ * lesbar fuer jeden Benutzer, bis zu 300 s lang. mjpgproxy.php nimmt diesen
+ * einen Aufruf von 127.0.0.1 waehrend der laufenden Aufzeichnung ohne Token an. */
 $aufnahme = ic_befehl(array_merge(
     array($ffmpeg, '-f', 'mjpeg', '-t', (string) $seconds, '-r', '20',
-          '-i', $basis . '/mjpgproxy.php?token=' . rawurlencode($token) . $stationsparameter),
+          '-i', $basis . '/mjpgproxy.php?intern=1' . $stationsparameter),
     $vf,
     array('-r', '5', $videofile)
 ));
@@ -207,8 +232,7 @@ $vorschau = ic_befehl(array($ffmpeg, '-i', $videofile, '-ss', '00:00:02',
 // Bis 2.1.13 wurde wget aufgerufen, ohne dass es in dpkg/apt stand: fehlte
 // es, lief die Aufnahme, aber der Video-Webhook loeste nie aus - und weil
 // der ganze Befehl nach /dev/null ging, fiel es nirgends auf.
-$hookurl = $basis . '/videowebhook.php?token=' . rawurlencode($token)
-         . '&file=' . rawurlencode($videofilenameonly);
+$hookurl = $basis . '/videowebhook.php?intern=1&file=' . rawurlencode($videofilenameonly);
 $wget = ic_programm('wget');
 if ($wget) {
     $hook = ic_befehl(array($wget, '-q', '-O', '/dev/null', '--timeout=10', $hookurl));
@@ -224,15 +248,40 @@ if ($wget) {
     }
 }
 
-$command = '(' . $aufnahme . ' ; ' . $vorschau . ($hook !== '' ? ' ; ' . $hook : '') . ')';
+/* C3 (seit 2.2.13): der Rueckgabewert von ffmpeg geht in eine Datei im
+ * Datenordner; videowebhook.php liest ihn und meldet eine gescheiterte
+ * Aufnahme. Bis 2.2.12 ging die ganze Kette nach /dev/null, und eine
+ * gescheiterte Aufzeichnung hinterliess keine Spur. */
+$rcdatei = ic_paths()['datadir'] . '/.video_rc_' . $videofilenameonly;
+$command = '(' . $aufnahme . ' ; echo $? > ' . escapeshellarg($rcdatei) . ' ; ' . $vorschau
+         . ($hook !== '' ? ' ; ' . $hook : '') . ')';
+
+/* C2: die Marke der laufenden Aufzeichnung - VOR dem Start, unter der Sperre. */
+if (!ic_videolauf_setzen(array(
+        'start'   => time(),
+        'dauer'   => $seconds,
+        'pid'     => getmypid(),
+        'datei'   => $videofilenameonly,
+        'station' => ($stationsparameter !== '' ? (string) $ic_nummer : ''),
+        'proxy'   => 0,
+    ))) {
+    flock($ic_sperre, LOCK_UN);
+    fclose($ic_sperre);
+    ic_log_gebremst('videolauf', 'Die Marke der Videoaufzeichnung liess sich nicht anlegen: '
+        . ic_videolauf_datei() . ' - es wird nichts aufgenommen.');
+    header('HTTP/1.1 500 Internal Server Error');
+    echo json_encode(array('success' => false,
+        'error' => 'Die Marke der Aufzeichnung liess sich nicht anlegen: ' . ic_videolauf_datei()));
+    exit;
+}
 
 // Im Hintergrund starten. Der gesamte Befehl steht in einfachen
 // Anfuehrungszeichen der Maskierung - hier wird nichts mehr angefuegt,
 // was von aussen kommt.
 //
-// Die Sperre wird bewusst NICHT bis zum Ende der Aufnahme gehalten: dieser
-// Prozess endet gleich, der Hintergrundlauf nicht. Sie verhindert deshalb
-// gleichzeitige AUSLOESER, nicht gleichzeitige ffmpeg-Laeufe.
+// BERICHTIGT 2.2.13 (C2): hier stand, die Sperre verhindere gleichzeitige
+// AUSLOESER, nicht gleichzeitige ffmpeg-Laeufe. Die Sperre dieses Prozesses
+// endet weiter gleich - ueber die Laufzeit haelt jetzt die Marke oben.
 shell_exec($command . ' > /dev/null 2>&1 &');
 
 ic_log('Videoaufzeichnung gestartet: ' . $videofilenameonly . ' (' . $seconds . ' s, Station "'

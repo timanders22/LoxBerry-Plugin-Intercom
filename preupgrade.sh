@@ -26,8 +26,13 @@ fi
 # Pruefung-Upgradeluecke-2026-09-17, Fall F). Solange die Marke gilt,
 # speichert die Seite nichts, und Zeitraffer und Bereinigung setzen aus.
 # postinstall.sh entfernt sie. Sie liegt NEBEN dem Datenordner, weil
-# purge_installation den Ordner selbst loescht. Aelter als eine Stunde gilt
-# sie nicht mehr.
+# purge_installation den Ordner selbst loescht.
+#
+# BERICHTIGT 2.2.13 (I8): hier stand "Aelter als eine Stunde gilt sie nicht
+# mehr". Seit 2.2.13 gilt die Stunde nur noch fuer die Sperre der
+# Oberflaeche; fuer Heilung, Bereinigung, Zeitraffer, preinstall.sh und
+# postinstall.sh gilt die Marke ohne Altersgrenze (Entscheidung 1 vom
+# 29.09.2026, Nr. 8 Frage 17). Wer frisch anfangen will, deinstalliert vorher.
 MARKE="$BASE/data/plugins/$PDIR.upgrade_laeuft"
 mkdir -p "$BASE/data/plugins" 2>/dev/null
 date +%s > "$MARKE" 2>/dev/null
@@ -69,39 +74,79 @@ CF="$BASE/config/plugins/$PDIR/data.json"
 # postinstall.sh: traegt die Datei ein Zugriffstoken ODER eine Tuerstation?
 # Rueckgabe 0 = ja, 1 = nein, 2 = nicht pruefbar (kein php, unlesbares
 # JSON). Im Zweifel bleibt die vorhandene Zweitschrift unangetastet.
-cf_mit_inhalt() {
-    [ -s "$CF" ] || return 1
+mit_inhalt() {
+    [ -s "$1" ] || return 1
     php -r '$d = json_decode((string) @file_get_contents($argv[1]), true);
         if (!is_array($d)) { exit(1); }
         $t = isset($d["aktionstoken"]) && is_string($d["aktionstoken"]) && $d["aktionstoken"] !== "";
         $s = (isset($d["stationen"]) && is_array($d["stationen"]) && count($d["stationen"]) > 0)
           || (isset($d["intercomip"]) && is_string($d["intercomip"]) && trim($d["intercomip"]) !== "");
-        exit(($t || $s) ? 0 : 1);' "$CF" 2>/dev/null
+        exit(($t || $s) ? 0 : 1);' "$1" 2>/dev/null
     RC=$?
     [ "$RC" = 0 ] || [ "$RC" = 1 ] || return 2
     return "$RC"
+}
+cf_mit_inhalt() { mit_inhalt "$CF"; }
+
+# NEU 2.2.13 (I6): ist data.json ueberhaupt lesbares JSON? 0 = ja, 1 = nein.
+cf_lesbar() {
+    php -r 'exit(is_array(json_decode((string) @file_get_contents($argv[1]), true)) ? 0 : 1);' "$CF" 2>/dev/null
 }
 
 cf_mit_inhalt
 case "$?" in
 0)
-    if cp -p "$CF" "$ZWEIT" 2>/dev/null; then
+    # BERICHTIGT 2.2.13 (I2): die neue Zweitschrift entsteht unter .neu, wird
+    # gegen data.json verglichen und auf Inhalt geprueft und erst dann
+    # umbenannt. Bis 2.2.12 stand hier cp -p direkt ueber die einzige
+    # Zweitschrift: bei voller Karte blieb eine abgeschnittene Datei
+    # (4096 Byte, kein JSON) stehen, die alte war zerstoert, und postinstall.sh
+    # spielte sie als "wiederhergestellt" ein (Installer-Pruefer, V1).
+    # Misslingt es, bleibt die bisherige Zweitschrift unangetastet.
+    NEU="$ZWEIT.neu"
+    rm -f "$NEU" 2>/dev/null
+    if ( umask 077; cp "$CF" "$NEU" ) 2>/dev/null && cmp -s "$CF" "$NEU" \
+       && mit_inhalt "$NEU" && mv -f "$NEU" "$ZWEIT" 2>/dev/null; then
         chmod 0600 "$ZWEIT" 2>/dev/null
         echo "<OK> Zweitschrift der Einstellungen angelegt: $ZWEIT"
     else
+        rm -f "$NEU" 2>/dev/null
         echo "<WARNING> Die Zweitschrift liess sich nicht anlegen: $ZWEIT"
+        if [ -s "$ZWEIT" ]; then
+            chmod 0600 "$ZWEIT" 2>/dev/null
+            echo "<WARNING> Die bisherige Zweitschrift bleibt unveraendert stehen."
+        fi
         echo "<WARNING> Bitte die Einstellungen nach dem Update pruefen."
     fi
     ;;
 1)
+    # NEU 2.2.13 (I6): eine abgeschnittene oder sonst unlesbare data.json wird
+    # NEBEN den Ordner gesichert (0600), bevor der Installer sie ueberschreibt.
+    # Bis 2.2.12 hiess es hier "offenbar eine Erstinstallation" - in einem
+    # Upgrade -, und das lesbare Token war danach spurlos weg (U3b).
+    KAPUTT="$BASE/config/plugins/$PDIR.data.json.kaputt"
+    UNLESBAR=0
+    if [ -s "$CF" ] && ! cf_lesbar; then
+        UNLESBAR=1
+        rm -f "$KAPUTT" 2>/dev/null
+        if ( umask 077; cp "$CF" "$KAPUTT" ) 2>/dev/null && cmp -s "$CF" "$KAPUTT"; then
+            chmod 0600 "$KAPUTT" 2>/dev/null
+            echo "<WARNING> Upgrade, Konfiguration unlesbar: data.json ist kein lesbares JSON."
+            echo "<WARNING> Der Inhalt ist gesichert unter $KAPUTT (0600)."
+        else
+            echo "<WARNING> Upgrade, Konfiguration unlesbar: data.json ist kein lesbares JSON,"
+            echo "<WARNING> und die Sicherung nach $KAPUTT ist gescheitert."
+        fi
+    fi
     if [ -s "$ZWEIT" ]; then
+        chmod 0600 "$ZWEIT" 2>/dev/null
         echo "<WARNING> data.json traegt weder Zugriffstoken noch Tuerstation."
         echo "<WARNING> Die vorhandene Zweitschrift bleibt deshalb unveraendert:"
         echo "<WARNING>   $ZWEIT"
         echo "<WARNING> Aus ihr werden die Einstellungen am Ende der"
         echo "<WARNING> Installation zurueckgeholt."
-    else
-        echo "<INFO> Keine Konfiguration vorhanden - offenbar eine Erstinstallation."
+    elif [ "$UNLESBAR" = 0 ]; then
+        echo "<INFO> Die Einstellungen sind leer (das Plugin wurde nie eingerichtet) - es gibt nichts zu sichern."
     fi
     ;;
 *)

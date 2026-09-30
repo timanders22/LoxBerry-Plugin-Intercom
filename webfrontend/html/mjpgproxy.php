@@ -19,11 +19,16 @@ require_once __DIR__ . '/ic_start.php';
  * Diese Datei reicht den Kamerastrom der Tuerstation weiter. Sie liegt im
  * unangemeldeten Bereich, also konnte JEDES Geraet im Netz die Kamera vor
  * der Haustuer mitsehen - dauerhaft und ohne Spur.
+ *
+ * Seit 2.2.13 (C4) eine Ausnahme: ffmpeg aus getvideo.php liest den Strom
+ * ueber ?intern=1 OHNE Token - nur von 127.0.0.1, nur waehrend der laufenden
+ * Aufzeichnung und nur ein einziges Mal (ic_intern_erlaubt()).
  */
-ic_token_pruefen();
-
-if (isset($_GET['selftest'])) {
-    ic_selftest_antwort('mjpgproxy.php');
+if (!(isset($_GET['intern']) && ic_intern_erlaubt('proxy'))) {
+    ic_token_pruefen();
+    if (isset($_GET['selftest'])) {
+        ic_selftest_antwort('mjpgproxy.php');
+    }
 }
 
 $ic_stationsangabe = isset($_GET['station']) && is_string($_GET['station'])
@@ -48,9 +53,13 @@ $kopf = array('Accept-language: en');
 if ($ic_user !== '') {
     $kopf[] = 'Authorization: Basic ' . base64_encode($ic_user . ':' . $ic_pass);
 }
+/* BERICHTIGT 2.2.13 (C5): keiner Umleitung folgen. Der Stream-Wrapper schickte
+ * die Kopfzeile Authorization bis 2.2.12 auch an das Umleitungsziel -
+ * gemessen: die Zugangsdaten der Station kamen bei einem fremden Rechner an. */
 $opts = array('http' => array(
     'method'  => 'GET',
     'timeout' => 10,
+    'follow_location' => 0,
     'header'  => implode("\r\n", $kopf),
 ));
 $context = stream_context_create($opts);
@@ -75,16 +84,27 @@ ignore_user_abort(false);
 
 $fp = @fopen($mjpeg_url, 'r', false, $context);
 if ($fp) {
+    /* C5: nur eine Antwort 200 wird weitergereicht - eine Umleitung (die hier
+     * nicht verfolgt wird) oder ein anderer Code endet im Ersatzbild. */
+    $ic_status = ic_status_aus_kopf(ic_strom_kopfzeilen($fp));
+    if ($ic_status !== 0 && $ic_status !== 200) {
+        ic_log_gebremst('proxy_status_' . $station['name'], 'Der Kamerastrom von "'
+            . $station['name'] . '" antwortete mit HTTP ' . $ic_status
+            . ' - es wurde das Ersatzbild ausgeliefert.');
+        fclose($fp);
+        $fp = false;
+    }
+}
+if ($fp) {
     // Fix v1.4.0: echten Content-Type der Kamera inkl. Boundary weiterreichen.
     // Die alte Fassung sendete fest boundary=athene, die Kamera nutzt aber
     // eine eigene Boundary - Browser warten dann endlos und zeigen kein Bild.
     $contenttype = 'multipart/x-mixed-replace';
-    if (isset($http_response_header) && is_array($http_response_header)) {
-        foreach ($http_response_header as $h) {
-            if (stripos($h, 'Content-Type:') === 0) {
-                $contenttype = trim(substr($h, 13));
-                break;
-            }
+    // C7 (seit 2.2.13): die Kopfzeilen ueber stream_get_meta_data() - die
+    // lokale Wrapper-Variable ist unter PHP 8.5 veraltet (Bauart A).
+    foreach (ic_strom_kopfzeilen($fp) as $h) {
+        if (is_string($h) && stripos($h, 'Content-Type:') === 0) {
+            $contenttype = trim(substr($h, 13));
         }
     }
     header('Cache-Control: no-cache, private');
