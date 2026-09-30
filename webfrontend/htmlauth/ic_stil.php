@@ -132,6 +132,11 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
 .smw .sm-zeile > div { flex: 1 1 160px; }
 .smw .sm-zeile label { margin-top: 0; }
 
+/* Ergaenzung 2.2.15 (nicht aus der Vorlage): X-2 markiert ein beanstandetes
+   Feld, X-3 warnt gelb am Knopf "Einstellungen sichern". */
+.smw input.sm-beanstandet { border: 2px solid #c0392b !important; background: #fff5f4 !important; }
+.smw .sm-gelb { border-left-color: #d4a000; background: #fffbe6; }
+
 /* Die Reiterleiste von LoxBerry ("Start | Live | Bilder Archiv | Video
    Archiv") klebte unmittelbar unter der Kopfzeile. Der Selektor #vuenavbar
    ist am laufenden LoxBerry nachgemessen (Kette a.vuenavbarelement ->

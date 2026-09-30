@@ -86,6 +86,15 @@ if ($ok2) {
     $ic_etwas = true;
 }
 
+/* ---------------- Stationsprobe (seit 2.2.15, Intercom-a2) ----------------
+ *
+ * Ohne Aufnahme im Takt blieb status/ok bis 2.2.14 beim letzten Klingeln
+ * stehen, gleich wie alt. Die Probe fragt die Station einmal je Minute kurz an
+ * (HEAD auf das Standbild bzw. nur die Kopfzeilen des Stroms, 3 s), holt KEIN
+ * Bild und legt nichts ins Archiv. Sie entfaellt, wenn in diesem Takt schon ein
+ * Abruf lief, und ohne MQTT (sie speist allein status/ok). */
+ic_stationsprobe_lauf();
+
 /* ---------------- Herzschlag ---------------- */
 // Ohne ihn ist ein totes Plugin nicht von einem ruhigen zu unterscheiden:
 // ein virtueller Eingang behaelt seinen letzten Wert, und in der App sieht

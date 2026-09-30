@@ -133,6 +133,53 @@ function ic_speicher_meldung($m)
 }
 function ic_fett($t) { return '<b>' . ic_e($t) . '</b>'; }
 
+/**
+ * X-2 (Regeln/04, seit 2.2.15): die eingetippten Werte EINES beanstandeten
+ * Formulars fuer die Einmalmeldung. Nie Geheimnisse: die Kennwoerter der
+ * Stationen und die Token von SignalBot und Sprachsteuerung reisen nicht mit
+ * (ihre Felder bleiben leer, der Platzhalter sagt "unveraendert"). Steuer-
+ * zeichen fallen weg, jeder Wert ist auf 4096 Zeichen begrenzt.
+ */
+function ic_eingaben_sammeln($form, array $falsch)
+{
+    $str = function ($v) {
+        return is_string($v) ? substr(preg_replace('/[\x00-\x1F\x7F]/', '', $v), 0, 4096) : '';
+    };
+    $e = array('form' => $form, 'falsch' => array_values($falsch), 'werte' => array(),
+               'haken' => array(), 'stationen' => array());
+    if ($form === 'mqtt') {
+        $e['werte']['mqtt_praefix'] = $str(isset($_POST['mqtt_praefix']) ? $_POST['mqtt_praefix'] : '');
+        $e['haken']['mqtt_enable'] = isset($_POST['mqtt_enable']);
+        return $e;
+    }
+    foreach (array('storage_path', 'timelapse_time', 'tv_ip', 'tv_port', 'ai_url', 'ai_minconf',
+                   'cleanup_days', 'cleanup_count', 'cleanup_mb', 'intervall_min', 'standbild_pfad',
+                   'webhook1', 'webhook2', 'webhook3', 'webhook4', 'videowebhook1', 'videowebhook2',
+                   'bildweg', 'klingel_ausloeser', 'klingel_signal_ordner', 'klingel_signal_an',
+                   'klingel_sprache_ordner') as $k) {
+        $e['werte'][$k] = $str(isset($_POST[$k]) ? $_POST[$k] : '');
+    }
+    foreach (array('timestamp_image', 'timestamp_video', 'timelapse_enable', 'timelapse_video',
+                   'tv_enable', 'ai_enable', 'bild_schuetzen', 'archiv_schutz',
+                   'klingel_signal', 'klingel_sprache') as $k) {
+        $e['haken'][$k] = isset($_POST[$k]);
+    }
+    $namen = (isset($_POST['st_name']) && is_array($_POST['st_name'])) ? $_POST['st_name'] : array();
+    foreach (array_keys($namen) as $i) {
+        if (count($e['stationen']) >= 51) { break; }
+        $z = array();
+        foreach (array('st_name' => 'name', 'st_ip' => 'ip', 'st_user' => 'user', 'st_ms' => 'ms',
+                       'st_standbild' => 'standbild', 'st_alt' => 'alt') as $pk => $zk) {
+            $z[$zk] = (isset($_POST[$pk]) && is_array($_POST[$pk]) && isset($_POST[$pk][$i]))
+                    ? $str($_POST[$pk][$i]) : '';
+        }
+        $z['pass_weg'] = isset($_POST['st_pass_weg']) && is_array($_POST['st_pass_weg'])
+                       && isset($_POST['st_pass_weg'][$i]);
+        $e['stationen'][] = $z;
+    }
+    return $e;
+}
+
 /*
  * DIE REITERLISTE STEHT GENAU EINMAL.
  *
@@ -168,6 +215,7 @@ $ic_host    = ic_host();
 $ic_plugin  = ic_plugin_ordner();
 $ic_meldungen = array();     // Beanstandungen SAMMELN, nicht ueberschreiben
 $ic_fehler    = array();
+$ic_eingaben  = null;        // X-2: eingetippte Werte eines beanstandeten Formulars
 
 /* ==================================================================
  * Waehrend einer Aktualisierung: nichts erzeugen, nichts speichern
@@ -313,7 +361,8 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
         '_fassung' => ic_fassung(),
         '_erzeugt' => date('Y-m-d H:i:s'),
         '_hinweis' => 'Diese Datei enthaelt das Zugriffstoken und die '
-                    . 'Zugangsdaten der Tuerstationen. Wie ein Passwort behandeln.',
+                    . 'Zugangsdaten der Tuerstationen, gegebenenfalls auch die Token '
+                    . 'fuer SignalBot und Sprachsteuerung. Wie ein Passwort behandeln.',
     );
     $ic_js = json_encode($ic_kopf + ic_config(),
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -435,6 +484,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
      * Befund 2). Die Regeln stehen in ic_zahlregeln(), dieselben prueft das
      * Zurueckspielen. */
     $ic_abweisung = array();
+    $ic_falsch = array();        // X-2: welche Felder beanstandet sind
     $ic_namen = isset($_POST['st_name']) && is_array($_POST['st_name']) ? $_POST['st_name'] : array();
     foreach ($ic_namen as $ic_i => $ic_name) {
         $ic_hole = function ($ic_feld) use ($ic_i) {
@@ -460,6 +510,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
         if (!ic_zahl_gueltig('ms', $ic_ms_roh)) {
             $ic_abweisung[] = ic_txtf('UI.M_ZAHL', ic_e('st_ms'), ic_e(ic_zahlbereich('ms')),
                                       ic_e($ic_ms_roh));
+            $ic_falsch[] = 'st_ms.' . $ic_i;
         }
         $ic_pass = $ic_hole('st_pass');
         /* NEU 2.2.13 (O12): ein Haken je Station loescht das Kennwort. Bis
@@ -526,14 +577,48 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
         if (!ic_zahl_gueltig($ic_k, $ic_neu[$ic_k])) {
             $ic_abweisung[] = ic_txtf('UI.M_ZAHL', ic_e($ic_k), ic_e(ic_zahlbereich($ic_k)),
                                       ic_e($ic_neu[$ic_k]));
+            $ic_falsch[] = $ic_k;
         }
     }
     if ($ic_neu['timelapse_time'] !== ''
         && !preg_match('/^([01]?\d|2[0-3]):([0-5]\d)$/', $ic_neu['timelapse_time'])) {
         $ic_abweisung[] = ic_txtf('UI.M_UHRZEIT', ic_e($ic_neu['timelapse_time']));
+        $ic_falsch[] = 'timelapse_time';
     }
     if ($ic_neu['storage_path'] !== '' && !@is_dir($ic_neu['storage_path'])) {
         $ic_meldungen[] = ic_txtf('UI.M_SPEICHER_WEG', ic_e($ic_neu['storage_path']));
+    }
+
+    /* Klingel-1 (D, seit 2.2.15): Meldung ueber SignalBot und Ansage ueber die
+     * Sprachsteuerung, ab Werk AUS. Ordner, Rufnummer und Token werden mit
+     * DERSELBEN Pruefung abgewiesen wie beim Zurueckspielen
+     * (ic_klingel_wert_gueltig()). Ein leeres Tokenfeld heisst "unveraendert"
+     * - wie das Kennwort einer Station; das Token geht nie in die Seite
+     * zurueck, auch nicht in eine Beanstandung. */
+    foreach (array('klingel_signal', 'klingel_sprache') as $ic_k) {
+        $ic_neu[$ic_k] = isset($_POST[$ic_k]) ? 'on' : '';
+    }
+    foreach (array('klingel_ausloeser', 'klingel_signal_ordner', 'klingel_signal_an', 'klingel_sprache_ordner',
+                   'klingel_signal_token', 'klingel_sprache_token') as $ic_k) {
+        $ic_w = (isset($_POST[$ic_k]) && is_string($_POST[$ic_k]))
+              ? trim(preg_replace('/[\x00-\x1F\x7F]/', '', $_POST[$ic_k])) : '';
+        $ic_geheim = (substr($ic_k, -6) === '_token');
+        if ($ic_geheim && $ic_w === '') { continue; }
+        if (!ic_klingel_wert_gueltig($ic_k, $ic_w)) {
+            $ic_abweisung[] = ic_txtf('UI.M_KLINGEL_WERT', ic_e($ic_k), $ic_geheim ? '***' : ic_e($ic_w));
+            $ic_falsch[] = $ic_k;
+            continue;
+        }
+        $ic_neu[$ic_k] = $ic_w;
+    }
+    foreach (array('signal' => 'UI.L_KLINGEL_SIGNAL', 'sprache' => 'UI.L_KLINGEL_SPRACHE') as $ic_art => $ic_lk) {
+        if ($ic_neu['klingel_' . $ic_art] === 'on'
+            && (!isset($ic_neu['klingel_' . $ic_art . '_token'])
+                || (string) $ic_neu['klingel_' . $ic_art . '_token'] === '')
+            && !in_array('klingel_' . $ic_art . '_token', $ic_falsch, true)) {
+            $ic_abweisung[] = ic_txtf('UI.M_KLINGEL_TOKEN', ic_e(ic_roh($ic_lk)));
+            $ic_falsch[] = 'klingel_' . $ic_art . '_token';
+        }
     }
 
     /* Haken */
@@ -587,6 +672,8 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     }
 
     if ($ic_abweisung) {
+        // X-2: die eingetippten Werte reisen mit der Einmalmeldung (nie Geheimnisse).
+        $ic_eingaben = ic_eingaben_sammeln('settings', $ic_falsch);
         $ic_fehler[] = ic_txt('UI.M_NICHTS_GESPEICHERT');
         foreach ($ic_abweisung as $ic_m) { $ic_fehler[] = $ic_m; }
         $ic_ok = null;
@@ -651,6 +738,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['mqtt_speichern'])) {
      * und andere Gateway-Namen, ohne dass der Anwender es erfuhr. */
     if (!ic_praefix_gueltig($ic_p)) {
         $ic_fehler[] = ic_txtf('UI.M_PRAEFIX', ic_e($ic_p));
+        $ic_eingaben = ic_eingaben_sammeln('mqtt', array('mqtt_praefix'));   // X-2
     } else {
         $ic_alt_an = ic_mqtt_an();
         $ic_alt_p = ic_mqtt_praefix();
@@ -793,6 +881,7 @@ if ($ic_wollte) {
             'fehler'      => $ic_fehler,
             'ausgabe'     => $ic_ausgabe,
             'pruefzeilen' => $ic_pruefzeilen,
+            'eingaben'    => $ic_eingaben,     // X-2, nur nach einer Beanstandung
         ))) {
         header('Location: index.php?tab=' . rawurlencode($ic_offen), true, 303);
         exit;
@@ -819,6 +908,14 @@ if ($ic_wollte) {
             }
         }
         if ($ic_pz_ok) { $ic_pruefzeilen = $ic_pz_ok; }
+    }
+    /* X-2: nach einer Beanstandung fuellt dieser GET das Formular aus den
+     * eingetippten Werten. Die Einmalmeldung ist schon geloescht - der naechste
+     * GET zeigt wieder die gespeicherten. */
+    if (isset($ic_einmal['eingaben']) && is_array($ic_einmal['eingaben'])
+        && isset($ic_einmal['eingaben']['form']) && is_string($ic_einmal['eingaben']['form'])) {
+        $ic_eingaben = $ic_einmal['eingaben'];
+        $ic_offen = $ic_eingaben['form'] === 'mqtt' ? 'mqtt' : 'settings';
     }
 }
 
@@ -867,6 +964,38 @@ if ($ic_logdatei !== '') {
  * 2.2.6 erst nach lbheader() eingebunden, unten. */
 require_once "menu.php";
 $navbar[1]['active'] = True;
+
+/* X-2: Werte eines Formulars - nach einer Beanstandung die eingetippten,
+ * sonst die gespeicherten. ic_fk() markiert ein beanstandetes Feld. */
+function ic_eingabe($form)
+{
+    global $ic_eingaben;
+    return (is_array($ic_eingaben) && isset($ic_eingaben['form']) && $ic_eingaben['form'] === $form)
+         ? $ic_eingaben : null;
+}
+function ic_fw($form, $k, $gespeichert)
+{
+    $e = ic_eingabe($form);
+    if ($e !== null && isset($e['werte']) && is_array($e['werte'])
+        && isset($e['werte'][$k]) && is_string($e['werte'][$k])) {
+        return $e['werte'][$k];
+    }
+    return (string) $gespeichert;
+}
+function ic_fh($form, $k, $gespeichert)
+{
+    $e = ic_eingabe($form);
+    if ($e !== null && isset($e['haken']) && is_array($e['haken'])) {
+        return !empty($e['haken'][$k]);
+    }
+    return (bool) $gespeichert;
+}
+function ic_fk($form, $k)
+{
+    $e = ic_eingabe($form);
+    return ($e !== null && isset($e['falsch']) && is_array($e['falsch'])
+            && in_array($k, $e['falsch'], true)) ? ' class="sm-beanstandet"' : '';
+}
 
 /** Ein verstecktes Feldpaar, das JEDES Formular mitfuehrt. */
 function ic_formularfelder($tab)
@@ -957,13 +1086,32 @@ require_once __DIR__ . "/ic_stil.php";
 $ic_reihen = $ic_st;
 $ic_reihen[] = array('name' => '', 'ip' => '', 'user' => '', 'pass' => '', 'ms' => 1,
                      'standbild' => '');
+/* X-2: nach einer Beanstandung die eingetippten Zeilen - das Kennwort nie.
+ * Der Platzhalter "unveraendert" kommt von der Station, zu der die Zeile
+ * urspruenglich gehoerte (st_alt), wie beim Speichern. */
+$ic_e_st = ic_eingabe('settings');
+if ($ic_e_st !== null && isset($ic_e_st['stationen']) && is_array($ic_e_st['stationen'])
+    && $ic_e_st['stationen']) {
+    $ic_reihen = array();
+    foreach ($ic_e_st['stationen'] as $ic_z) {
+        if (!is_array($ic_z)) { continue; }
+        $ic_r = array('pass' => '', 'pass_weg' => !empty($ic_z['pass_weg']));
+        foreach (array('name', 'ip', 'user', 'ms', 'standbild', 'alt') as $ic_zk) {
+            $ic_r[$ic_zk] = (isset($ic_z[$ic_zk]) && is_string($ic_z[$ic_zk])) ? $ic_z[$ic_zk] : '';
+        }
+        foreach ($ic_st as $ic_a) {
+            if ($ic_r['alt'] !== '' && $ic_a['ip'] === $ic_r['alt']) { $ic_r['pass'] = $ic_a['pass']; break; }
+        }
+        $ic_reihen[] = $ic_r;
+    }
+}
 foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <tr>
-<td><input type="text" data-role="none" name="st_name[]" value="<?= ic_e($ic_s['name'] === $ic_s['ip'] ? '' : $ic_s['name']) ?>" placeholder="<?= ic_txt('UI.PH_NAME') ?>"></td>
-<td><input type="text" data-role="none" name="st_ip[]" value="<?= ic_e($ic_s['ip']) ?>" placeholder="192.168.1.50"><input type="hidden" name="st_alt[]" value="<?= ic_e($ic_s['ip']) ?>"></td>
+<td><input type="text" data-role="none" name="st_name[]" value="<?= ic_e(isset($ic_s['alt']) || $ic_s['name'] !== $ic_s['ip'] ? $ic_s['name'] : '') ?>" placeholder="<?= ic_txt('UI.PH_NAME') ?>"></td>
+<td><input type="text" data-role="none" name="st_ip[]" value="<?= ic_e($ic_s['ip']) ?>" placeholder="192.168.1.50"><input type="hidden" name="st_alt[]" value="<?= ic_e(isset($ic_s['alt']) ? $ic_s['alt'] : $ic_s['ip']) ?>"></td>
 <td><input type="text" data-role="none" name="st_user[]" value="<?= ic_e($ic_s['user']) ?>" placeholder="<?= ic_txt('UI.PH_MINISERVER') ?>"></td>
-<td><input type="password" data-role="none" name="st_pass[]" value="" placeholder="<?= $ic_s['pass'] !== '' ? ic_txt('UI.PH_UNVERAENDERT') : '' ?>"><?php if ($ic_s['pass'] !== '') { ?><br><label class="sm-klein"><input type="checkbox" data-role="none" name="st_pass_weg[<?= (int) $ic_i ?>]" value="1"> <?= ic_txt('UI.L_PASS_WEG') ?></label><?php } ?></td>
-<td><input type="number" data-role="none" name="st_ms[]" min="1" max="10" value="<?= (int) $ic_s['ms'] ?>"></td>
+<td><input type="password" data-role="none" name="st_pass[]" value="" placeholder="<?= $ic_s['pass'] !== '' ? ic_txt('UI.PH_UNVERAENDERT') : '' ?>"><?php if ($ic_s['pass'] !== '') { ?><br><label class="sm-klein"><input type="checkbox" data-role="none" name="st_pass_weg[<?= (int) $ic_i ?>]" value="1"<?= !empty($ic_s['pass_weg']) ? ' checked' : '' ?>> <?= ic_txt('UI.L_PASS_WEG') ?></label><?php } ?></td>
+<td><input type="number" data-role="none" name="st_ms[]" min="1" max="10" value="<?= ic_e((string) $ic_s['ms']) ?>"<?= ic_fk('settings', 'st_ms.' . $ic_i) ?>></td>
 <td><input type="text" data-role="none" name="st_standbild[]" value="<?= ic_e($ic_s['standbild']) ?>" placeholder="/jpg/image.jpg"></td>
 </tr>
 <?php } ?>
@@ -976,17 +1124,17 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <select id="bildweg" name="bildweg" class="sm-auswahl" data-role="none">
 <?php foreach (array('strom' => 'UI.WEG_STROM', 'standbild' => 'UI.WEG_STANDBILD',
                      'auto' => 'UI.WEG_AUTO') as $ic_w => $ic_s) { ?>
-<option value="<?= $ic_w ?>"<?= $ic_cfg['bildweg'] === $ic_w ? ' selected' : '' ?>><?= ic_txt($ic_s) ?></option>
+<option value="<?= $ic_w ?>"<?= ic_fw('settings', 'bildweg', $ic_cfg['bildweg']) === $ic_w ? ' selected' : '' ?>><?= ic_txt($ic_s) ?></option>
 <?php } ?>
 </select>
 <p class="sm-auswahlhinweis"><?= ic_txt('UI.AUSWAHL_HINWEIS') ?></p>
 <label><?= ic_txt('UI.L_STANDBILDPFAD') ?></label>
-<input type="text" data-role="none" name="standbild_pfad" value="<?= ic_e($ic_cfg['standbild_pfad']) ?>" placeholder="/jpg/image.jpg">
+<input type="text" data-role="none" name="standbild_pfad" value="<?= ic_e(ic_fw('settings', 'standbild_pfad', $ic_cfg['standbild_pfad'])) ?>"<?= ic_fk('settings', 'standbild_pfad') ?> placeholder="/jpg/image.jpg">
 <p class="sm-klein"><?= ic_txtf('UI.BILDWEG_TEXT', ic_mono('/mjpg/video.mjpg'), ic_mono('/jpg/image.jpg')) ?></p>
 <p class="sm-klein"><?= ic_txtf('UI.BILDWEG_MESSEN', ic_fett(ic_roh('UI.REITER_TEST'))) ?></p>
 
 <h2><?= ic_txt('UI.H_BILDSCHUTZ') ?></h2>
-<label><input type="checkbox" data-role="none" name="bild_schuetzen"<?= $ic_cfg['bild_oeffentlich'] === '0' ? ' checked' : '' ?>> <?= ic_txt('UI.L_BILDSCHUTZ') ?></label>
+<label><input type="checkbox" data-role="none" name="bild_schuetzen"<?= ic_fh('settings', 'bild_schuetzen', $ic_cfg['bild_oeffentlich'] === '0') ? ' checked' : '' ?>> <?= ic_txt('UI.L_BILDSCHUTZ') ?></label>
 <p class="sm-klein"><?= ic_rohf('UI.BILDSCHUTZ_TEXT', ic_mono('lastpicture.jpg'), ic_mono('bild.php?token=...')) ?></p>
 
 <h2><?= ic_txt('UI.H_ARCHIVSCHUTZ') ?></h2>
@@ -997,7 +1145,7 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 $ic_schutz_soll = in_array((string) $ic_cfg['archiv_schutz'], array('1', 'on', 'true'), true);
 $ic_schutz_ist = ic_archiv_geschuetzt();
 ?>
-<label><input type="checkbox" data-role="none" name="archiv_schutz"<?= ($ic_schutz_soll && $ic_schutz_ist) ? ' checked' : '' ?>> <?= ic_txt('UI.L_ARCHIVSCHUTZ') ?></label>
+<label><input type="checkbox" data-role="none" name="archiv_schutz"<?= ic_fh('settings', 'archiv_schutz', $ic_schutz_soll && $ic_schutz_ist) ? ' checked' : '' ?>> <?= ic_txt('UI.L_ARCHIVSCHUTZ') ?></label>
 <?php if ($ic_schutz_soll && !$ic_schutz_ist) { ?>
 <div class="sm-hinweis sm-warn"><?= ic_txtf('UI.SCHUTZ_FEHLT', ic_e(ic_archiv_schutzdatei())) ?></div>
 <?php } ?>
@@ -1006,69 +1154,94 @@ $ic_schutz_ist = ic_archiv_geschuetzt();
 
 <h2><?= ic_txt('UI.H_SPEICHERORT') ?></h2>
 <label><?= ic_txt('UI.L_SPEICHERPFAD') ?></label>
-<input type="text" data-role="none" name="storage_path" value="<?= ic_e($ic_cfg['storage_path']) ?>" placeholder="/media/usbstick">
+<input type="text" data-role="none" name="storage_path" value="<?= ic_e(ic_fw('settings', 'storage_path', $ic_cfg['storage_path'])) ?>"<?= ic_fk('settings', 'storage_path') ?> placeholder="/media/usbstick">
 <p class="sm-klein"><?= ic_txt('UI.SPEICHERORT_TEXT') ?></p>
 
 <h2><?= ic_txt('UI.H_AUFBEWAHRUNG') ?></h2>
 <div class="sm-zeile">
 <div><label><?= ic_txt('UI.L_TAGE') ?></label>
-<input type="number" data-role="none" name="cleanup_days" min="0" max="3650" value="<?= ic_e($ic_cfg['cleanup_days']) ?>"></div>
+<input type="number" data-role="none" name="cleanup_days" min="0" max="3650" value="<?= ic_e(ic_fw('settings', 'cleanup_days', $ic_cfg['cleanup_days'])) ?>"<?= ic_fk('settings', 'cleanup_days') ?>></div>
 <div><label><?= ic_txt('UI.L_ANZAHL') ?></label>
-<input type="number" data-role="none" name="cleanup_count" min="0" value="<?= ic_e($ic_cfg['cleanup_count']) ?>"></div>
+<input type="number" data-role="none" name="cleanup_count" min="0" value="<?= ic_e(ic_fw('settings', 'cleanup_count', $ic_cfg['cleanup_count'])) ?>"<?= ic_fk('settings', 'cleanup_count') ?>></div>
 <div><label><?= ic_txt('UI.L_MB') ?></label>
-<input type="number" data-role="none" name="cleanup_mb" min="0" value="<?= ic_e($ic_cfg['cleanup_mb']) ?>"></div>
+<input type="number" data-role="none" name="cleanup_mb" min="0" value="<?= ic_e(ic_fw('settings', 'cleanup_mb', $ic_cfg['cleanup_mb'])) ?>"<?= ic_fk('settings', 'cleanup_mb') ?>></div>
 </div>
 <p class="sm-klein"><?= ic_txt('UI.AUFBEWAHRUNG_TEXT') ?></p>
 
 <h2><?= ic_txt('UI.H_ZEITSTEMPEL') ?></h2>
-<label><input type="checkbox" data-role="none" name="timestamp_image"<?= $ic_cfg['timestamp_image'] === 'on' ? ' checked' : '' ?>> <?= ic_txt('UI.L_STEMPEL_BILD') ?></label>
-<label><input type="checkbox" data-role="none" name="timestamp_video"<?= $ic_cfg['timestamp_video'] === 'on' ? ' checked' : '' ?>> <?= ic_txt('UI.L_STEMPEL_VIDEO') ?></label>
+<label><input type="checkbox" data-role="none" name="timestamp_image"<?= ic_fh('settings', 'timestamp_image', $ic_cfg['timestamp_image'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_STEMPEL_BILD') ?></label>
+<label><input type="checkbox" data-role="none" name="timestamp_video"<?= ic_fh('settings', 'timestamp_video', $ic_cfg['timestamp_video'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_STEMPEL_VIDEO') ?></label>
 <p class="sm-klein"><?= ic_txtf('UI.STEMPEL_TEXT', ic_mono('php-gd')) ?></p>
 
 <h2><?= ic_txt('UI.H_ZEITRAFFER') ?></h2>
-<label><input type="checkbox" data-role="none" name="timelapse_enable"<?= $ic_cfg['timelapse_enable'] === 'on' ? ' checked' : '' ?>> <?= ic_txt('UI.L_ZEITRAFFER') ?></label>
+<label><input type="checkbox" data-role="none" name="timelapse_enable"<?= ic_fh('settings', 'timelapse_enable', $ic_cfg['timelapse_enable'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_ZEITRAFFER') ?></label>
 <label><?= ic_txt('UI.L_UHRZEIT') ?></label>
-<input type="text" data-role="none" name="timelapse_time" value="<?= ic_e($ic_cfg['timelapse_time']) ?>" placeholder="12:00">
-<label><input type="checkbox" data-role="none" name="timelapse_video"<?= $ic_cfg['timelapse_video'] === 'on' ? ' checked' : '' ?>> <?= ic_txt('UI.L_ZEITRAFFER_VIDEO') ?></label>
+<input type="text" data-role="none" name="timelapse_time" value="<?= ic_e(ic_fw('settings', 'timelapse_time', $ic_cfg['timelapse_time'])) ?>"<?= ic_fk('settings', 'timelapse_time') ?> placeholder="12:00">
+<label><input type="checkbox" data-role="none" name="timelapse_video"<?= ic_fh('settings', 'timelapse_video', $ic_cfg['timelapse_video'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_ZEITRAFFER_VIDEO') ?></label>
 <p class="sm-klein"><?= ic_txtf('UI.ZEITRAFFER_TEXT', ic_mono('ffmpeg')) ?></p>
 
 <h2><?= ic_txt('UI.H_INTERVALL') ?></h2>
 <label><?= ic_txt('UI.L_INTERVALL') ?></label>
-<input type="number" data-role="none" name="intervall_min" min="0" max="1440" value="<?= ic_e($ic_cfg['intervall_min']) ?>">
+<input type="number" data-role="none" name="intervall_min" min="0" max="1440" value="<?= ic_e(ic_fw('settings', 'intervall_min', $ic_cfg['intervall_min'])) ?>"<?= ic_fk('settings', 'intervall_min') ?>>
 <p class="sm-klein"><?= ic_txt('UI.INTERVALL_TEXT') ?></p>
 
 <h2><?= ic_txt('UI.H_TV') ?></h2>
-<label><input type="checkbox" data-role="none" name="tv_enable"<?= $ic_cfg['tv_enable'] === 'on' ? ' checked' : '' ?>> <?= ic_txt('UI.L_TV') ?></label>
+<label><input type="checkbox" data-role="none" name="tv_enable"<?= ic_fh('settings', 'tv_enable', $ic_cfg['tv_enable'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_TV') ?></label>
 <div class="sm-zeile">
 <div><label><?= ic_txt('UI.L_TV_ADRESSE') ?></label>
-<input type="text" data-role="none" name="tv_ip" value="<?= ic_e($ic_cfg['tv_ip']) ?>"></div>
+<input type="text" data-role="none" name="tv_ip" value="<?= ic_e(ic_fw('settings', 'tv_ip', $ic_cfg['tv_ip'])) ?>"<?= ic_fk('settings', 'tv_ip') ?>></div>
 <div><label><?= ic_txt('UI.L_PORT') ?></label>
-<input type="text" data-role="none" name="tv_port" value="<?= ic_e($ic_cfg['tv_port']) ?>"></div>
+<input type="text" data-role="none" name="tv_port" value="<?= ic_e(ic_fw('settings', 'tv_port', $ic_cfg['tv_port'])) ?>"<?= ic_fk('settings', 'tv_port') ?>></div>
 </div>
 <p class="sm-klein"><?= ic_txt('UI.TV_TEXT') ?></p>
 
 <h2><?= ic_txt('UI.H_KI') ?></h2>
-<label><input type="checkbox" data-role="none" name="ai_enable"<?= $ic_cfg['ai_enable'] === 'on' ? ' checked' : '' ?>> <?= ic_txt('UI.L_KI') ?></label>
+<label><input type="checkbox" data-role="none" name="ai_enable"<?= ic_fh('settings', 'ai_enable', $ic_cfg['ai_enable'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_KI') ?></label>
 <label><?= ic_txt('UI.L_KI_ADRESSE') ?></label>
-<input type="text" data-role="none" name="ai_url" value="<?= ic_e($ic_cfg['ai_url']) ?>" placeholder="http://192.168.1.60:32168/v1/vision/detection">
+<input type="text" data-role="none" name="ai_url" value="<?= ic_e(ic_fw('settings', 'ai_url', $ic_cfg['ai_url'])) ?>"<?= ic_fk('settings', 'ai_url') ?> placeholder="http://192.168.1.60:32168/v1/vision/detection">
 <label><?= ic_txt('UI.L_KI_SICHERHEIT') ?></label>
-<input type="number" data-role="none" name="ai_minconf" min="0" max="100" value="<?= ic_e($ic_cfg['ai_minconf']) ?>">
+<input type="number" data-role="none" name="ai_minconf" min="0" max="100" value="<?= ic_e(ic_fw('settings', 'ai_minconf', $ic_cfg['ai_minconf'])) ?>"<?= ic_fk('settings', 'ai_minconf') ?>>
 <p class="sm-klein"><?= ic_txt('UI.KI_TEXT') ?></p>
 
 <h2><?= ic_txt('UI.H_WEBHOOKS') ?></h2>
 <p class="sm-klein"><?= ic_txt('UI.WEBHOOK_TEXT') ?></p>
 <label><?= ic_txt('UI.L_WH1') ?></label>
-<input type="text" data-role="none" name="webhook1" value="<?= ic_e($ic_cfg['webhook1']) ?>">
+<input type="text" data-role="none" name="webhook1" value="<?= ic_e(ic_fw('settings', 'webhook1', $ic_cfg['webhook1'])) ?>"<?= ic_fk('settings', 'webhook1') ?>>
 <label><?= ic_txtf('UI.L_WH2', ic_mono('<imgurl>')) ?></label>
-<input type="text" data-role="none" name="webhook2" value="<?= ic_e($ic_cfg['webhook2']) ?>">
+<input type="text" data-role="none" name="webhook2" value="<?= ic_e(ic_fw('settings', 'webhook2', $ic_cfg['webhook2'])) ?>"<?= ic_fk('settings', 'webhook2') ?>>
 <label><?= ic_txt('UI.L_WH3') ?></label>
-<input type="text" data-role="none" name="webhook3" value="<?= ic_e($ic_cfg['webhook3']) ?>">
+<input type="text" data-role="none" name="webhook3" value="<?= ic_e(ic_fw('settings', 'webhook3', $ic_cfg['webhook3'])) ?>"<?= ic_fk('settings', 'webhook3') ?>>
 <label><?= ic_txtf('UI.L_WH4', ic_mono('<imgurl>')) ?></label>
-<input type="text" data-role="none" name="webhook4" value="<?= ic_e($ic_cfg['webhook4']) ?>">
+<input type="text" data-role="none" name="webhook4" value="<?= ic_e(ic_fw('settings', 'webhook4', $ic_cfg['webhook4'])) ?>"<?= ic_fk('settings', 'webhook4') ?>>
 <label><?= ic_txt('UI.L_VWH1') ?></label>
-<input type="text" data-role="none" name="videowebhook1" value="<?= ic_e($ic_cfg['videowebhook1']) ?>">
+<input type="text" data-role="none" name="videowebhook1" value="<?= ic_e(ic_fw('settings', 'videowebhook1', $ic_cfg['videowebhook1'])) ?>"<?= ic_fk('settings', 'videowebhook1') ?>>
 <label><?= ic_txtf('UI.L_VWH2', ic_mono('<fileurl>')) ?></label>
-<input type="text" data-role="none" name="videowebhook2" value="<?= ic_e($ic_cfg['videowebhook2']) ?>">
+<input type="text" data-role="none" name="videowebhook2" value="<?= ic_e(ic_fw('settings', 'videowebhook2', $ic_cfg['videowebhook2'])) ?>"<?= ic_fk('settings', 'videowebhook2') ?>>
+
+<h2><?= ic_txt('UI.H_KLINGEL') ?></h2>
+<p class="sm-klein"><?= ic_txt('UI.KLINGEL_TEXT') ?></p>
+<label><input type="checkbox" data-role="none" name="klingel_signal"<?= ic_fh('settings', 'klingel_signal', $ic_cfg['klingel_signal'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_KLINGEL_SIGNAL') ?></label>
+<div class="sm-zeile">
+<div><label><?= ic_txt('UI.L_KLINGEL_ORDNER') ?></label>
+<input type="text" data-role="none" name="klingel_signal_ordner" value="<?= ic_e(ic_fw('settings', 'klingel_signal_ordner', $ic_cfg['klingel_signal_ordner'])) ?>"<?= ic_fk('settings', 'klingel_signal_ordner') ?> placeholder="signalbot"></div>
+<div><label><?= ic_txt('UI.L_KLINGEL_TOKEN') ?></label>
+<input type="password" data-role="none" name="klingel_signal_token" value="" autocomplete="off"<?= ic_fk('settings', 'klingel_signal_token') ?> placeholder="<?= (string) $ic_cfg['klingel_signal_token'] !== '' ? ic_txt('UI.PH_UNVERAENDERT') : '' ?>"></div>
+<div><label><?= ic_txt('UI.L_KLINGEL_AN') ?></label>
+<input type="text" data-role="none" name="klingel_signal_an" value="<?= ic_e(ic_fw('settings', 'klingel_signal_an', $ic_cfg['klingel_signal_an'])) ?>"<?= ic_fk('settings', 'klingel_signal_an') ?> placeholder="+49..."></div>
+</div>
+<p class="sm-klein"><?= ic_txtf('UI.KLINGEL_SIGNAL_TEXT', ic_mono('/plugins/<ordner>/index.php?aktion=senden')) ?></p>
+<label><input type="checkbox" data-role="none" name="klingel_sprache"<?= ic_fh('settings', 'klingel_sprache', $ic_cfg['klingel_sprache'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_KLINGEL_SPRACHE') ?></label>
+<div class="sm-zeile">
+<div><label><?= ic_txt('UI.L_KLINGEL_ORDNER') ?></label>
+<input type="text" data-role="none" name="klingel_sprache_ordner" value="<?= ic_e(ic_fw('settings', 'klingel_sprache_ordner', $ic_cfg['klingel_sprache_ordner'])) ?>"<?= ic_fk('settings', 'klingel_sprache_ordner') ?> placeholder="sprachsteuerung"></div>
+<div><label><?= ic_txt('UI.L_KLINGEL_TOKEN') ?></label>
+<input type="password" data-role="none" name="klingel_sprache_token" value="" autocomplete="off"<?= ic_fk('settings', 'klingel_sprache_token') ?> placeholder="<?= (string) $ic_cfg['klingel_sprache_token'] !== '' ? ic_txt('UI.PH_UNVERAENDERT') : '' ?>"></div>
+</div>
+<p class="sm-klein"><?= ic_txtf('UI.KLINGEL_SPRACHE_TEXT', ic_mono('/plugins/<ordner>/index.php?aktion=sprechen')) ?></p>
+<label><?= ic_txt('UI.L_KLINGEL_AUSLOESER') ?></label>
+<input type="text" data-role="none" name="klingel_ausloeser" value="<?= ic_e(ic_fw('settings', 'klingel_ausloeser', $ic_cfg['klingel_ausloeser'])) ?>"<?= ic_fk('settings', 'klingel_ausloeser') ?> placeholder="klingel">
+<p class="sm-klein"><?= ic_txtf('UI.KLINGEL_AUSLOESER_TEXT', ic_mono('&trigger=klingel'), ic_fett(ic_roh('UI.REITER_LOXONE'))) ?></p>
+<p class="sm-klein"><?= ic_txtf('UI.KLINGEL_TEST', ic_fett(ic_roh('UI.REITER_TEST'))) ?></p>
 
 <div class="sm-knopfreihe">
 <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="speichern" value="1"><?= ic_txt('UI.SPEICHERN') ?></button>
@@ -1088,6 +1261,15 @@ $ic_schutz_ist = ic_archiv_geschuetzt();
      "Die Datei enthaelt Ihre Zugangsdaten" deshalb als nackter Fliesstext
      ohne Warnrahmen da. -->
 <div class="sm-hinweis sm-warn"><?= ic_roh('UI.SICH_WARNUNG') ?></div>
+<?php
+/* X-3 (seit 2.2.15): besteht die eigene Sicherung das eigene Zurueckspielen?
+ * Dieselbe Pruefung wie beim Zurueckspielen (ic_sicherung_selbstpruefung()).
+ * Gelb, und der Knopf liefert die Datei trotzdem. Die Beanstandungen kommen
+ * maskiert aus ic_sicherung_lesen(). */
+$ic_sich_mangel = ic_sicherung_selbstpruefung();
+if ($ic_sich_mangel) { ?>
+<div class="sm-hinweis sm-gelb"><b><?= ic_txt('UI.SICH_SELBST_WARN') ?></b> <?= implode(' ', $ic_sich_mangel) ?></div>
+<?php } ?>
 <div class="sm-knopfreihe">
   <!-- ZWEI GETRENNTE Formulare. Das Sichern schickt einen Download und ruft
        exit auf; das Zurueckspielen braucht enctype="multipart/form-data".
@@ -1124,11 +1306,11 @@ $ic_schutz_ist = ic_archiv_geschuetzt();
 <input type="hidden" name="mqtt_speichern" value="1">
 
 <h2><?= ic_txt('UI.H_MQTT') ?></h2>
-<label><input type="checkbox" data-role="none" name="mqtt_enable"<?= ic_mqtt_an() ? ' checked' : '' ?>> <?= ic_txt('UI.L_MQTT') ?></label>
+<label><input type="checkbox" data-role="none" name="mqtt_enable"<?= ic_fh('mqtt', 'mqtt_enable', ic_mqtt_an()) ? ' checked' : '' ?>> <?= ic_txt('UI.L_MQTT') ?></label>
 <p class="sm-klein"><?= ic_txt('UI.MQTT_GATEWAY_TEXT') ?></p>
 
 <label><?= ic_txt('UI.L_MQTT_PRAEFIX') ?></label>
-<input type="text" data-role="none" name="mqtt_praefix" value="<?= ic_e($ic_cfg['mqtt_praefix']) ?>" placeholder="<?= ic_e($ic_plugin) ?>">
+<input type="text" data-role="none" name="mqtt_praefix" value="<?= ic_e(ic_fw('mqtt', 'mqtt_praefix', $ic_cfg['mqtt_praefix'])) ?>"<?= ic_fk('mqtt', 'mqtt_praefix') ?> placeholder="<?= ic_e($ic_plugin) ?>">
 <p class="sm-klein"><?= ic_txt('UI.MQTT_PRAEFIX_TEXT') ?></p>
 
 <h2><?= ic_txt('UI.H_MQTT_ABO') ?></h2>

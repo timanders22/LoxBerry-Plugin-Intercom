@@ -2,7 +2,7 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.14 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.15 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
@@ -35,6 +35,42 @@ Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.2.15
+
+Verbesserungen aus dem Durchgang vom 30.09.2026 (Verbesserungsliste
+`Pruefung-Durchgang-2026-09-29/VERBESSERUNGEN_OFFEN.md`). Gemessen an Attrappen
+für Türstation, Webhooks, SignalBot und Sprachsteuerung unter PHP 7.4, 8.3 und
+8.5; nicht am Gerät.
+
+**Neu: Beim Klingeln melden – ab Werk aus**
+
+* Auf Wunsch geht beim Klingeln eine Meldung über **SignalBot** (mit
+  befristetem Bildlink) und/oder eine Ansage über die **Sprachsteuerung**
+  hinaus. Beides ist ab Werk aus und wird im Reiter Einstellungen
+  eingeschaltet.
+* Gemeldet wird nur bei den eingetragenen Auslösern (Vorgabe `klingel`, Liste
+  änderbar), höchstens einmal je 60 s und Station. Liefert die Station kein
+  Bild, kommt die Meldung ohne Bild. Der Text folgt der Sprache der Oberfläche.
+* Fehlt die andere Linie oder antwortet sie nicht, läuft das Klingeln
+  unverändert weiter; das Protokoll und der Reiter Test sagen es.
+* Die Sicherungsdatei kann jetzt auch die Token von SignalBot und
+  Sprachsteuerung enthalten.
+
+**Betrieb**
+
+* `status/ok` wird im Minutentakt mit einem leichten Abruf der Station geprüft
+  (nur Kopfzeilen, kein Archivbild) und geht nach 3 Minuten ohne Antwort auf 0.
+  Bei mehreren Stationen steht es nur auf 1, wenn alle antworten.
+* Reiter Test: neue Zeile „Letzter Webhook-Fehler“ (Name, HTTP-Code bzw. Grund,
+  Zeit – nie die Adresse mit Kennwort).
+
+**Oberfläche**
+
+* Nach einer Beanstandung stehen die eingetippten Werte wieder im Formular, das
+  beanstandete Feld ist markiert; Kennwörter und Token reisen nie mit.
+* „Einstellungen sichern“ warnt gelb, wenn die eigene Sicherung das
+  Zurückspielen nicht bestehen würde.
 
 ## Neu in 2.2.14
 
@@ -472,6 +508,19 @@ Aktuelle Release URL in das URL Feld bei der Loxberry Plugininstallation kopiere
   braucht die Zugangsdaten der Türstation nicht, wohl aber das Zugriffstoken.
   *Berichtigt in 2.2.6:* hier stand „ohne authentifizierung"; seit 1.6.0
   verlangen alle Endpunkte ein Token.
+- Beim Klingeln melden (Einstellung, ab Werk aus): eine Signal-Nachricht über das
+  Plugin SignalBot mit befristetem Bildlink (24 Stunden, fünf Abrufe) und/oder eine
+  Ansage über das Plugin Sprachsteuerung - nur bei den eingetragenen Auslösern
+  (ab Werk `klingel`, also `&trigger=klingel`), höchstens einmal je 60 s und
+  Station, und ohne Bild, wenn die Station keines liefert. Quelle ist der Endpunkt des anderen
+  Plugins auf demselben LoxBerry (`/plugins/<Ordner>/index.php`, `aktion=senden`
+  bzw. `aktion=sprechen`) mit dessen Zugriffstoken. Fehlt es oder schweigt es,
+  läuft das Klingeln unverändert; Protokoll und Reiter Test sagen es.
+- Lebenszeichen `status/ok` (MQTT): die Türstation wird einmal je Minute kurz
+  angefragt (kein Bild, kein Archiv); 1 heißt, sie hat in den letzten drei
+  Minuten geantwortet.
+- Reiter Test: die Zeile „Letzter Webhook-Fehler" nennt Webhook, HTTP-Code bzw.
+  Grund und Zeit, nie die Adresse.
 
 ## Anwendungsfälle
 

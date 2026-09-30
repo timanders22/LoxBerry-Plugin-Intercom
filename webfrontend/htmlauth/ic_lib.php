@@ -1048,11 +1048,9 @@ function ic_bild_holen(array $station, $weg = null, $zeitgrenze = 8)
 /** Der Standbildweg - eine einzelne Adresse, ein fertiges JPEG. */
 function ic_standbild_holen(array $station, $zeitgrenze = 8)
 {
-    $cfg = ic_config();
-    $pfad = $station['standbild'] !== '' ? $station['standbild']
-          : ((isset($cfg['standbild_pfad']) && trim((string) $cfg['standbild_pfad']) !== '')
-             ? trim((string) $cfg['standbild_pfad']) : '/jpg/image.jpg');
-    if (substr($pfad, 0, 1) !== '/') { $pfad = '/' . $pfad; }
+    // Seit 2.2.15 aus ic_standbild_pfad() - die Stationsprobe (a2) braucht
+    // denselben Pfad, und zwei Kopien laufen beim naechsten Umbau auseinander.
+    $pfad = ic_standbild_pfad($station);
     list($u, $pw) = ic_zugangsdaten($station);
     $url = 'http://' . $station['ip'] . $pfad;
     list($inhalt, $code, $fehler) = ic_http_holen_voll($url, $zeitgrenze, array($u, $pw));
@@ -1491,21 +1489,19 @@ function ic_mqtt_retain($unterthema)
  * Hat der letzte Kontakt zur Tuerstation geklappt? (NEU 2.2.13, M3)
  *
  * Quelle ist der Merker, den ic_bild_holen() bei JEDEM Abruf setzt (Klingel,
- * Aufnahme im Takt, Zeitraffer, Pruefung mit Netz). Nein heisst: der letzte
- * Kontakt scheiterte, es gab noch keinen, oder er ist aelter als drei Takte
- * der Aufnahme im Takt. Ist die Aufnahme im Takt aus, gibt es keinen Takt -
- * dann zaehlt allein der letzte Kontakt, gleich wie alt (siehe BAUBERICHT,
- * Abschnitt Offen).
+ * Aufnahme im Takt, Zeitraffer, Pruefung mit Netz) und seit 2.2.15 auch die
+ * Stationsprobe im Minutentakt (ic_stationsprobe_lauf(), Intercom-a2).
+ *
+ * BERICHTIGT 2.2.15 (Intercom-a2): bis 2.2.14 zaehlte ohne Aufnahme im Takt
+ * allein der letzte Kontakt, GLEICH WIE ALT - eine Station, die nach dem
+ * letzten Klingeln ausfiel, stand in Loxone tagelang auf status/ok 1. Jetzt
+ * ist der Takt die Probe (eine Minute): aelter als drei Takte heisst 0.
  */
 function ic_stationskontakt_ok()
 {
     $mk = ic_merker_lesen('stationskontakt');
     if ($mk === null || trim((string) $mk['text']) !== '1') { return false; }
-    $cfg = ic_config();
-    $min = (isset($cfg['intervall_min']) && is_numeric($cfg['intervall_min']))
-         ? (int) $cfg['intervall_min'] : 0;
-    if ($min >= 1 && (time() - (int) $mk['zeit']) > 3 * $min * 60) { return false; }
-    return true;
+    return (time() - (int) $mk['zeit']) <= 3 * 60;
 }
 
 /**
@@ -1863,8 +1859,14 @@ function ic_wert_pruefen($schluessel, $wert)
     }
     if (in_array($schluessel, array('timestamp_image', 'timestamp_video',
                                     'timelapse_enable', 'timelapse_video',
-                                    'tv_enable', 'ai_enable'), true)) {
+                                    'tv_enable', 'ai_enable',
+                                    'klingel_signal', 'klingel_sprache'), true)) {
         return $t === '' || $t === 'on';
+    }
+    /* Klingel-1 (seit 2.2.15): Ordner, Token und Rufnummer der Nachbarlinien -
+     * dieselbe Pruefung wie im Formular (ic_klingel_wert_gueltig()). */
+    if (in_array($schluessel, ic_klingel_textschluessel(), true)) {
+        return ic_klingel_wert_gueltig($schluessel, $t);
     }
     if (in_array($schluessel, array('bild_oeffentlich', 'mqtt_enable',
                                     'archiv_schutz'), true)) {
@@ -2564,6 +2566,11 @@ function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
             ? ic_pz('hinweis', 'TEST.F_ENDPUNKT', 'TEST.A_NETZ_ENDPUNKT')
             : ic_pz('unklar', 'TEST.F_ENDPUNKT', 'TEST.A_NETZ_UNGEPRUEFT', 'TEST.R_NETZ');
     }
+
+    /* -------- Webhooks und Zusammenspiel (seit 2.2.15) -------- */
+    $z[] = ic_pruefe_webhooks();                      // Intercom-b1
+    $z[] = ic_pruefe_klingel('signal', $mit_netz);    // Klingel-1
+    $z[] = ic_pruefe_klingel('sprache', $mit_netz);
 
     /* -------- Fremde Programme -------- */
     foreach (array('ffmpeg' => 'TEST.R_FFMPEG', 'wget' => 'TEST.R_WGET') as $prg => $rat) {
@@ -3682,6 +3689,14 @@ function ic_vorgaben()
         'timelapse_video' => '', 'tv_enable' => '', 'ai_enable' => '',
         'archiv_schutz' => '0',
         'aktionstoken' => '',
+        // Klingel-1 (seit 2.2.15, D): ab Werk AUS - eine eingerichtete
+        // Anlage verhaelt sich nach dem Update wie vorher.
+        'klingel_signal' => '', 'klingel_signal_ordner' => 'signalbot',
+        'klingel_signal_token' => '', 'klingel_signal_an' => '',
+        'klingel_sprache' => '', 'klingel_sprache_ordner' => 'sprachsteuerung',
+        'klingel_sprache_token' => '',
+        // Entscheidung 13: nur bei diesen Ausloesern (Komma-Liste).
+        'klingel_ausloeser' => 'klingel',
     );
 }
 
@@ -3715,6 +3730,8 @@ function ic_sicherungsschluessel()
         'archiv_schutz', 'bild_oeffentlich', 'bildweg',
         'cleanup_count', 'cleanup_days', 'cleanup_mb',
         'intercomip', 'intervall_min',
+        'klingel_ausloeser', 'klingel_signal', 'klingel_signal_an', 'klingel_signal_ordner', 'klingel_signal_token',
+        'klingel_sprache', 'klingel_sprache_ordner', 'klingel_sprache_token',
         'mqtt_enable', 'mqtt_praefix',
         'standbild_pfad', 'stationen', 'storage_path',
         'timelapse_enable', 'timelapse_time', 'timelapse_video',
@@ -4060,9 +4077,18 @@ function ic_intern_erlaubt($zweck, $datei = '')
 function ic_webhook_pruefen($name, $angekommen, $code, $fehler)
 {
     $code = (int) $code;
-    if ($angekommen && $code >= 200 && $code < 300) { return true; }
+    /* NEU 2.2.15 (Intercom-b1): je Webhook ein Merker "zuletzt angekommen"
+     * und EIN Merker "letzter Fehler" (Name, Grund, Zeit) - daraus liest der
+     * Reiter Test seine Zeile. Die Adresse steht in keinem von beiden. */
+    if ($angekommen && $code >= 200 && $code < 300) {
+        ic_merker_setzen('webhook_ok_' . ic_webhook_kennung($name), '1');
+        return true;
+    }
     $f = preg_replace('#[a-z][a-z0-9+.\-]*://\S+#i', '<Adresse>', (string) $fehler);
     $f = preg_replace('#[^\s/@]+:[^\s/@]*@#', '', $f);
+    $ic_grund = ($code > 0 ? 'HTTP ' . $code : 'keine Antwort')
+              . ($f !== '' ? ' (' . substr(str_replace("\t", ' ', $f), 0, 120) . ')' : '');
+    ic_merker_setzen('webhookfehler', $name . "\t" . $ic_grund);
     ic_log_gebremst('webhook_' . preg_replace('/[^a-z0-9]/i', '', $name), $name . ' kam nicht an: '
         . ($code > 0 ? 'HTTP ' . $code : 'keine Antwort') . ($f !== '' ? ' (' . $f . ')' : '')
         . '. Es wird nicht wiederholt.');
@@ -4165,4 +4191,487 @@ function ic_einmal_lesen()
         return array();
     }
     return $d;
+}
+
+/* ==================================================================
+ * Seit 2.2.15 (Verbesserungsbau Welle 1, 30.09.2026)
+ * ================================================================== */
+
+/* ------------------------------------------------------------------
+ * Intercom-a2: leichte Stationsprobe im Minutentakt
+ * ------------------------------------------------------------------
+ * status/ok spiegelte ohne Aufnahme im Takt den letzten Stationskontakt,
+ * gleich wie alt (Baubericht 2.2.13, Offen). Die Probe fragt die Station
+ * einmal je Minute an, OHNE ein Bild zu holen und ohne Archivbild:
+ *   bildweg standbild/auto  HEAD auf die Standbild-Adresse
+ *   bildweg strom/auto      den Strom oeffnen, nur die Kopfzeilen lesen,
+ *                           sofort schliessen
+ * Zeitgrenze 3 s, keiner Umleitung folgen (C5), Zugangsdaten als Kopfzeile.
+ * Kontakt heisst: 2xx. Ein 401 ist KEIN Kontakt - ein Bild gaebe es damit
+ * auch nicht (dieselbe Lesart wie ic_bild_holen()).
+ */
+
+/** Die Standbild-Adresse einer Station (Pfad), an EINER Stelle. */
+function ic_standbild_pfad(array $station)
+{
+    $cfg = ic_config();
+    $pfad = $station['standbild'] !== '' ? $station['standbild']
+          : ((isset($cfg['standbild_pfad']) && trim((string) $cfg['standbild_pfad']) !== '')
+             ? trim((string) $cfg['standbild_pfad']) : '/jpg/image.jpg');
+    if (substr($pfad, 0, 1) !== '/') { $pfad = '/' . $pfad; }
+    return $pfad;
+}
+
+/** Eine Station anfragen, ohne ein Bild zu holen. Rueckgabe array(ok, grund). */
+function ic_stationsprobe(array $station, $zeitgrenze = 3)
+{
+    $cfg = ic_config();
+    $weg = isset($cfg['bildweg']) ? (string) $cfg['bildweg'] : 'strom';
+    list($u, $pw) = ic_zugangsdaten($station);
+    $kopf = array();
+    if ($u !== '') { $kopf[] = 'Authorization: Basic ' . base64_encode($u . ':' . $pw); }
+    $wege = array();
+    if ($weg === 'standbild' || $weg === 'auto') { $wege[] = array('HEAD', ic_standbild_pfad($station)); }
+    if ($weg !== 'standbild') { $wege[] = array('GET', '/mjpg/video.mjpg'); }
+    $grund = '';
+    foreach ($wege as $w) {
+        $ctx = stream_context_create(array('http' => array(
+            'method' => $w[0],
+            'timeout' => $zeitgrenze,
+            'ignore_errors' => true,
+            'follow_location' => 0,
+            'header' => implode("\r\n", $kopf),
+        )));
+        $f = @fopen('http://' . $station['ip'] . $w[1], 'r', false, $ctx);
+        if ($f === false) {
+            $grund = $w[0] . ' ' . $w[1] . ': nicht erreichbar';
+            continue;
+        }
+        $code = ic_status_aus_kopf(ic_strom_kopfzeilen($f));
+        @fclose($f);
+        if ($code >= 200 && $code < 300) { return array(true, ''); }
+        $grund = $w[0] . ' ' . $w[1] . ': HTTP ' . $code;
+    }
+    return array(false, $grund);
+}
+
+/**
+ * Die Probe im Cron-Takt (timelapse.php). Nur mit MQTT - sie speist allein
+ * status/ok. Nicht, wenn in diesem Takt schon ein Abruf lief (Klingel,
+ * Aufnahme im Takt, Zeitraffer): dessen Merker ist dann juenger als 50 s.
+ * Mehrere Stationen: Kontakt nur, wenn ALLE antworten.
+ * Rueckgabe: true/false (Ergebnis), null (nicht geprobt).
+ */
+function ic_stationsprobe_lauf()
+{
+    $st = ic_stationen();
+    if (!$st || !ic_mqtt_an()) { return null; }
+    $mk = ic_merker_lesen('stationskontakt');
+    if ($mk !== null && (time() - (int) $mk['zeit']) < 50) { return null; }
+    $alle = true;
+    foreach ($st as $s) {
+        list($ok, $grund) = ic_stationsprobe($s);
+        if (!$ok) {
+            $alle = false;
+            ic_log_gebremst('probe_' . preg_replace('/[^a-z0-9]/i', '', $s['name']),
+                'Stationsprobe: "' . $s['name'] . '" antwortet nicht (' . $grund . ') - status/ok geht auf 0.');
+        }
+    }
+    ic_merker_setzen('stationskontakt', $alle ? '1' : '0');
+    return $alle;
+}
+
+/* ------------------------------------------------------------------
+ * Intercom-b1: der letzte Webhook-Fehler im Reiter Test
+ * ------------------------------------------------------------------ */
+
+/** Merkername eines Webhooks: "Video-Webhook 1" -> "VideoWebhook1". */
+function ic_webhook_kennung($name)
+{
+    return preg_replace('/[^a-z0-9]/i', '', (string) $name);
+}
+
+/** Die Zeile "Letzter Webhook-Fehler" - aus den Merkern von ic_webhook_pruefen(). */
+function ic_pruefe_webhooks()
+{
+    $cfg = ic_config();
+    $namen = array('webhook1' => 'Webhook 1', 'webhook2' => 'Webhook 2', 'webhook3' => 'Webhook 3',
+                   'webhook4' => 'Webhook 4', 'videowebhook1' => 'Video-Webhook 1',
+                   'videowebhook2' => 'Video-Webhook 2');
+    $eingetragen = 0;
+    $zuletzt_ok = 0;
+    foreach ($namen as $k => $n) {
+        if (isset($cfg[$k]) && trim((string) $cfg[$k]) !== '') { $eingetragen++; }
+        $m = ic_merker_lesen('webhook_ok_' . ic_webhook_kennung($n));
+        if ($m !== null && $m['zeit'] > $zuletzt_ok) { $zuletzt_ok = (int) $m['zeit']; }
+    }
+    $f = ic_merker_lesen('webhookfehler');
+    if ($f !== null) {
+        $teile = explode("\t", (string) $f['text'], 2);
+        $name = $teile[0];
+        $grund = isset($teile[1]) ? $teile[1] : '?';
+        $wann = date('d.m.Y H:i', (int) $f['zeit']);
+        $schluessel = array_search($name, $namen, true);
+        $ok = ic_merker_lesen('webhook_ok_' . ic_webhook_kennung($name));
+        if ($ok !== null && (int) $ok['zeit'] >= (int) $f['zeit']) {
+            return ic_pz('hinweis', 'TEST.F_WEBHOOKFEHLER', 'TEST.A_WEBHOOKFEHLER_BEHOBEN', '', array(),
+                         array($name, $grund, $wann, date('d.m.Y H:i', (int) $ok['zeit'])));
+        }
+        if ($schluessel === false || !isset($cfg[$schluessel]) || trim((string) $cfg[$schluessel]) === '') {
+            return ic_pz('hinweis', 'TEST.F_WEBHOOKFEHLER', 'TEST.A_WEBHOOKFEHLER_WEG', '', array(),
+                         array($name, $grund, $wann));
+        }
+        return ic_pz('fehl', 'TEST.F_WEBHOOKFEHLER', 'TEST.A_WEBHOOKFEHLER', 'TEST.R_WEBHOOKFEHLER',
+                     array(), array($name, $grund, $wann));
+    }
+    if ($eingetragen === 0) {
+        return ic_pz('hinweis', 'TEST.F_WEBHOOKFEHLER', 'TEST.A_WEBHOOK_KEINER');
+    }
+    if ($zuletzt_ok === 0) {
+        // Kein Haken fuer etwas, das nie lief (Klasse 8).
+        return ic_pz('hinweis', 'TEST.F_WEBHOOKFEHLER', 'TEST.A_WEBHOOK_NOCH_NIE');
+    }
+    return ic_pz('ok', 'TEST.F_WEBHOOKFEHLER', 'TEST.A_WEBHOOK_OK', '', array(),
+                 array(date('d.m.Y H:i', $zuletzt_ok)));
+}
+
+/* ------------------------------------------------------------------
+ * Klingel-1 (D): Meldung ueber SignalBot, Ansage ueber die Sprachsteuerung
+ * ------------------------------------------------------------------
+ * Ab Werk AUS (vb_RAHMEN, D-Punkte). Der Weg ist der vorhandene
+ * HTTP-Endpunkt der anderen Linie, gelesen in deren Quelltext:
+ *   SignalBot 0.9.25       /plugins/<ordner>/index.php?token=..&aktion=senden
+ *                          &text=..[&an=+49..]   -> "SIGNAL;OK=1;..."
+ *   Sprachsteuerung 0.11.12 /plugins/<ordner>/index.php?token=..&aktion=sprechen
+ *                          &text=..              -> "SET;OK=1;..."
+ *   beide                  ?selftest=1&token=..  -> "SELFTEST;OK=1;TOKEN=OK"
+ * Nie ueber deren Dateien. Gerufen wird ueber 127.0.0.1 und den Port des
+ * LoxBerry-Webservers, ohne einer Umleitung zu folgen (das Token steht in der
+ * Adresse). Fehlt die andere Linie oder schweigt sie: eine gebremste
+ * Protokollzeile, ein Merker, der Reiter Test wird gelb - Bild, Archiv, MQTT
+ * und Webhooks laufen wie ohne die Einstellung. Wiederholt wird nicht.
+ */
+
+/** Ein Plugin-Ordner: Kleinbuchstaben, Ziffern, _ und -. */
+function ic_nachbar_ordner_gueltig($o)
+{
+    return is_string($o) && preg_match('/^[a-z0-9][a-z0-9_\-]{0,39}\z/', $o) === 1;
+}
+
+/** Die Textschluessel der Kopplung (die Haken pruefen sich wie jeder Haken). */
+function ic_klingel_textschluessel()
+{
+    return array('klingel_ausloeser', 'klingel_signal_ordner', 'klingel_signal_token', 'klingel_signal_an',
+                 'klingel_sprache_ordner', 'klingel_sprache_token');
+}
+
+/** EINE Pruefung fuer Formular und Zurueckspielen. Leerer Ordner = Vorgabe. */
+function ic_klingel_wert_gueltig($schluessel, $wert)
+{
+    if (!is_string($wert) && !is_int($wert)) { return false; }
+    $t = (string) $wert;
+    if (substr($schluessel, -7) === '_ordner') {
+        return $t === '' || ic_nachbar_ordner_gueltig($t);
+    }
+    if (substr($schluessel, -6) === '_token') {
+        return preg_match('/^[A-Za-z0-9_.\-]{0,128}\z/', $t) === 1;
+    }
+    if ($schluessel === 'klingel_ausloeser') {
+        // Namen wie im Parameter trigger, durch Komma getrennt; leer = nie.
+        return $t === '' || preg_match('/^\s*[A-Za-z0-9_\-]{1,32}\s*(,\s*[A-Za-z0-9_\-]{1,32}\s*){0,19}\z/', $t) === 1;
+    }
+    if ($schluessel === 'klingel_signal_an') {
+        // Dieselbe Form, die SignalBot selbst verlangt (sonst 400).
+        return $t === '' || preg_match('/^\+[0-9]{6,20}\z/', $t) === 1;
+    }
+    return false;
+}
+
+/** Ordner der Nachbarlinie fuer 'signal' oder 'sprache'. */
+function ic_klingel_ordner($art)
+{
+    $cfg = ic_config();
+    $k = 'klingel_' . $art . '_ordner';
+    $o = isset($cfg[$k]) ? trim((string) $cfg[$k]) : '';
+    return ic_nachbar_ordner_gueltig($o) ? $o : (string) ic_vorgabe($k, '');
+}
+
+/** Ist die Kopplung eingeschaltet? */
+function ic_klingel_an($art)
+{
+    $cfg = ic_config();
+    return isset($cfg['klingel_' . $art]) && $cfg['klingel_' . $art] === 'on';
+}
+
+/**
+ * Den Endpunkt einer anderen Linie rufen. Rueckgabe array(code, rumpf, fehler);
+ * code 0 = keine Antwort. Die Adresse (mit Token) geht nirgends hin - nicht
+ * ins Protokoll, nicht in die Fehlermeldung.
+ */
+function ic_nachbar_rufen($ordner, array $parameter, $zeitgrenze = 5)
+{
+    if (!ic_nachbar_ordner_gueltig($ordner)) { return array(0, '', 'Ordner unzulaessig'); }
+    $port = ic_webport();
+    $url = 'http://127.0.0.1' . ($port === 80 ? '' : ':' . $port) . '/plugins/' . $ordner
+         . '/index.php?' . http_build_query($parameter, '', '&', PHP_QUERY_RFC3986);
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, array(
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $zeitgrenze,
+            CURLOPT_CONNECTTIMEOUT => min(2, $zeitgrenze),
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_USERAGENT => 'LoxBerry Intercom',
+        ));
+        $antwort = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $fehler = curl_error($ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($ch); }
+    } else {
+        $ctx = stream_context_create(array('http' => array(
+            'method' => 'GET', 'timeout' => $zeitgrenze, 'ignore_errors' => true,
+            'follow_location' => 0, 'user_agent' => 'LoxBerry Intercom')));
+        $f = @fopen($url, 'r', false, $ctx);
+        if ($f === false) {
+            $antwort = false;
+            $code = 0;
+            $fehler = 'keine Verbindung';
+        } else {
+            $code = ic_status_aus_kopf(ic_strom_kopfzeilen($f));
+            $antwort = (string) @stream_get_contents($f, 2000);
+            @fclose($f);
+            $fehler = '';
+        }
+    }
+    $fehler = preg_replace('#[a-z][a-z0-9+.\-]*://\S+#i', '<Adresse>', (string) $fehler);
+    return array($code, is_string($antwort) ? substr($antwort, 0, 2000) : '',
+                 str_replace(array("\t", "\n", "\r"), ' ', $fehler));
+}
+
+/** Der Grund einer gescheiterten Kopplung in einer Zeile - ohne Adresse, ohne Token. */
+function ic_klingel_grund($code, $rumpf, $fehler)
+{
+    if ((int) $code === 0) {
+        return 'keine Antwort' . ($fehler !== '' ? ' (' . substr($fehler, 0, 120) . ')' : '');
+    }
+    $g = preg_match('/(?:GRUND|ERR)=([A-Z_]{1,40})/', (string) $rumpf, $m) ? $m[1] : '';
+    return 'HTTP ' . (int) $code . ($g !== '' ? ' ' . $g : '')
+         . ((int) $code === 404 ? ' - Plugin nicht installiert oder anderer Ordner' : '');
+}
+
+/**
+ * Die Sprachdatei am Endpunkt (Entscheidung 13: Text aus der Sprachdatei).
+ * In der Oberflaeche ist $L schon geladen; am unangemeldeten Endpunkt wird
+ * templates/plugins/<ordner>/lang/language_<sprache>.ini gelesen - so, wie
+ * LBSystem::readlanguage() sie liest (Abschnitt.Schluessel, INI_SCANNER_RAW).
+ * Fehlt die Datei der Sprache, die deutsche; fehlt auch die, bleibt $L leer
+ * und ic_uebersetzt() nimmt den deutschen Ersatz.
+ */
+function ic_sprache_laden()
+{
+    global $L;
+    if (is_array($L) && $L) { return; }
+    $sprache = (class_exists('LBSystem', false) && method_exists('LBSystem', 'lblanguage'))
+             ? strtolower((string) LBSystem::lblanguage()) : 'de';
+    if (!preg_match('/^[a-z]{2}$/', $sprache)) { $sprache = 'de'; }
+    $o = ic_paths()['home'] . '/templates/plugins/' . ic_plugin_ordner() . '/lang/';
+    foreach (array_unique(array($sprache, 'de')) as $s) {
+        $f = $o . 'language_' . $s . '.ini';
+        if (!@is_file($f)) { continue; }
+        $ini = @parse_ini_file($f, true, INI_SCANNER_RAW);
+        if (!is_array($ini)) { continue; }
+        $L = array();
+        foreach ($ini as $abschnitt => $paare) {
+            if (!is_array($paare)) { continue; }
+            foreach ($paare as $k => $v) { $L[$abschnitt . '.' . $k] = (string) $v; }
+        }
+        return;
+    }
+}
+
+/** Die Ausloeser, bei denen gemeldet wird (Entscheidung 13, Vorgabe "klingel"). */
+function ic_klingel_ausloeser()
+{
+    $cfg = ic_config();
+    $roh = array_key_exists('klingel_ausloeser', $cfg) ? (string) $cfg['klingel_ausloeser']
+         : (string) ic_vorgabe('klingel_ausloeser', 'klingel');
+    if (!ic_klingel_wert_gueltig('klingel_ausloeser', $roh)) { return array(); }
+    $aus = array();
+    foreach (explode(',', $roh) as $n) {
+        $n = strtolower(trim($n));
+        if ($n !== '') { $aus[] = $n; }
+    }
+    return $aus;
+}
+
+/** Wird bei diesem Aufruf gemeldet? Eingeschaltet UND Ausloeser in der Liste. */
+function ic_klingel_gefragt($trigger)
+{
+    if (!ic_klingel_an('signal') && !ic_klingel_an('sprache')) { return false; }
+    return $trigger !== '' && in_array(strtolower((string) $trigger), ic_klingel_ausloeser(), true);
+}
+
+/**
+ * Hoechstens eine Meldung je 60 s und Station (Entscheidung 13). Der Merker
+ * wird unter einer Sperre gelesen und gesetzt; ist die Sperre nicht zu
+ * bekommen, wird NICHT gemeldet (faellt geschlossen aus).
+ */
+function ic_klingel_bremse_frei($station)
+{
+    $d = ic_paths()['datadir'];
+    if (!@is_dir($d)) { @mkdir($d, 0775, true); }
+    $sperre = ic_sperre_warten($d . '/.klingel_bremse.sperre', 5);
+    if ($sperre === false) { return false; }
+    $name = 'klingelbremse_' . substr(md5((string) $station), 0, 12);
+    $m = ic_merker_lesen($name);
+    $frei = ($m === null || (time() - (int) $m['zeit']) >= 60 || (time() - (int) $m['zeit']) < -5);
+    if ($frei) { ic_merker_setzen($name, (string) $station); }
+    ic_sperre_frei($sperre);
+    return $frei;
+}
+
+/** Der Meldetext aus der Sprachdatei - Klingel oder anderer Ausloeser, bei mehreren Stationen mit Namen. */
+function ic_klingel_text($trigger, $station)
+{
+    ic_sprache_laden();
+    $t = (strcasecmp($trigger, 'klingel') === 0 || $trigger === '')
+       ? ic_uebersetzt('UI.KLINGEL_M_KLINGEL', array(), 'Es hat geklingelt')
+       : ic_uebersetzt('UI.KLINGEL_M_AUSLOESER', array($trigger), 'Auslöser: ' . $trigger);
+    if ($station !== '') {
+        $t = ic_uebersetzt('UI.KLINGEL_M_STATION', array($t, $station), $t . ' (' . $station . ')');
+    }
+    return $t . '.';
+}
+
+/** Ergebnis festhalten: Merker immer, Protokoll bei Erfolg je Klingeln, bei Fehler gebremst. */
+function ic_klingel_ergebnis($art, $name, $ok, $grund)
+{
+    if ($ok) {
+        ic_merker_setzen('klingel_' . $art, "ok\t");
+        ic_log('Klingel: Meldung an ' . $name . ' abgegeben.');
+        return true;
+    }
+    ic_merker_setzen('klingel_' . $art, "fehler\t" . $grund);
+    ic_log_gebremst('klingel_' . $art, 'Klingel: die Meldung an ' . $name . ' kam nicht an: ' . $grund
+        . '. Das Klingeln selbst ist davon nicht betroffen; es wird nicht wiederholt.');
+    return false;
+}
+
+/**
+ * Nach dem Klingeln melden (getpicture.php, NACH der Antwort an Loxone).
+ * $bildquelle ist DIESES Bild: der befristete Link wird daran gebunden (C11).
+ * Leer heisst: der Bildabruf scheiterte - gemeldet wird trotzdem, ohne Bild
+ * (Entscheidung 13). Rueckgabe: array(art => true|false) fuer die
+ * eingeschalteten Wege; array('gebremst' => true), wenn die 60-s-Bremse griff;
+ * leer, wenn nicht gefragt (aus oder Ausloeser nicht in der Liste).
+ */
+function ic_klingel_melden($station, $trigger, $mehrere, $bildquelle, $basis)
+{
+    $aus = array();
+    if (!ic_klingel_gefragt((string) $trigger)) { return $aus; }
+    if (!ic_klingel_bremse_frei($station)) {
+        ic_log_gebremst('klingel_bremse_' . substr(md5((string) $station), 0, 12),
+            'Klingel: Meldung fuer "' . $station . '" unterdrueckt - hoechstens eine je 60 s und Station.', 300);
+        return array('gebremst' => true);
+    }
+    $sig = ic_klingel_an('signal');
+    $spr = ic_klingel_an('sprache');
+    $cfg = ic_config();
+    $text = ic_klingel_text((string) $trigger, $mehrere ? (string) $station : '');
+    if ($sig) {
+        $tok = isset($cfg['klingel_signal_token']) ? (string) $cfg['klingel_signal_token'] : '';
+        if ($tok === '') {
+            $aus['signal'] = ic_klingel_ergebnis('signal', 'SignalBot', false, 'kein Token eingetragen');
+        } else {
+            $code = ((string) $bildquelle !== '') ? ic_bildlink_erzeugen(24, 5, (string) $bildquelle) : '';
+            if ((string) $bildquelle === '') {
+                $zusatz = ic_uebersetzt('UI.KLINGEL_M_OHNE_BILD', array(),
+                                        'Ohne Bild: die Türstation lieferte keines.');
+            } elseif ($code === '') {
+                $zusatz = ic_uebersetzt('UI.KLINGEL_M_OHNE_LINK', array(),
+                                        'Ohne Bild: der befristete Bildlink ließ sich nicht anlegen.');
+            } else {
+                $zusatz = ic_uebersetzt('UI.KLINGEL_M_BILD',
+                    array($basis . 'bild.php?link=' . rawurlencode($code)),
+                    'Bild (24 h, 5 Abrufe): ' . $basis . 'bild.php?link=' . rawurlencode($code));
+            }
+            $t = $text . ' ' . $zusatz;
+            $p = array('token' => $tok, 'aktion' => 'senden', 'text' => $t);
+            $an = isset($cfg['klingel_signal_an']) ? trim((string) $cfg['klingel_signal_an']) : '';
+            if ($an !== '') { $p['an'] = $an; }
+            list($c, $r, $f) = ic_nachbar_rufen(ic_klingel_ordner('signal'), $p, 5);
+            $ok = ($c === 200 && strpos(ltrim($r), 'SIGNAL;OK=1') === 0);
+            $aus['signal'] = ic_klingel_ergebnis('signal', 'SignalBot', $ok,
+                                                 $ok ? '' : ic_klingel_grund($c, $r, $f));
+        }
+    }
+    if ($spr) {
+        $tok = isset($cfg['klingel_sprache_token']) ? (string) $cfg['klingel_sprache_token'] : '';
+        if ($tok === '') {
+            $aus['sprache'] = ic_klingel_ergebnis('sprache', 'Sprachsteuerung', false, 'kein Token eingetragen');
+        } else {
+            list($c, $r, $f) = ic_nachbar_rufen(ic_klingel_ordner('sprache'),
+                array('token' => $tok, 'aktion' => 'sprechen', 'text' => $text), 5);
+            $ok = ($c === 200 && strpos(ltrim($r), 'SET;OK=1') === 0);
+            $aus['sprache'] = ic_klingel_ergebnis('sprache', 'Sprachsteuerung', $ok,
+                                                  $ok ? '' : ic_klingel_grund($c, $r, $f));
+        }
+    }
+    return $aus;
+}
+
+/**
+ * Die Zeile im Reiter Test. Mit Netz fragt sie den Selbsttest der anderen
+ * Linie (loest dort nichts aus); ohne Netz liest sie den Merker des letzten
+ * Klingelns. Gelb (unklar) heisst: eingeschaltet, aber die Kopplung traegt
+ * nicht - das Klingeln selbst laeuft weiter.
+ */
+function ic_pruefe_klingel($art, $mit_netz = false)
+{
+    $frage = $art === 'signal' ? 'TEST.F_KLINGEL_SIGNAL' : 'TEST.F_KLINGEL_SPRACHE';
+    if (!ic_klingel_an($art)) {
+        return ic_pz('hinweis', $frage, 'TEST.A_KLINGEL_AUS');
+    }
+    $cfg = ic_config();
+    $ordner = ic_klingel_ordner($art);
+    $tok = isset($cfg['klingel_' . $art . '_token']) ? (string) $cfg['klingel_' . $art . '_token'] : '';
+    if ($tok === '') {
+        return ic_pz('unklar', $frage, 'TEST.A_KLINGEL_OHNE_TOKEN', 'TEST.R_KLINGEL');
+    }
+    if ($mit_netz) {
+        list($c, $r, $f) = ic_nachbar_rufen($ordner, array('token' => $tok, 'selftest' => '1'), 5);
+        if ($c === 200 && strpos(ltrim($r), 'SELFTEST;OK=1') === 0) {
+            return ic_pz('ok', $frage, 'TEST.A_KLINGEL_ERREICHT', '', array(), array($ordner));
+        }
+        return ic_pz('unklar', $frage, 'TEST.A_KLINGEL_NICHT', 'TEST.R_KLINGEL', array(),
+                     array($ordner, ic_klingel_grund($c, $r, $f)));
+    }
+    $m = ic_merker_lesen('klingel_' . $art);
+    if ($m === null) {
+        return ic_pz('hinweis', $frage, 'TEST.A_KLINGEL_NOCH_NIE', 'TEST.R_KLINGEL_NETZ', array(),
+                     array($ordner));
+    }
+    $teile = explode("\t", (string) $m['text'], 2);
+    if ($teile[0] === 'ok') {
+        return ic_pz('ok', $frage, 'TEST.A_KLINGEL_ZULETZT', '', array(),
+                     array($ordner, date('d.m.Y H:i', (int) $m['zeit'])));
+    }
+    return ic_pz('unklar', $frage, 'TEST.A_KLINGEL_GESCHEITERT', 'TEST.R_KLINGEL', array(),
+                 array($ordner, isset($teile[1]) ? $teile[1] : '?', date('d.m.Y H:i', (int) $m['zeit'])));
+}
+
+/* ------------------------------------------------------------------
+ * X-3: besteht die eigene Sicherung das eigene Zurueckspielen?
+ * ------------------------------------------------------------------
+ * Ueber DIESELBE Funktion wie das Zurueckspielen (ic_sicherung_lesen()).
+ * Rueckgabe: die Beanstandungen (maskiert, wie beim Zurueckspielen), leer =
+ * die Sicherung liesse sich zurueckspielen. Der Knopf liefert die Datei
+ * trotzdem - die Oberflaeche warnt nur (vb_RAHMEN, X-3).
+ */
+function ic_sicherung_selbstpruefung()
+{
+    $js = json_encode(ic_config(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($js === false) { return array(ic_txt('UI.SICH_KEIN_JSON')); }
+    $erg = ic_sicherung_lesen($js);
+    return ($erg[0] === null && isset($erg[1]) && is_array($erg[1])) ? $erg[1] : array();
 }

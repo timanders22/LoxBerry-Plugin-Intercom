@@ -66,8 +66,28 @@ if (!$r['ok']) {
         ic_mqtt_senden('status/ok', '0');
     }
     header('HTTP/1.1 502 Bad Gateway');
-    echo json_encode(array('success' => false, 'station' => $station['name'],
-                           'weg' => $r['weg'], 'error' => $r['fehler']));
+    $ic_fjson = json_encode(array('success' => false, 'station' => $station['name'],
+                                  'weg' => $r['weg'], 'error' => $r['fehler']));
+    /* Klingel-1 (seit 2.2.15, Entscheidung 13): scheitert der Bildabruf, wird
+     * trotzdem gemeldet - ohne Bild. Erst die Antwort an Loxone (wie unten
+     * beim Erfolg: Content-Length und Connection: close), dann die Meldung. */
+    if (!$nur_vorschau && ic_klingel_gefragt($trigger)) {
+        @ignore_user_abort(true);
+        @ini_set('zlib.output_compression', '0');
+        header('Content-Length: ' . strlen($ic_fjson));
+        header('Connection: close');
+        echo $ic_fjson;
+        if (function_exists('fastcgi_finish_request')) {
+            @fastcgi_finish_request();
+        } else {
+            while (ob_get_level() > 0) { @ob_end_flush(); }
+            @flush();
+        }
+        ic_klingel_melden($station['name'], $trigger, count(ic_stationen()) > 1, '',
+                          'http://' . ic_host() . '/plugins/' . ic_plugin_ordner() . '/');
+        exit;
+    }
+    echo $ic_fjson;
     exit;
 }
 $frame = $r['bild'];
@@ -272,6 +292,18 @@ if (ic_mqtt_an()) {
     ic_ki_melden($ai);
     ic_mqtt_herzschlag();
 }
+
+/* ---------------- Klingel-1 (seit 2.2.15): SignalBot und Sprachsteuerung ----------------
+ *
+ * Ab Werk AUS (Reiter Einstellungen, "Beim Klingeln melden"). Gerufen wird
+ * der HTTP-Endpunkt der anderen Linie - nie ihre Dateien - und zwar HIER,
+ * nach der Antwort an den Miniserver: das Klingeln selbst wird dadurch nicht
+ * langsamer. Fehlt die andere Linie oder schweigt sie, steht eine gebremste
+ * Zeile im Protokoll und der Reiter Test wird gelb; Bild, Archiv, MQTT und
+ * Webhooks laufen wie ohne die Einstellung. Der Bildlink der Signal-Meldung
+ * ist an DIESES Bild gebunden (C11), 24 Stunden, fuenf Abrufe. */
+ic_klingel_melden($station['name'], $trigger, count(ic_stationen()) > 1,
+                  $archiviert ? $ziel : $ic_intern, $basis);
 
 /* ---------------- Webhooks ---------------- */
 $jsonarr = json_decode($json, true);
