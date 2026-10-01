@@ -135,6 +135,7 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
 /* Ergaenzung 2.2.15 (nicht aus der Vorlage): X-2 markiert ein beanstandetes
    Feld, X-3 warnt gelb am Knopf "Einstellungen sichern". */
 .smw input.sm-beanstandet { border: 2px solid #c0392b !important; background: #fff5f4 !important; }
+.smw select.sm-auswahl.sm-beanstandet { border-color: #c0392b !important; background-color: #fff5f4 !important; }
 .smw .sm-gelb { border-left-color: #d4a000; background: #fffbe6; }
 
 /* Die Reiterleiste von LoxBerry ("Start | Live | Bilder Archiv | Video

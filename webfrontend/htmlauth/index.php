@@ -180,6 +180,19 @@ function ic_eingaben_sammeln($form, array $falsch)
     return $e;
 }
 
+/**
+ * Ein Textfeld aus dem Formular (Nr. 19, B-Nachzug 01.10.2026): nur Leerraum am
+ * Rand wird still abgeschnitten. Steuerzeichen IM Wert (etwa ein mitkopierter
+ * Tabulator) und eine Liste statt eines Textes sind eine Beanstandung - null.
+ * Bis 2.2.16 wurden Steuerzeichen still entfernt und eine Liste still zu ''.
+ */
+function ic_feld_text($v)
+{
+    if (!is_string($v)) { return null; }
+    $t = trim($v);
+    return preg_match('/[\x00-\x1F\x7F]/', $t) === 1 ? null : $t;
+}
+
 /*
  * DIE REITERLISTE STEHT GENAU EINMAL.
  *
@@ -472,10 +485,12 @@ if ($ic_wollte && $ic_darf_token && isset($_POST['token_neu'])) {
 if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     $ic_neu = $ic_cfg;
 
-    /* Stationen. Eine halb ausgefuellte Zeile wird UEBERGANGEN und gemeldet -
-     * sie verhindert nicht das Speichern des Uebrigen. Genau andersherum
-     * gebaut hat es im Bestand schon zweimal dazu gefuehrt, dass der Anwender
-     * alles noch einmal tippen musste. */
+    /* Stationen. BERICHTIGT im B-Nachzug (01.10.2026, Entscheidung 16 ohne
+     * Ausnahme, Nr. 19): eine Zeile ohne Adresse oder mit ungueltiger Adresse
+     * verhindert das Speichern - wie jede andere Beanstandung. Bis 2.2.16 wurde
+     * sie uebergangen, und der Rest gespeichert: die Station war danach still
+     * weg. Die eingetippten Zeilen kommen ueber X-2 zurueck, das Adressfeld ist
+     * markiert. Eine Station entfernt, wer Name UND Adresse leert. */
     $ic_stationen = array();
     /* NEU 2.2.13 (O2): was nicht passt, wird ABGEWIESEN - gesammelt, und dann
      * wird nichts gespeichert. Bis 2.2.12 wurde still verbogen: st_ms "abc"
@@ -486,27 +501,38 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     $ic_abweisung = array();
     $ic_falsch = array();        // X-2: welche Felder beanstandet sind
     $ic_namen = isset($_POST['st_name']) && is_array($_POST['st_name']) ? $_POST['st_name'] : array();
+    $ic_zeile = 0;
     foreach ($ic_namen as $ic_i => $ic_name) {
-        $ic_hole = function ($ic_feld) use ($ic_i) {
-            return (isset($_POST[$ic_feld]) && is_array($_POST[$ic_feld]) && isset($_POST[$ic_feld][$ic_i])
-                    && is_string($_POST[$ic_feld][$ic_i]))
-                   ? trim(preg_replace('/[\x00-\x1F\x7F]/', '', $_POST[$ic_feld][$ic_i])) : '';
+        $ic_zeile++;
+        /* Nr. 19: Steuerzeichen oder eine Liste in einem Feld der Zeile sind eine
+         * Beanstandung (ic_feld_text()), nicht mehr still entfernt. */
+        $ic_hole = function ($ic_feld) use ($ic_i, $ic_zeile, &$ic_abweisung, &$ic_falsch) {
+            if (!isset($_POST[$ic_feld]) || !is_array($_POST[$ic_feld]) || !isset($_POST[$ic_feld][$ic_i])) {
+                return '';
+            }
+            $ic_w = ic_feld_text($_POST[$ic_feld][$ic_i]);
+            if ($ic_w === null) {
+                $ic_abweisung[] = ic_txtf('UI.M_STEUERZEICHEN', ic_e($ic_feld . '[' . $ic_zeile . ']'));
+                $ic_falsch[] = $ic_feld . '.' . $ic_i;
+                return '';
+            }
+            return $ic_w;
         };
         $ic_ip = $ic_hole('st_ip');
-        $ic_name = is_string($ic_name) ? trim(preg_replace('/[\x00-\x1F\x7F]/', '', $ic_name)) : '';
+        $ic_name = $ic_hole('st_name');
+        // Name UND Adresse leer: die Zeile ist geleert, die Station entfernt.
         if ($ic_ip === '' && $ic_name === '') { continue; }
         if ($ic_ip === '') {
-            $ic_meldungen[] = ic_txtf('UI.M_STATION_OHNE_IP', ic_e($ic_name));
-            continue;
+            $ic_abweisung[] = ic_txtf('UI.M_STATION_OHNE_IP', ic_e($ic_name));
+            $ic_falsch[] = 'st_ip.' . $ic_i;
+        } elseif (!ic_adresse_gueltig($ic_ip)) {
+            // Dieselbe Pruefung wie beim Zurueckspielen (ic_stationen_mangel()).
+            $ic_abweisung[] = ic_txtf('UI.M_STATION_ADRESSE', ic_e($ic_ip));
+            $ic_falsch[] = 'st_ip.' . $ic_i;
         }
-        // Adresse pruefen statt zurechtbiegen: erlaubt sind Name oder
-        // IP-Adresse, wahlweise mit Port.
-        if (!preg_match('/^[A-Za-z0-9\.\-]+(:[0-9]{1,5})?$/', $ic_ip)) {
-            $ic_meldungen[] = ic_txtf('UI.M_STATION_ADRESSE', ic_e($ic_ip));
-            continue;
-        }
+        /* Nr. 19: ein leeres ms wird nicht mehr still zu 1 - die neue Zeile
+         * bringt die 1 schon mit, ein geleertes Feld ist eine Beanstandung. */
         $ic_ms_roh = $ic_hole('st_ms');
-        if ($ic_ms_roh === '') { $ic_ms_roh = '1'; }
         if (!ic_zahl_gueltig('ms', $ic_ms_roh)) {
             $ic_abweisung[] = ic_txtf('UI.M_ZAHL', ic_e('st_ms'), ic_e(ic_zahlbereich('ms')),
                                       ic_e($ic_ms_roh));
@@ -569,8 +595,14 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
                     'webhook1', 'webhook2', 'webhook3', 'webhook4',
                     'videowebhook1', 'videowebhook2');
     foreach ($ic_felder as $ic_k) {
-        $ic_w = (isset($_POST[$ic_k]) && is_string($_POST[$ic_k])) ? $_POST[$ic_k] : '';
-        $ic_neu[$ic_k] = trim(preg_replace('/[\x00-\x1F\x7F]/', '', $ic_w));
+        // Nr. 19: Steuerzeichen werden abgewiesen, nicht mehr still entfernt.
+        $ic_w = isset($_POST[$ic_k]) ? ic_feld_text($_POST[$ic_k]) : '';
+        if ($ic_w === null) {
+            $ic_abweisung[] = ic_txtf('UI.M_STEUERZEICHEN', ic_e($ic_k));
+            $ic_falsch[] = $ic_k;
+            $ic_w = '';
+        }
+        $ic_neu[$ic_k] = $ic_w;
     }
     foreach (array('cleanup_days', 'cleanup_count', 'cleanup_mb', 'intervall_min',
                    'tv_port', 'ai_minconf') as $ic_k) {
@@ -600,9 +632,14 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     }
     foreach (array('klingel_ausloeser', 'klingel_signal_ordner', 'klingel_signal_an', 'klingel_sprache_ordner',
                    'klingel_signal_token', 'klingel_sprache_token') as $ic_k) {
-        $ic_w = (isset($_POST[$ic_k]) && is_string($_POST[$ic_k]))
-              ? trim(preg_replace('/[\x00-\x1F\x7F]/', '', $_POST[$ic_k])) : '';
+        $ic_w = isset($_POST[$ic_k]) ? ic_feld_text($_POST[$ic_k]) : '';
         $ic_geheim = (substr($ic_k, -6) === '_token');
+        if ($ic_w === null) {
+            // Nr. 19: abweisen statt still entfernen; der Wert wird nie genannt.
+            $ic_abweisung[] = ic_txtf('UI.M_STEUERZEICHEN', ic_e($ic_k));
+            $ic_falsch[] = $ic_k;
+            continue;
+        }
         if ($ic_geheim && $ic_w === '') { continue; }
         if (!ic_klingel_wert_gueltig($ic_k, $ic_w)) {
             $ic_abweisung[] = ic_txtf('UI.M_KLINGEL_WERT', ic_e($ic_k), $ic_geheim ? '***' : ic_e($ic_w));
@@ -641,8 +678,14 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     $ic_neu['archiv_schutz'] = isset($_POST['archiv_schutz']) ? '1' : '0';
 
     /* Bildweg */
-    $ic_weg = isset($_POST['bildweg']) && is_string($_POST['bildweg']) ? $_POST['bildweg'] : 'strom';
-    $ic_neu['bildweg'] = in_array($ic_weg, array('strom', 'standbild', 'auto'), true) ? $ic_weg : 'strom';
+    /* Nr. 19: ein unbekannter Bildweg wird abgewiesen, nicht still zu "strom". */
+    $ic_weg = isset($_POST['bildweg']) && is_string($_POST['bildweg']) ? $_POST['bildweg'] : '';
+    if (in_array($ic_weg, array('strom', 'standbild', 'auto'), true)) {
+        $ic_neu['bildweg'] = $ic_weg;
+    } else {
+        $ic_abweisung[] = ic_txtf('UI.M_BILDWEG', ic_e($ic_weg));
+        $ic_falsch[] = 'bildweg';
+    }
 
     // mqtt_* wohnen im MQTT-Reiter mit eigenem Formular und eigenem Handler -
     // hier nicht anfassen, sonst stellte jedes Speichern die Haken auf 0.
@@ -731,13 +774,15 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
 if ($ic_wollte && $ic_darf && isset($_POST['mqtt_speichern'])) {
     $ic_neu = $ic_cfg;
     $ic_neu['mqtt_enable'] = isset($_POST['mqtt_enable']) ? '1' : '0';
-    $ic_p = (isset($_POST['mqtt_praefix']) && is_string($_POST['mqtt_praefix']))
-       ? trim($_POST['mqtt_praefix']) : '';
+    /* Nr. 19: eine Liste statt eines Textes wird abgewiesen, nicht still zum
+     * leeren Praefix (= Ordnername). */
+    $ic_p = isset($_POST['mqtt_praefix'])
+       ? (is_string($_POST['mqtt_praefix']) ? trim($_POST['mqtt_praefix']) : null) : '';
     /* BERICHTIGT 2.2.13 (O2): abweisen statt ersetzen. Bis 2.2.12 wurde aus
      * "haus tuer" still "haus_tuer" und aus "/x//y/" "x/y" - ein anderes Abo
      * und andere Gateway-Namen, ohne dass der Anwender es erfuhr. */
-    if (!ic_praefix_gueltig($ic_p)) {
-        $ic_fehler[] = ic_txtf('UI.M_PRAEFIX', ic_e($ic_p));
+    if ($ic_p === null || !ic_praefix_gueltig($ic_p)) {
+        $ic_fehler[] = ic_txtf('UI.M_PRAEFIX', ic_e((string) $ic_p));
         $ic_eingaben = ic_eingaben_sammeln('mqtt', array('mqtt_praefix'));   // X-2
     } else {
         $ic_alt_an = ic_mqtt_an();
@@ -994,7 +1039,7 @@ function ic_fk($form, $k)
 {
     $e = ic_eingabe($form);
     return ($e !== null && isset($e['falsch']) && is_array($e['falsch'])
-            && in_array($k, $e['falsch'], true)) ? ' class="sm-beanstandet"' : '';
+            && in_array($k, $e['falsch'], true)) ? ' class="sm-beanstandet" aria-invalid="true"' : '';
 }
 
 /** Ein verstecktes Feldpaar, das JEDES Formular mitfuehrt. */
@@ -1107,12 +1152,12 @@ if ($ic_e_st !== null && isset($ic_e_st['stationen']) && is_array($ic_e_st['stat
 }
 foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 <tr>
-<td><input type="text" data-role="none" name="st_name[]" value="<?= ic_e(isset($ic_s['alt']) || $ic_s['name'] !== $ic_s['ip'] ? $ic_s['name'] : '') ?>" placeholder="<?= ic_txt('UI.PH_NAME') ?>"></td>
-<td><input type="text" data-role="none" name="st_ip[]" value="<?= ic_e($ic_s['ip']) ?>" placeholder="192.168.1.50"><input type="hidden" name="st_alt[]" value="<?= ic_e(isset($ic_s['alt']) ? $ic_s['alt'] : $ic_s['ip']) ?>"></td>
-<td><input type="text" data-role="none" name="st_user[]" value="<?= ic_e($ic_s['user']) ?>" placeholder="<?= ic_txt('UI.PH_MINISERVER') ?>"></td>
-<td><input type="password" data-role="none" name="st_pass[]" value="" placeholder="<?= $ic_s['pass'] !== '' ? ic_txt('UI.PH_UNVERAENDERT') : '' ?>"><?php if ($ic_s['pass'] !== '') { ?><br><label class="sm-klein"><input type="checkbox" data-role="none" name="st_pass_weg[<?= (int) $ic_i ?>]" value="1"<?= !empty($ic_s['pass_weg']) ? ' checked' : '' ?>> <?= ic_txt('UI.L_PASS_WEG') ?></label><?php } ?></td>
+<td><input type="text" data-role="none" name="st_name[]" value="<?= ic_e(isset($ic_s['alt']) || $ic_s['name'] !== $ic_s['ip'] ? $ic_s['name'] : '') ?>"<?= ic_fk('settings', 'st_name.' . $ic_i) ?> placeholder="<?= ic_txt('UI.PH_NAME') ?>"></td>
+<td><input type="text" data-role="none" name="st_ip[]" value="<?= ic_e($ic_s['ip']) ?>"<?= ic_fk('settings', 'st_ip.' . $ic_i) ?> placeholder="192.168.1.50"><input type="hidden" name="st_alt[]" value="<?= ic_e(isset($ic_s['alt']) ? $ic_s['alt'] : $ic_s['ip']) ?>"></td>
+<td><input type="text" data-role="none" name="st_user[]" value="<?= ic_e($ic_s['user']) ?>"<?= ic_fk('settings', 'st_user.' . $ic_i) ?> placeholder="<?= ic_txt('UI.PH_MINISERVER') ?>"></td>
+<td><input type="password" data-role="none" name="st_pass[]" value=""<?= ic_fk('settings', 'st_pass.' . $ic_i) ?> placeholder="<?= $ic_s['pass'] !== '' ? ic_txt('UI.PH_UNVERAENDERT') : '' ?>"><?php if ($ic_s['pass'] !== '') { ?><br><label class="sm-klein"><input type="checkbox" data-role="none" name="st_pass_weg[<?= (int) $ic_i ?>]" value="1"<?= !empty($ic_s['pass_weg']) ? ' checked' : '' ?>> <?= ic_txt('UI.L_PASS_WEG') ?></label><?php } ?></td>
 <td><input type="number" data-role="none" name="st_ms[]" min="1" max="10" value="<?= ic_e((string) $ic_s['ms']) ?>"<?= ic_fk('settings', 'st_ms.' . $ic_i) ?>></td>
-<td><input type="text" data-role="none" name="st_standbild[]" value="<?= ic_e($ic_s['standbild']) ?>" placeholder="/jpg/image.jpg"></td>
+<td><input type="text" data-role="none" name="st_standbild[]" value="<?= ic_e($ic_s['standbild']) ?>"<?= ic_fk('settings', 'st_standbild.' . $ic_i) ?> placeholder="/jpg/image.jpg"></td>
 </tr>
 <?php } ?>
 </table>
@@ -1121,7 +1166,7 @@ foreach ($ic_reihen as $ic_i => $ic_s) { ?>
 
 <h2><?= ic_txt('UI.H_BILDWEG') ?></h2>
 <label for="bildweg"><?= ic_txt('UI.L_BILDWEG') ?></label>
-<select id="bildweg" name="bildweg" class="sm-auswahl" data-role="none">
+<select id="bildweg" name="bildweg" class="sm-auswahl<?= ic_fk('settings', 'bildweg') !== '' ? ' sm-beanstandet' : '' ?>"<?= ic_fk('settings', 'bildweg') !== '' ? ' aria-invalid="true"' : '' ?> data-role="none">
 <?php foreach (array('strom' => 'UI.WEG_STROM', 'standbild' => 'UI.WEG_STANDBILD',
                      'auto' => 'UI.WEG_AUTO') as $ic_w => $ic_s) { ?>
 <option value="<?= $ic_w ?>"<?= ic_fw('settings', 'bildweg', $ic_cfg['bildweg']) === $ic_w ? ' selected' : '' ?>><?= ic_txt($ic_s) ?></option>

@@ -2,7 +2,7 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.15 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.16 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
@@ -35,6 +35,24 @@ Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.2.16
+
+Verbesserungen aus dem Durchgang (Verbesserungsliste
+`Pruefung-Durchgang-2026-09-29/VERBESSERUNGEN_OFFEN.md`, Entscheidungen 16 und 19).
+Gemessen unter PHP 7.4 und 8.5; nicht am Gerät.
+
+* **Eine Türstation ohne Adresse oder mit ungültiger Adresse verhindert das
+  Speichern.** Bisher wurde die Zeile übergangen, und eine vertippte Adresse
+  löschte die Station samt Kennwort. Eine Station entfernen Sie weiterhin, indem
+  Sie Name und Adresse leeren.
+* Ebenfalls beanstandet statt still verbogen: ein geleertes Feld `ms` (bisher 1),
+  ein unbekannter Bildweg (bisher „strom“) und Steuerzeichen wie ein
+  mitkopierter Tabulator (bisher still entfernt). Es wird dann nichts gespeichert,
+  die Eingaben kommen markiert zurück. Nur Leerraum am Rand wird still
+  abgeschnitten.
+* Beanstandete Felder sind zusätzlich für Bildschirmleser markiert
+  (`aria-invalid`).
 
 ## Neu in 2.2.15
 
