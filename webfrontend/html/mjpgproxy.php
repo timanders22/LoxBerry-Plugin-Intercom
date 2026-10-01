@@ -9,6 +9,11 @@
  * Der LoxBerry meldet sich bei der Tuerstation an; wer den Strom hier abruft,
  * braucht deren Zugangsdaten nicht. Genau deshalb verlangt diese Datei das
  * Zugriffstoken.
+ *
+ * Grenzen (NEU, Intercom-a1, Entscheidung 16): ein Abruf endet nach
+ * hoechstens 600 s; hoechstens 3 Leser gleichzeitig. Der naechste bekommt
+ * HTTP 503 mit Retry-After: 30 und dem Grund im Rumpf und in der Kopfzeile
+ * X-Intercom-Grund (LESER_VOLL bzw. SPERRE); ins Protokoll einmal je Stunde.
  */
 
 require_once __DIR__ . '/ic_start.php';
@@ -24,7 +29,8 @@ require_once __DIR__ . '/ic_start.php';
  * ueber ?intern=1 OHNE Token - nur von 127.0.0.1, nur waehrend der laufenden
  * Aufzeichnung und nur ein einziges Mal (ic_intern_erlaubt()).
  */
-if (!(isset($_GET['intern']) && ic_intern_erlaubt('proxy'))) {
+$ic_intern = isset($_GET['intern']) && ic_intern_erlaubt('proxy');
+if (!$ic_intern) {
     ic_token_pruefen();
     if (isset($_GET['selftest'])) {
         ic_selftest_antwort('mjpgproxy.php');
@@ -40,6 +46,40 @@ if ($station === null) {
     echo ic_stationen() ? "Unbekannte Station.\n"
                         : "Es ist keine Tuerstation eingerichtet.\n";
     exit;
+}
+
+/*
+ * Leserplatz (NEU, Intercom-a1). Erst NACH Token- und Stationspruefung: ein
+ * abgewiesener Aufruf ohne Token legt nichts an. 503 statt 429: die Grenze
+ * betrifft die Last aller Leser zusammen, nicht das Verhalten eines Abrufers.
+ * Die Aufzeichnung (intern) belegt keinen Platz.
+ */
+list($ic_lv_s, $ic_lv_max) = ic_livebild_grenzen();
+$ic_platz = null;
+if (!$ic_intern) {
+    list($ic_platz, $ic_platznr, $ic_lv_grund) = ic_livebild_platz();
+    if ($ic_platz === false) {
+        // Der Pfad steht nur im Protokoll, nie in der Antwort.
+        $ic_lv_ort = '';
+        if ($ic_lv_grund === 'voll') {
+            $ic_lv_text = 'Livebild abgewiesen: es sind schon ' . $ic_lv_max
+                . ' Leser gleichzeitig verbunden (hoechstens ' . $ic_lv_max . ').';
+        } else {
+            $ic_lv_text = 'Livebild abgewiesen: die Sperrdatei fuer die Leserplaetze '
+                . 'liess sich nicht oeffnen.';
+            $ic_lv_ort = ' Ordner: ' . dirname(ic_sperre_datei('livebild1')) . '.';
+        }
+        ic_log_gebremst('livebild_' . $ic_lv_grund, $ic_lv_text . $ic_lv_ort . ' Station "'
+            . $station['name'] . '". Weitere Abweisungen innerhalb einer Stunde '
+            . 'stehen nicht im Protokoll.');
+        header('HTTP/1.1 503 Service Unavailable');
+        header('Retry-After: 30');
+        header('Cache-Control: no-cache, private');
+        header('X-Intercom-Grund: ' . ($ic_lv_grund === 'voll' ? 'LESER_VOLL' : 'SPERRE'));
+        header('Content-Type: text/plain; charset=utf-8');
+        echo $ic_lv_text, ' Bitte in 30 s erneut versuchen.', chr(10);
+        exit;
+    }
 }
 
 list($ic_user, $ic_pass) = ic_zugangsdaten($station);
@@ -110,11 +150,16 @@ if ($fp) {
     header('Cache-Control: no-cache, private');
     header('Pragma: no-cache');
     header('Content-Type: ' . $contenttype);
+    header('X-Intercom-Livebild-Max-S: ' . $ic_lv_s);
 
     // Weiterreichen mit flush statt fpassthru, damit die Rahmen sofort beim
     // Browser ankommen und ein Abbruch des Lesers das Skript beendet.
     stream_set_timeout($fp, 15);
+    // Intercom-a1: hoechstens $ic_lv_s Sekunden je Abruf, dann endet der Strom.
+    $ic_lv_ende = time() + $ic_lv_s;
+    $ic_lv_abgelaufen = false;
     while (!feof($fp) && !connection_aborted()) {
+        if (time() >= $ic_lv_ende) { $ic_lv_abgelaufen = true; break; }
         $chunk = fread($fp, 8192);
         if ($chunk === false || $chunk === '') {
             $meta = stream_get_meta_data($fp);
@@ -125,6 +170,12 @@ if ($fp) {
         flush();
     }
     fclose($fp);
+    if ($ic_lv_abgelaufen) {
+        ic_log_gebremst('livebild_frist', 'Ein Livebild-Abruf von "' . $station['name']
+            . '" wurde nach ' . $ic_lv_s . ' s beendet (Grenze je Abruf; neu laden '
+            . 'beginnt einen neuen Abruf). Weitere innerhalb einer Stunde stehen nicht im Protokoll.');
+    }
+    ic_sperre_frei($ic_platz);
 } else {
     // Die Station antwortet nicht - Ersatzbild ausliefern und das EINMAL
     // je Stunde ins Protokoll schreiben. Bis 2.1.13 blieb dieser Fall

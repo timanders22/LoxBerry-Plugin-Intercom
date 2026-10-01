@@ -1951,12 +1951,22 @@ function ic_zahl_gueltig($schluessel, $wert)
 }
 
 /**
+ * Hoechstens so viele Stationen - beim Zurueckspielen (ic_stationen_mangel())
+ * und im Formular (NEU, Intercom-n50; bis 2.2.17 nahm das Formular mehr an,
+ * und erst das Zurueckspielen der eigenen Sicherung wies sie ab).
+ */
+function ic_stationen_hoechstens()
+{
+    return 50;
+}
+
+/**
  * Was stimmt an einer Stationsliste nicht? Rueckgabe: Liste von
  * array(Nummer der Station ab 1 oder 0 fuer die Liste, Feld). Leer = in Ordnung.
  */
 function ic_stationen_mangel($wert)
 {
-    if (!is_array($wert) || count($wert) > 50) { return array(array(0, 'stationen')); }
+    if (!is_array($wert) || count($wert) > ic_stationen_hoechstens()) { return array(array(0, 'stationen')); }
     $erlaubt = array('name', 'ip', 'user', 'pass', 'ms', 'standbild');
     $m = array();
     $nr = 0;
@@ -2520,6 +2530,15 @@ function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
                 : ic_pz('fehl', 'TEST.F_ZUGANG', 'TEST.A_ZUGANG_NEIN', 'TEST.R_ZUGANG',
                         array($s['name']), array($q));
         }
+    }
+
+    /* -------- Livebild: Leser jetzt (NEU, Intercom-a1) -------- */
+    if ($st) {
+        list($ic_lv_s, $ic_lv_max) = ic_livebild_grenzen();
+        $ic_lv_n = ic_livebild_leser();
+        $z[] = ic_pz('hinweis', 'TEST.F_LIVE', 'TEST.A_LIVE',
+                     $ic_lv_n >= $ic_lv_max ? 'TEST.R_LIVE_VOLL' : '', array(),
+                     array($ic_lv_n, $ic_lv_max, (int) round($ic_lv_s / 60)));
     }
 
     /* -------- Netz: nur auf Knopfdruck -------- */
@@ -4064,6 +4083,72 @@ function ic_intern_erlaubt($zweck, $datei = '')
     }
     ic_sperre_frei($sperre);
     return $ok;
+}
+
+/* ==================================================================
+ * Livebild: Grenzen (NEU, Intercom-a1, Entscheidung 16 vom 30.09.2026)
+ *
+ * Bis 2.2.17 lief ein Abruf von mjpgproxy.php ohne Ende (set_time_limit(0)),
+ * und jeder Abrufer hielt einen eigenen Strom zur Tuerstation offen - ein
+ * vergessener Browserreiter oder ein Programm, das den Strom dauernd
+ * mitschneidet, belegte Station und LoxBerry beliebig lange. Jetzt:
+ * hoechstens 600 s je Abruf, hoechstens 3 gleichzeitige Leser. Der vierte
+ * bekommt HTTP 503 mit Grund und Retry-After statt eines stillen Abbruchs.
+ *
+ * FEST, KEINE EINSTELLUNG: die Entscheidung nennt beide Grenzen ohne
+ * Ausnahme. Eine Einstellung haette den Schutz abschaltbar gemacht und
+ * braeuchte Formular, Pruefung, Sicherung und X-3 dazu - fuer einen Wert, den
+ * niemand begruendet aendern muss. Wer laenger schaut, laedt neu.
+ *
+ * Die Aufzeichnung (ffmpeg aus getvideo.php ueber ?intern=1, hoechstens 300 s)
+ * belegt keinen Leserplatz: eine Aufnahme beim Klingeln darf nie daran
+ * scheitern, dass drei Leser zusehen. Die Zeitgrenze gilt auch fuer sie.
+ * ================================================================== */
+
+/** Die Grenzen des Livebilds: array(Sekunden je Abruf, gleichzeitige Leser). */
+function ic_livebild_grenzen()
+{
+    return array(600, 3);
+}
+
+/** Der Sperrname eines Leserplatzes (1 bis Hoechstzahl). */
+function ic_livebild_platzname($nr)
+{
+    return 'livebild' . (int) $nr;
+}
+
+/**
+ * Einen Leserplatz nehmen. Rueckgabe array(Dateizeiger, Platz, Grund):
+ * Dateizeiger false und Grund 'voll' (alle Plaetze belegt) oder 'sperre'
+ * (die Sperrdatei liess sich nicht oeffnen - faellt GESCHLOSSEN aus, wie
+ * ic_sperre_belegt()). Der Dateizeiger muss bis zum Ende des Abrufs
+ * festgehalten werden; mit dem Ende des Prozesses ist der Platz frei - auch
+ * wenn der Prozess abstuerzt.
+ */
+function ic_livebild_platz()
+{
+    list(, $max) = ic_livebild_grenzen();
+    $kaputt = false;
+    for ($i = 1; $i <= $max; $i++) {
+        $fh = @fopen(ic_sperre_datei(ic_livebild_platzname($i)), 'c');
+        if ($fh === false) { $kaputt = true; continue; }
+        if (@flock($fh, LOCK_EX | LOCK_NB)) {
+            return array($fh, $i, '');
+        }
+        @fclose($fh);
+    }
+    return array(false, 0, $kaputt ? 'sperre' : 'voll');
+}
+
+/** Wie viele Leser gerade verbunden sind - ansehen, nicht nehmen (Reiter Test). */
+function ic_livebild_leser()
+{
+    list(, $max) = ic_livebild_grenzen();
+    $n = 0;
+    for ($i = 1; $i <= $max; $i++) {
+        if (ic_sperre_belegt(ic_livebild_platzname($i))) { $n++; }
+    }
+    return $n;
 }
 
 /**

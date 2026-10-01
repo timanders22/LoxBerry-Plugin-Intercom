@@ -47,11 +47,34 @@ $ic_nr = (is_numeric($ic_wahl) && (int) $ic_wahl >= 1 && (int) $ic_wahl <= count
 $ic_url = '/plugins/' . rawurlencode(ic_plugin_ordner()) . '/mjpgproxy.php?token='
         . rawurlencode($ic_token) . '&amp;station=' . $ic_nr;
 ?>
+<?php
+/* NEU (Intercom-a1): die Grenzen und die Leser jetzt; laeuft die Zeit ab oder
+ * wird der Abruf abgewiesen (503), sagt es die Seite statt eines stehenden
+ * oder leeren Bildes. */
+list($ic_lv_s, $ic_lv_max) = ic_livebild_grenzen();
+$ic_lv_n = ic_livebild_leser();
+?>
+<p class="sm-klein"><?= ic_e(ic_uebersetzt('UI.LIVE_GRENZEN', array((int) round($ic_lv_s / 60), $ic_lv_max, $ic_lv_n),
+    'Ein Abruf laeuft hoechstens ' . (int) round($ic_lv_s / 60) . ' min; hoechstens ' . $ic_lv_max
+    . ' Leser gleichzeitig (jetzt ' . $ic_lv_n . ').')) ?></p>
 <p class="sm-klein"><?= ic_txt('UI.LIVE_ADRESSE') ?></p>
 <p><span class="sm-mono">http://<?= ic_e(ic_host()) ?><?= $ic_url ?></span></p>
 
-<img src="<?= $ic_url ?>" alt="<?= ic_txt('UI.LIVE_ALT') ?>"
+<div id="ic_live_hinweis" class="sm-hinweis sm-warn" hidden></div>
+<img id="ic_live" src="<?= $ic_url ?>" alt="<?= ic_txt('UI.LIVE_ALT') ?>"
      style="max-width: 960px; width: 75%; height: auto; display: block; margin: 0 auto;">
+<script>
+(function () {
+    var b = document.getElementById('ic_live'), h = document.getElementById('ic_live_hinweis'), fertig = false;
+    function zeige(t) {
+        if (fertig) { return; }
+        fertig = true; h.textContent = t; h.hidden = false;
+        b.removeAttribute('src'); b.style.display = 'none';
+    }
+    b.addEventListener('error', function () { zeige(<?= json_encode(ic_uebersetzt('UI.LIVE_ABGEWIESEN', array($ic_lv_max), 'Das Livebild wurde abgewiesen.'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>); });
+    setTimeout(function () { zeige(<?= json_encode(ic_uebersetzt('UI.LIVE_ABGELAUFEN', array((int) round($ic_lv_s / 60)), 'Das Livebild ist abgelaufen.'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>); }, <?= (int) $ic_lv_s * 1000 ?>);
+})();
+</script>
 <?php } ?>
 
 </div><!-- /smw -->

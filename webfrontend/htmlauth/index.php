@@ -502,6 +502,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     $ic_falsch = array();        // X-2: welche Felder beanstandet sind
     $ic_namen = isset($_POST['st_name']) && is_array($_POST['st_name']) ? $_POST['st_name'] : array();
     $ic_zeile = 0;
+    $ic_behalten = array();   // Intercom-n50: Formularindex jeder uebernommenen Zeile
     foreach ($ic_namen as $ic_i => $ic_name) {
         $ic_zeile++;
         /* Nr. 19: Steuerzeichen oder eine Liste in einem Feld der Zeile sind eine
@@ -535,7 +536,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
         $ic_ms_roh = $ic_hole('st_ms');
         if (!ic_zahl_gueltig('ms', $ic_ms_roh)) {
             $ic_abweisung[] = ic_txtf('UI.M_ZAHL', ic_e('st_ms'), ic_e(ic_zahlbereich('ms')),
-                                      ic_e($ic_ms_roh));
+                                      $ic_ms_roh === '' ? ic_txt('UI.WERT_LEER') : ic_e($ic_ms_roh));
             $ic_falsch[] = 'st_ms.' . $ic_i;
         }
         $ic_pass = $ic_hole('st_pass');
@@ -572,6 +573,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
                 }
             }
         }
+        $ic_behalten[] = $ic_i;
         $ic_stationen[] = array(
             'name' => $ic_name !== '' ? $ic_name : $ic_ip,
             'ip'   => $ic_ip,
@@ -580,6 +582,17 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
             'ms'   => (int) $ic_ms_roh,
             'standbild' => $ic_hole('st_standbild'),
         );
+    }
+    /* NEU (Intercom-n50): mehr Stationen als das Zurueckspielen annimmt sind eine
+     * Beanstandung - bis 2.2.17 speicherte das Formular sie, und die eigene
+     * Sicherung liess sich danach nicht zurueckspielen. Markiert werden die Namen
+     * der Zeilen ueber der Grenze; gespeichert wird nichts (Nr. 16). */
+    if (count($ic_stationen) > ic_stationen_hoechstens()) {
+        $ic_abweisung[] = ic_txtf('UI.M_STATIONEN_ZU_VIELE', count($ic_stationen),
+                                  ic_stationen_hoechstens());
+        foreach (array_slice($ic_behalten, ic_stationen_hoechstens()) as $ic_bi) {
+            $ic_falsch[] = 'st_name.' . $ic_bi;
+        }
     }
     $ic_neu['stationen'] = $ic_stationen;
     // "intercomip" bleibt gleichlautend mit der ersten Station: ein
