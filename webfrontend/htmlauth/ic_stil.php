@@ -72,6 +72,11 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
    Fall, dass ein Thema auch Hintergrundbilder unterdrueckt. */
 .smw .sm-auswahlhinweis { font-size: 0.82em; color: #4f7d17; margin: 2px 0 0; }
 .smw .sm-klein { font-size: 0.88em; color: #666; margin: 3px 0 0; max-width: 780px; }
+/* Nr. 36 b: Vorlagenklassen fuer den Formular-Baustein der gemeinsamen Sprachausgabe
+   (VORLAGE_hausstandard.css.html; .sm-hinweis fuehrt diese Linie schon). */
+.smw .sm-feld { margin: 14px 0; }
+.smw .sm-feld > label { display: block; font-weight: 600; font-size: 0.9em; color: #555; margin: 0 0 4px; }
+.smw .sm-hilfe { font-size: 0.85em; color: #555; margin: 4px 0 0; max-width: 640px; }
 .smw .sm-mono { font-family: monospace; background: #f4f4f4; padding: 1px 5px; border-radius: 4px;
     word-break: break-all; }
 

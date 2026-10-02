@@ -2,7 +2,7 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.17 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.18 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
@@ -35,6 +35,31 @@ Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.2.18
+
+Eigene Sprachausgabe beim Klingeln, ab Werk aus (Entscheidung 36/40).
+Gemessen unter
+PHP 7.4 und 8.5 gegen Attrappen (Music Server, Alexa-NG); nicht am Gerät, nicht an einem echten Lautsprecher.
+
+* **Neu: Intercom sagt beim Klingeln selbst an (ab Werk aus).** Reiter Einstellungen, Abschnitt „Beim Klingeln
+  selbst ansagen“: Loxone Music Server, MusicServer4Home, eine eigene Adressvorlage, Alexa-NG oder
+  Google-Lautsprecher (Chromecast 4 Lox NG). Es gelten dieselben Auslöser wie für SignalBot und Sprachsteuerung,
+  höchstens eine Meldung je 60 s und Station; der Satz kommt aus der Sprachdatei (deutsch/englisch), bei mehreren
+  Stationen mit deren Namen.
+* Adresse des Music Servers und Adressvorlage müssen im Heimnetz liegen – eine andere Adresse wird beim Speichern
+  abgewiesen (sie trüge den Ansagetext hinaus).
+* Testansage per Knopf im Reiter Test; die Zeile „Eigene Ansage beim Klingeln“ zeigt, ob die Ausgabe eingerichtet
+  ist und wie die letzte Ansage ausging (Alexa-NG/Chromecast werden mit „Jetzt vollständig prüfen“ gefragt, ohne
+  dass dort etwas gesprochen wird).
+* Die Sprechtoken für Alexa-NG und Chromecast 4 Lox NG stehen nie in der Seite, im Protokoll oder in einer
+  Sicherung; eine Sicherungsdatei, die eines trägt, wird abgewiesen, das gespeicherte bleibt.
+* Der bisherige Weg über die Sprachsteuerung bleibt. Sind beide eingeschaltet, kommen zwei Ansagen – Einstellungen
+  und Reiter Test weisen darauf hin.
+* Einbindung in Loxone: kein neuer Baustein nötig – derselbe Aufruf mit `&trigger=klingel` löst die Ansage aus
+  (Baustein-Liste, „Zu 3“).
+
+**In Loxone:** nichts zu tun; wer die Ansage will, schaltet sie im Reiter Einstellungen ein.
 
 ## Neu in 2.2.17
 
@@ -548,6 +573,11 @@ Aktuelle Release URL in das URL Feld bei der Loxberry Plugininstallation kopiere
   Plugins auf demselben LoxBerry (`/plugins/<Ordner>/index.php`, `aktion=senden`
   bzw. `aktion=sprechen`) mit dessen Zugriffstoken. Fehlt es oder schweigt es,
   läuft das Klingeln unverändert; Protokoll und Reiter Test sagen es.
+- Beim Klingeln selbst ansagen (seit 2.2.18, ab Werk aus): über die gemeinsame Sprachausgabe der
+  Plugins dieses Hauses an den Loxone Music Server, MusicServer4Home, eine eigene Adressvorlage,
+  Alexa-NG oder Google-Lautsprecher (Chromecast 4 Lox NG) – bei denselben Auslösern und mit derselben
+  60-s-Grenze wie oben, der Satz aus der Sprachdatei. Adresse und Vorlage müssen im Heimnetz liegen;
+  die Sprechtoken stehen in keiner Sicherung. Testansage und Prüfzeile im Reiter Test.
 - Lebenszeichen `status/ok` (MQTT): die Türstation wird einmal je Minute kurz
   angefragt (kein Bild, kein Archiv); 1 heißt, sie hat in den letzten drei
   Minuten geantwortet.

@@ -13,6 +13,10 @@
  * Bausteinen wie der Reiter "Einbindung in Loxone".
  */
 
+/* Gemeinsame Sprachausgabe (Abschrift von Werkzeuge/gemeinsam/sprachausgabe.php, Nr. 36 b).
+ * Liegt neben dieser Datei; die Datei schuetzt sich selbst gegen doppeltes Laden. */
+require_once __DIR__ . '/sprachausgabe.php';
+
 /* ==================================================================
  * Pfade
  * ================================================================== */
@@ -2590,6 +2594,7 @@ function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
     $z[] = ic_pruefe_webhooks();                      // Intercom-b1
     $z[] = ic_pruefe_klingel('signal', $mit_netz);    // Klingel-1
     $z[] = ic_pruefe_klingel('sprache', $mit_netz);
+    $z[] = ic_pruefe_ansage($mit_netz);               // Nr. 36 b
 
     /* -------- Fremde Programme -------- */
     foreach (array('ffmpeg' => 'TEST.R_FFMPEG', 'wget' => 'TEST.R_WGET') as $prg => $rat) {
@@ -3716,6 +3721,8 @@ function ic_vorgaben()
         'klingel_sprache_token' => '',
         // Entscheidung 13: nur bei diesen Ausloesern (Komma-Liste).
         'klingel_ausloeser' => 'klingel',
+        // Nr. 36 b (Stufe 2, F10): eigene Ansage ueber die gemeinsame Sprachausgabe, ab Werk aus.
+        'tts' => ansage_vorgaben('aus'),
     );
 }
 
@@ -3751,6 +3758,7 @@ function ic_sicherungsschluessel()
         'intercomip', 'intervall_min',
         'klingel_ausloeser', 'klingel_signal', 'klingel_signal_an', 'klingel_signal_ordner', 'klingel_signal_token',
         'klingel_sprache', 'klingel_sprache_ordner', 'klingel_sprache_token',
+        'tts',
         'mqtt_enable', 'mqtt_praefix',
         'standbild_pfad', 'stationen', 'storage_path',
         'timelapse_enable', 'timelapse_time', 'timelapse_video',
@@ -3827,6 +3835,30 @@ function ic_sicherung_lesen($roh)
                 }
                 continue;
             }
+        }
+        if ($k === 'tts') {
+            /* Nr. 36 b (Stufe 2): eine Sicherung dieses Plugins traegt nie ein Sprechtoken -
+             * traegt die Datei eines, stammt sie nicht aus "Einstellungen sichern" und wird
+             * abgewiesen. Die geltenden Sprechtoken bleiben. Ausgabeart, Adresse und Vorlage
+             * werden wie im Formular geprueft (Heimnetz, Entwurf F1). */
+            $tm = ansage_sicherung_mangel($w);
+            if ($tm) {
+                $mangel[] = sprintf(ic_txt('UI.SICH_TTS_TOKEN'),
+                                    htmlspecialchars(implode(', ', $tm), ENT_QUOTES, 'UTF-8'));
+                continue;
+            }
+            $tg = '';
+            $tp = ansage_wert_pruefen($w, $tg, ic_ansage_modi());
+            if ($tp === null) {
+                $mangel[] = sprintf(ic_txt('UI.SICH_TTS'),
+                    htmlspecialchars(ansage_kennung_text($tg, ic_ansage_k()), ENT_QUOTES, 'UTF-8'));
+                continue;
+            }
+            $tj = (isset($neu['tts']) && is_array($neu['tts'])) ? $neu['tts'] : array();
+            list($tv) = ansage_vervollstaendigen($tp + $tj);
+            $neu['tts'] = ansage_sicherung_tokens_behalten($tv, $tj);
+            $anzahl++;
+            continue;
         }
         if (!ic_wert_pruefen($k, $w)) {
             $mangel[] = sprintf(ic_txt('UI.SICH_WERT'),
@@ -4592,7 +4624,7 @@ function ic_klingel_ausloeser()
 /** Wird bei diesem Aufruf gemeldet? Eingeschaltet UND Ausloeser in der Liste. */
 function ic_klingel_gefragt($trigger)
 {
-    if (!ic_klingel_an('signal') && !ic_klingel_an('sprache')) { return false; }
+    if (!ic_klingel_an('signal') && !ic_klingel_an('sprache') && !ic_ansage_an()) { return false; }
     return $trigger !== '' && in_array(strtolower((string) $trigger), ic_klingel_ausloeser(), true);
 }
 
@@ -4702,6 +4734,15 @@ function ic_klingel_melden($station, $trigger, $mehrere, $bildquelle, $basis)
                                                   $ok ? '' : ic_klingel_grund($c, $r, $f));
         }
     }
+    if (ic_ansage_an()) {
+        /* Nr. 36 b (Stufe 2, F10): Intercom spricht selbst ueber die gemeinsame Sprachausgabe -
+         * derselbe Satz, dieselben Ausloeser und dieselbe 60-s-Bremse wie SignalBot und
+         * Sprachsteuerung. Ins Protokoll kommt nur das Ergebnis, nie der Text (Nr. 18). */
+        $ak = ic_ansage_k();
+        $ar = ansage_sprechen($text, ic_tts(), $ak);
+        $aus['ansage'] = ic_klingel_ergebnis('ansage', ic_uebersetzt('UI.ANSAGE_NAME', array(), 'Sprachausgabe'),
+            $ar['stand'] === 1, $ar['stand'] === 1 ? '' : ansage_kennung_text($ar['kennung'], $ak));
+    }
     return $aus;
 }
 
@@ -4746,6 +4787,78 @@ function ic_pruefe_klingel($art, $mit_netz = false)
 }
 
 /* ------------------------------------------------------------------
+ * Sprachausgabe (Nr. 36 b, Stufe 2, Entwurf F10, seit 2.2.18)
+ * ------------------------------------------------------------------
+ * Intercom spricht selbst ueber die gemeinsame Sprachausgabe (sprachausgabe.php).
+ * Der Weg ueber die Sprachsteuerung (klingel_sprache) bleibt daneben bestehen; sind
+ * beide an, kommen zwei Ansagen - die Oberflaeche und der Reiter Test sagen es.
+ */
+
+/** Erlaubte Ausgabearten: alle des Moduls ausser 'audioserver' (kein Antwortweg zu Loxone). */
+function ic_ansage_modi()
+{
+    return array('aus', 'musicserver', 'ms4h', 'custom', 'alexang', 'cc4lox');
+}
+
+/** Optionen fuer Formular-Baustein und Formular-Lesen. */
+function ic_ansage_opt()
+{
+    return array('modi' => ic_ansage_modi());
+}
+
+/** Der Block tts, vervollstaendigt (ab Werk 'aus'). */
+function ic_tts()
+{
+    $c = ic_config();
+    list($t) = ansage_vervollstaendigen(isset($c['tts']) && is_array($c['tts']) ? $c['tts'] : array(), 'aus');
+    return $t;
+}
+
+/** Ist die eigene Ansage eingeschaltet? */
+function ic_ansage_an()
+{
+    $m = ic_tts();
+    return is_string($m['mode']) && $m['mode'] !== 'aus' && in_array($m['mode'], ic_ansage_modi(), true);
+}
+
+/** Der Kontext des Moduls: Webport, Kopfzeile, Ordner fuer <art>_letzte.json, Texte aus [ANSAGE]. */
+function ic_ansage_k()
+{
+    ic_sprache_laden();
+    $p = ic_paths();
+    return array(
+        'port'   => ansage_webport($p['home'] . '/config/system/general.json'),
+        'kopf'   => array('User-Agent: LoxBerry Intercom'),
+        'ordner' => @is_dir($p['datadir']) ? $p['datadir'] : '',
+        't'      => function ($s) { return ic_sprachwert($s, $s); },
+        /* Zu dieser Kennung hat das Modul (1.0.2) keinen Satz in [ANSAGE]; ohne ihn stuende sie roh in
+         * der Sicherungsmeldung. Linieneigener Schluessel, bis der Modulschluessel mit Stufe 2 kommt
+         * (Entwurf, Stufe 2). */
+        'schluessel' => array('K_TTS_EINTRAG' => 'UI.SICH_TTS_EINTRAG'),
+    );
+}
+
+/** Die Zeile im Reiter Test. Mit Netz fragt sie Alexa-NG/Chromecast (selftest=1, spricht nicht). */
+function ic_pruefe_ansage($mit_netz = false)
+{
+    $tts = ic_tts();
+    $k = ic_ansage_k();
+    $k['e'] = function ($s) { return (string) $s; };     // ic_pz_zeile() maskiert selbst
+    /* Diese Linie fragt andere Plugins nur ueber den Knopf "Jetzt vollstaendig pruefen" - nicht bei
+     * jedem Aufbau des Reiters. Der Satz des Moduls ("nur bei geoeffnetem Reiter Test") passte dazu
+     * nicht; die Linie nennt ihren eigenen (Schluessel ueber 'schluessel', Entwurf 3.5). */
+    $k['schluessel'] += array('T_ALEXA_ZU' => 'TEST.A_ANSAGE_NG_KNOPF', 'T_GOOGLE_ZU' => 'TEST.A_ANSAGE_NG_KNOPF');
+    list($st, $text) = ansage_pruefzeile($tts, (bool) $mit_netz, $k);
+    if (ic_ansage_an() && ic_klingel_an('sprache')) {
+        $text .= ' ' . ic_uebersetzt('TEST.A_ANSAGE_DOPPELT', array(),
+            'Auch die Ansage ueber die Sprachsteuerung ist eingeschaltet - beim Klingeln kommen zwei Ansagen.');
+        if ($st === 1) { $st = -1; }
+    }
+    $lage = $st === 1 ? 'ok' : ($st === 0 ? 'unklar' : 'hinweis');
+    return ic_pz($lage, 'TEST.F_ANSAGE', $text);
+}
+
+/* ------------------------------------------------------------------
  * X-3: besteht die eigene Sicherung das eigene Zurueckspielen?
  * ------------------------------------------------------------------
  * Ueber DIESELBE Funktion wie das Zurueckspielen (ic_sicherung_lesen()).
@@ -4755,7 +4868,9 @@ function ic_pruefe_klingel($art, $mit_netz = false)
  */
 function ic_sicherung_selbstpruefung()
 {
-    $js = json_encode(ic_config(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $c = ic_config();
+    if (isset($c['tts']) && is_array($c['tts'])) { $c['tts'] = ansage_sicherung_bereinigen($c['tts']); }
+    $js = json_encode($c, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($js === false) { return array(ic_txt('UI.SICH_KEIN_JSON')); }
     $erg = ic_sicherung_lesen($js);
     return ($erg[0] === null && isset($erg[1]) && is_array($erg[1])) ? $erg[1] : array();

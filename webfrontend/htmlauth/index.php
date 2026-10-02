@@ -164,6 +164,14 @@ function ic_eingaben_sammeln($form, array $falsch)
                    'klingel_signal', 'klingel_sprache') as $k) {
         $e['haken'][$k] = isset($_POST[$k]);
     }
+    /* Nr. 36 b: die Felder der Sprachausgabe - nie die Sprechtoken (ansage_x2_felder()). */
+    foreach (ansage_x2_felder(ic_ansage_opt()) as $k) {
+        if (substr($k, -9) === '_loeschen') {
+            $e['haken'][$k] = isset($_POST[$k]);
+        } else {
+            $e['werte'][$k] = $str(isset($_POST[$k]) ? $_POST[$k] : '');
+        }
+    }
     $namen = (isset($_POST['st_name']) && is_array($_POST['st_name'])) ? $_POST['st_name'] : array();
     foreach (array_keys($namen) as $i) {
         if (count($e['stationen']) >= 51) { break; }
@@ -375,9 +383,15 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
         '_erzeugt' => date('Y-m-d H:i:s'),
         '_hinweis' => 'Diese Datei enthaelt das Zugriffstoken und die '
                     . 'Zugangsdaten der Tuerstationen, gegebenenfalls auch die Token '
-                    . 'fuer SignalBot und Sprachsteuerung. Wie ein Passwort behandeln.',
+                    . 'fuer SignalBot und Sprachsteuerung. Wie ein Passwort behandeln. '
+                    . 'Die Sprechtoken der Sprachausgabe sind nie enthalten.',
     );
-    $ic_js = json_encode($ic_kopf + ic_config(),
+    /* Nr. 36 b: die Sprechtoken der Sprachausgabe gehen nie in eine Sicherung. */
+    $ic_sich = ic_config();
+    if (isset($ic_sich['tts']) && is_array($ic_sich['tts'])) {
+        $ic_sich['tts'] = ansage_sicherung_bereinigen($ic_sich['tts']);
+    }
+    $ic_js = json_encode($ic_kopf + $ic_sich,
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($ic_js !== false) {
         header('Content-Type: application/json; charset=utf-8');
@@ -671,6 +685,16 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
         }
     }
 
+    /* Nr. 36 b (Stufe 2): die Sprachausgabe. Jede Beanstandung verhindert das Speichern
+     * (Nr. 16); kein Sprechtoken steht in einer Meldung, ein leeres Tokenfeld heisst
+     * "behalten", der Haken loescht, beides zugleich ist ein Widerspruch. */
+    $ic_tmangel = array();
+    $ic_tbean = array();
+    $ic_neu['tts'] = ansage_formular_lesen($_POST, ic_tts(), $ic_tmangel, $ic_tbean, ic_ansage_opt(),
+                                           ic_ansage_k());
+    foreach ($ic_tmangel as $ic_tm) { $ic_abweisung[] = ic_e($ic_tm['text']); }
+    foreach ($ic_tbean as $ic_tb) { $ic_falsch[] = $ic_tb; }
+
     /* Haken */
     foreach (array('timestamp_image', 'timestamp_video', 'timelapse_enable',
                    'timelapse_video', 'tv_enable', 'ai_enable') as $ic_k) {
@@ -852,6 +876,18 @@ if ($ic_wollte && $ic_darf && isset($_POST['tat'])) {
             $ic_ausgabe[] = $ic_probe ? ic_txtf('UI.M_CU_PROBE', $ic_zahl, ic_e(ic_byte($ic_byte)))
                                    : ic_txtf('UI.M_CU_OK', $ic_zahl, ic_e(ic_byte($ic_byte)));
             foreach ($ic_zeilen as $ic_z) { $ic_ausgabe[] = ic_e($ic_z); }
+        }
+    } elseif ($ic_tat === 'ansage_test') {
+        /* Nr. 36 b: die Testansage. Ins Protokoll nur die Kurzform ohne Text und Token. */
+        $ic_ak = ic_ansage_k();
+        $ic_ar = ansage_testansage(ic_tts(), $ic_ak);
+        ic_log('Testansage: ' . ansage_kurz($ic_ar));
+        if ($ic_ar['stand'] === 1) {
+            $ic_ausgabe[] = ic_txt('UI.M_ANSAGE_TEST_OK');
+        } elseif ($ic_ar['stand'] === -1) {
+            $ic_ausgabe[] = ic_txtf('UI.M_ANSAGE_TEST_NICHTS', ic_e(ansage_kennung_text($ic_ar['kennung'], $ic_ak)));
+        } else {
+            $ic_fehler[] = ic_txtf('UI.M_ANSAGE_TEST_FEHL', ic_e(ansage_kennung_text($ic_ar['kennung'], $ic_ak)));
         }
     } elseif ($ic_tat === 'bildlink') {
         /* BERICHTIGT 2.2.13 (O7): die Meldung nennt die GEKAPPTE Stundenzahl -
@@ -1301,6 +1337,18 @@ $ic_schutz_ist = ic_archiv_geschuetzt();
 <p class="sm-klein"><?= ic_txtf('UI.KLINGEL_AUSLOESER_TEXT', ic_mono('&trigger=klingel'), ic_fett(ic_roh('UI.REITER_LOXONE'))) ?></p>
 <p class="sm-klein"><?= ic_txtf('UI.KLINGEL_TEST', ic_fett(ic_roh('UI.REITER_TEST'))) ?></p>
 
+<h2><?= ic_txt('UI.H_ANSAGE') ?></h2>
+<p class="sm-klein"><?= ic_txt('UI.ANSAGE_TEXT') ?></p>
+<?php if (ic_ansage_an() && ic_klingel_an('sprache')) { ?>
+<div class="sm-hinweis sm-warn"><?= ic_txt('UI.ANSAGE_DOPPELT') ?></div>
+<?php } ?>
+<?= ansage_formular_html(ic_tts(), array(
+    'w' => function ($n, $g) { return ic_fw('settings', $n, $g); },
+    'm' => function ($n) { return ic_fk('settings', $n); },
+    'c' => function ($n, $g) { return ic_fh('settings', $n, $g); },
+    'modi' => ic_ansage_modi()), ic_ansage_k()) ?>
+<p class="sm-klein"><?= ic_txtf('UI.ANSAGE_TEST_HINWEIS', ic_fett(ic_roh('UI.REITER_TEST'))) ?></p>
+
 <div class="sm-knopfreihe">
 <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="speichern" value="1"><?= ic_txt('UI.SPEICHERN') ?></button>
 </div>
@@ -1541,6 +1589,7 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
 </table>
 </div>
 <p class="sm-klein"><?= ic_txt('LOX.B_ZU2') ?></p>
+<p class="sm-klein"><?= ic_txt('LOX.B_ZU3') ?></p>
 <p class="sm-klein"><?= ic_txt('LOX.B_ZU5') ?></p>
 <p class="sm-klein"><?= ic_txt('LOX.B_ZU7') ?></p>
 </div>
@@ -1671,6 +1720,10 @@ if ($ic_neueste) { ?>
 <form method="post" action="index.php">
 <?= ic_formularfelder('test') ?>
 <button type="submit" data-role="none" class="sm-btn sm-b-aktion" name="tat" value="timelapse"><?= ic_txt('UI.K_TL') ?></button>
+</form>
+<form method="post" action="index.php">
+<?= ic_formularfelder('test') ?>
+<button type="submit" data-role="none" class="sm-btn sm-b-aktion" name="tat" value="ansage_test"><?= ic_txt('UI.K_ANSAGE_TEST') ?></button>
 </form>
 <form method="post" action="index.php">
 <?= ic_formularfelder('test') ?>
