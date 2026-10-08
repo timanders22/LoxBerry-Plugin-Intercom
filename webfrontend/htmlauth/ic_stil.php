@@ -25,7 +25,11 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
 ?>
 <style>
 .smw, .smw * { text-shadow: none !important; }
-.smw { max-width: 1100px; margin-top: -55px; }
+/* Seit 2.2.20 margin-top 0 statt -55px: der Wert war auf die LoxBerry-
+   Navigationsleiste abgestimmt (#vuenavbar unten, 93 px tiefer). Ohne
+   Leiste zoege er die Ueberschrift unter die Kopfzeile. 0 wie in allen
+   Hausplugins ohne Leiste. */
+.smw { max-width: 1100px; margin-top: 0; }
 .smw h1 { color: #6dac20; font-size: 1.5em; margin: 0 0 4px; }
 .smw h2 { color: #6dac20; margin: 18px 0 6px; font-size: 1.15em; }
 .smw h3.sm-h3 { color: #4f7d17; font-size: 1.0em; font-weight: 700; margin: 16px 0 2px; }
@@ -143,12 +147,20 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
 .smw select.sm-auswahl.sm-beanstandet { border-color: #c0392b !important; background-color: #fff5f4 !important; }
 .smw .sm-gelb { border-left-color: #d4a000; background: #fffbe6; }
 
-/* Die Reiterleiste von LoxBerry ("Start | Live | Bilder Archiv | Video
-   Archiv") klebte unmittelbar unter der Kopfzeile. Der Selektor #vuenavbar
-   ist am laufenden LoxBerry nachgemessen (Kette a.vuenavbarelement ->
-   div.vuenavbarcontainer -> div#vuenavbar) und die Wirkung dort geprueft.
-   93 px = 139 px des Nutzerwunsches minus ein Drittel. */
-#vuenavbar { margin-top: 93px; }
+/* Statusuebersicht ueber den Reitern (Nr. 43, seit 2.2.20): die Hausklasse
+   woertlich aus VORLAGE_hausstandard.css.html. */
+.sm-tbl { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.9em; }
+.sm-tbl th, .sm-tbl td { border: 1px solid #ccc; padding: 5px 7px; text-align: left; vertical-align: top; }
+.sm-tbl th { background: #eef3e6; font-weight: 600; }
+
+/* Seit 2.2.20 hat die LoxBerry-Navigationsleiste keine Eintraege mehr
+   (Live, Bilder, Videos sind Reiter, Nr. 43). LoxBerry zeichnet den leeren
+   Behaelter trotzdem samt Unterkante; die bis 2.2.19 hier stehende Regel
+   #vuenavbar { margin-top: 93px; } schob ihn zu einem leeren Streifen ueber
+   dem Titel (am Geraet gesehen, 09.10.2026). Der Selektor ist am laufenden
+   LoxBerry nachgemessen (a.vuenavbarelement -> div.vuenavbarcontainer ->
+   div#vuenavbar). */
+#vuenavbar { display: none; }
 </style>
 <?php
 }

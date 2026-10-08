@@ -2,9 +2,25 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.19 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.20 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.20
+
+Kopf wie alle Hausplugins: Statusübersicht über den Reitern, Zusammenfassung oben im ersten Reiter.
+
+* **Live, Bilderarchiv und Videoarchiv sind grüne Reiter** wie die übrigen, gleich hinter
+  *Einstellungen*. Die LoxBerry-Navigationsleiste darüber ist weg. Inhalt und Bedienung der drei
+  Seiten sind unverändert (Stationswahl, Blättern, Löschen einzelner Aufnahmen); sie entstehen nur,
+  wenn der Reiter offen ist, damit das Livebild nicht bei jedem Aufruf der Startseite mitläuft.
+  Alte Lesezeichen auf `live.php`, `archive.php` und `videoarchive.php` leiten auf den Reiter um.
+* **Statusübersicht über den Reitern:** Türstationen, Zugriffstoken, Zahl der Bilder und Videos und
+  die Bilanz der Selbstprüfung – aus Werten, die die Seite ohnehin liest, ohne eigene Abfrage.
+* **Zusammenfassung** des Plugins in einem grünen Kasten oben im Reiter Einstellungen.
+* Ohne die Navigationsleiste rückt die Seite nicht mehr 55 px nach oben (der Wert war auf die
+  Leiste abgestimmt).
+* Nur Oberfläche; gerendert unter PHP 7.4, 8.4 und 8.5, nicht am Gerät angesehen.
 
 ## Unterstützte Türstationen
 

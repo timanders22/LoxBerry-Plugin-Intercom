@@ -6,8 +6,10 @@ error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 /**
  * Intercom - Bedienoberflaeche
  *
- * Eine Seite mit sechs Reitern statt sechs Einzelseiten:
- * Einstellungen | MQTT | Einbindung in Loxone | Archiv | Test | Logdateien
+ * Eine Seite mit neun Reitern statt Einzelseiten (seit 2.2.20 auch Live,
+ * Bilder- und Videoarchiv - vorher hinter der LoxBerry-Navigationsleiste):
+ * Einstellungen | Live | Bilderarchiv | Videoarchiv | MQTT |
+ * Einbindung in Loxone | Archiv | Test | Logdateien
  *
  * Alle Variablen tragen das Praefix ic_, weil LBWeb::lbheader() eigene
  * globale Variablen setzt und es sonst zu Namenskollisionen kommt.
@@ -17,6 +19,7 @@ error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
  */
 
 require_once "config.php";
+require_once __DIR__ . "/ic_bereiche.php";
 
 $L = LBSystem::readlanguage("language.ini");
 
@@ -210,6 +213,9 @@ function ic_feld_text($v)
  */
 $ic_reiter = array(
     'settings' => 'UI.REITER_EINSTELLUNGEN',
+    'live'     => 'COMMON.LIVE',
+    'bilder'   => 'COMMON.BACKUP',
+    'videos'   => 'COMMON.BACKUPVIDEO',
     'mqtt'     => 'UI.REITER_MQTT',
     'loxone'   => 'UI.REITER_LOXONE',
     'archiv'   => 'UI.REITER_ARCHIV',
@@ -228,8 +234,8 @@ $ic_reiter = array(
  * die Uebereinstimmung im Reiter Test pruefen lassen. Das tut
  * ic_pruefe_reiter() - sie zaehlt Leiste, Bereiche und diese Liste
  * gegeneinander und wird rot, sobald eine der drei Stellen abweicht. */
-$ic_tabliste = array('tab-settings', 'tab-mqtt', 'tab-loxone', 'tab-archiv',
-                     'tab-test', 'tab-log');
+$ic_tabliste = array('tab-settings', 'tab-live', 'tab-bilder', 'tab-videos',
+                     'tab-mqtt', 'tab-loxone', 'tab-archiv', 'tab-test', 'tab-log');
 
 $ic_datei   = ic_paths()['config'] . '/data.json';
 $ic_host    = ic_host();
@@ -267,8 +273,6 @@ if (!$ic_upgrade) {
 $ic_cfg = ic_config();
 
 if ($ic_upgrade) {
-    require_once "menu.php";
-    $navbar[1]['active'] = True;
     LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
     require_once __DIR__ . "/ic_stil.php";
     echo '<div class="smw">' . "\n"
@@ -1053,11 +1057,10 @@ if ($ic_logdatei !== '') {
  * Ausgabe
  * ================================================================== */
 
-/* menu.php setzt nur $navbar und gibt nichts aus - lbheader() braucht es.
- * ic_stil.php dagegen GIBT AUS (gemessen: 7200 Byte) und wird deshalb seit
- * 2.2.6 erst nach lbheader() eingebunden, unten. */
-require_once "menu.php";
-$navbar[1]['active'] = True;
+/* Seit 2.2.20 ohne LoxBerry-Navigationsleiste (menu.php entfaellt; Live,
+ * Bilder- und Videoarchiv sind Reiter). ic_stil.php GIBT AUS (gemessen:
+ * 7200 Byte) und wird deshalb seit 2.2.6 erst nach lbheader() eingebunden,
+ * unten. */
 
 /* X-2: Werte eines Formulars - nach einer Beanstandung die eingetippten,
  * sonst die gespeicherten. ic_fk() markiert ein beanstandetes Feld. */
@@ -1125,8 +1128,7 @@ function ic_pz_zeile(array $z)
 
 LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
 
-/* Erst hier - die Datei gibt aus. Ihre eigene Kopfzeile sagt es seit jeher,
- * live.php, archive.php und videoarchive.php halten sich daran. */
+/* Erst hier - die Datei gibt aus. Ihre eigene Kopfzeile sagt es seit jeher. */
 require_once __DIR__ . "/ic_stil.php";
 
 ?>
@@ -1147,8 +1149,27 @@ require_once __DIR__ . "/ic_stil.php";
 <?= ic_txtf('UI.NICHT_EINGERICHTET_TEXT', ic_fett(ic_roh('UI.REITER_EINSTELLUNGEN'))) ?></div>
 <?php } ?>
 
+<?php /* Kopf (Entscheidung Nr. 43, seit 2.2.20): Statusuebersicht ueber den
+   Reitern, immer sichtbar. Keine eigene Abfrage: Stationen, Token, Archivzahlen
+   und die Bilanz der Selbstpruefung (ohne Netz) stehen oben schon fest. */ ?>
+<table class="sm-tbl" style="max-width:620px">
+<tr><th><?= ic_txt('UI.KOPF_EIGENSCHAFT') ?></th><th><?= ic_txt('UI.KOPF_WERT') ?></th></tr>
+<tr><td><?= ic_txt('UI.KOPF_DIENST') ?></td><td><?= ic_txt('UI.KOPF_OHNE_DIENST') ?></td></tr>
+<tr><td><?= ic_txt('UI.H_STATIONEN') ?></td>
+    <td><?= $ic_st ? ic_txtf('UI.KOPF_STATIONEN_N', count($ic_st)) : '<span class="sm-fehl">' . ic_txt('UI.KOPF_STATIONEN_KEINE') . '</span>' ?></td></tr>
+<tr><td><?= ic_txt('UI.KOPF_TOKEN') ?></td>
+    <td><?= $ic_token !== '' ? ic_txt('UI.KOPF_TOKEN_JA') : '<span class="sm-fehl">' . ic_txt('UI.KOPF_TOKEN_NEIN') . '</span>' ?></td></tr>
+<tr><td><?= ic_txt('UI.REITER_ARCHIV') ?></td>
+    <td><?= ic_txtf('UI.KOPF_ARCHIV_WERT', (int) $ic_zahlen['bilder'], (int) $ic_zahlen['videos']) ?></td></tr>
+<tr><td><?= ic_txt('UI.KOPF_SELBSTTEST') ?></td>
+    <td><span class="<?= $ic_bilanz['fehl'] > 0 ? 'sm-fehl' : ($ic_bilanz['unklar'] > 0 ? 'sm-unklar' : 'sm-ok') ?>"><?= ic_txtf('UI.BILANZ', $ic_bilanz['ok'], $ic_bilanz['gewertet']) ?></span></td></tr>
+</table>
+
 <div class="sm-reiter">
 <a class="<?= $ic_offen === 'settings' ? 'sm-active' : '' ?>" data-ziel="tab-settings" href="index.php?tab=settings"><?= ic_txt('UI.REITER_EINSTELLUNGEN') ?></a>
+<a class="<?= $ic_offen === 'live' ? 'sm-active' : '' ?>" data-ziel="tab-live" data-neu="1" href="index.php?tab=live"><?= ic_txt('COMMON.LIVE') ?></a>
+<a class="<?= $ic_offen === 'bilder' ? 'sm-active' : '' ?>" data-ziel="tab-bilder" data-neu="1" href="index.php?tab=bilder"><?= ic_txt('COMMON.BACKUP') ?></a>
+<a class="<?= $ic_offen === 'videos' ? 'sm-active' : '' ?>" data-ziel="tab-videos" data-neu="1" href="index.php?tab=videos"><?= ic_txt('COMMON.BACKUPVIDEO') ?></a>
 <a class="<?= $ic_offen === 'mqtt' ? 'sm-active' : '' ?>" data-ziel="tab-mqtt" href="index.php?tab=mqtt"><?= ic_txt('UI.REITER_MQTT') ?></a>
 <a class="<?= $ic_offen === 'loxone' ? 'sm-active' : '' ?>" data-ziel="tab-loxone" href="index.php?tab=loxone"><?= ic_txt('UI.REITER_LOXONE') ?></a>
 <a class="<?= $ic_offen === 'archiv' ? 'sm-active' : '' ?>" data-ziel="tab-archiv" href="index.php?tab=archiv"><?= ic_txt('UI.REITER_ARCHIV') ?></a>
@@ -1158,6 +1179,7 @@ require_once __DIR__ . "/ic_stil.php";
 
 <!-- ===================== Einstellungen ===================== -->
 <div class="sm-seite<?= $ic_offen === 'settings' ? ' sm-active' : '' ?>" id="tab-settings">
+<div class="sm-hinweis"><b><?= ic_txt('UI.WAS_IST_DAS_KOPF') ?></b> <?= ic_txt('UI.WAS_IST_DAS') ?></div>
 <!-- EINE gesammelte Legende oben im Reiter, nicht je Knopfreihe - und sie
      nennt genau die beiden Farben, die hier vorkommen. Bis 2.2.5 stand sie
      113 Zeilen weiter unten, und der gruene Punkt trug den Text des
@@ -1405,6 +1427,22 @@ if ($ic_sich_mangel) { ?>
 </div>
 </div>
 
+<!-- ===================== Live, Bilderarchiv, Videoarchiv =====================
+     Seit 2.2.20 Reiter (bis 2.2.19 Einzelseiten hinter der LoxBerry-
+     Navigationsleiste). Der Inhalt entsteht NUR im offenen Reiter: das
+     Livebild belegt einen Leserplatz und laeuft nach einer Frist ab, die
+     Galerien laden bis zu 38 Bilder. data-neu laesst das Umschaltskript
+     den Klick als Seitenwechsel durch. Inhalt: ic_bereiche.php. -->
+<div class="sm-seite<?= $ic_offen === 'live' ? ' sm-active' : '' ?>" id="tab-live" data-neu="1">
+<?php if ($ic_offen === 'live') { ic_bereich_live(); } ?>
+</div>
+<div class="sm-seite<?= $ic_offen === 'bilder' ? ' sm-active' : '' ?>" id="tab-bilder" data-neu="1">
+<?php if ($ic_offen === 'bilder') { ic_bereich_bilder(); } ?>
+</div>
+<div class="sm-seite<?= $ic_offen === 'videos' ? ' sm-active' : '' ?>" id="tab-videos" data-neu="1">
+<?php if ($ic_offen === 'videos') { ic_bereich_videos(); } ?>
+</div>
+
 <!-- ===================== MQTT ===================== -->
 <div class="sm-seite<?= $ic_offen === 'mqtt' ? ' sm-active' : '' ?>" id="tab-mqtt">
 <form method="post" action="index.php">
@@ -1624,9 +1662,9 @@ $ic_g = ic_aufbewahrung();
 <span><i class="sm-punkt sm-b-aktion"></i> <?= ic_txt('UI.LEG_AKTION') ?></span>
 </div>
 <div class="sm-knopfreihe">
-<a class="sm-btn sm-b-lesen" href="live.php"><?= ic_txt('UI.K_LIVE') ?></a>
-<a class="sm-btn sm-b-lesen" href="archive.php"><?= ic_txt('UI.K_BILDARCHIV') ?></a>
-<a class="sm-btn sm-b-lesen" href="videoarchive.php"><?= ic_txt('UI.K_VIDEOARCHIV') ?></a>
+<a class="sm-btn sm-b-lesen" href="index.php?tab=live"><?= ic_txt('UI.K_LIVE') ?></a>
+<a class="sm-btn sm-b-lesen" href="index.php?tab=bilder"><?= ic_txt('UI.K_BILDARCHIV') ?></a>
+<a class="sm-btn sm-b-lesen" href="index.php?tab=videos"><?= ic_txt('UI.K_VIDEOARCHIV') ?></a>
 </div>
 <div class="sm-knopfreihe">
 <?php foreach (array('bilder' => 'UI.K_DEL_BILDER', 'videos' => 'UI.K_DEL_VIDEOS',
@@ -1777,6 +1815,11 @@ if ($ic_neueste) { ?>
     for (var i = 0; i < leiste.length; i++) {
         leiste[i].addEventListener('click', function (e) {
             var ziel = this.getAttribute('data-ziel');
+            /* Seit 2.2.20: Live, Bilder- und Videoarchiv (data-neu) entstehen nur
+               im offenen Reiter - hin und weg ist deshalb ein echter Seitenwechsel,
+               damit das Livebild nicht versteckt weiterlaeuft. */
+            if (this.hasAttribute('data-neu')
+                || document.querySelector('.smw .sm-seite.sm-active[data-neu]')) { return; }
             var s = document.getElementById(ziel);
             if (!s) { return; }
             e.preventDefault();
