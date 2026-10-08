@@ -4831,9 +4831,9 @@ function ic_ansage_k()
         'kopf'   => array('User-Agent: LoxBerry Intercom'),
         'ordner' => @is_dir($p['datadir']) ? $p['datadir'] : '',
         't'      => function ($s) { return ic_sprachwert($s, $s); },
-        /* Zu dieser Kennung hat das Modul (1.0.2) keinen Satz in [ANSAGE]; ohne ihn stuende sie roh in
-         * der Sicherungsmeldung. Linieneigener Schluessel, bis der Modulschluessel mit Stufe 2 kommt
-         * (Entwurf, Stufe 2). */
+        /* Zu dieser Kennung hat das Modul (1.0.2 bis 1.1.1) keinen Satz in [ANSAGE]; ohne ihn stuende sie
+         * roh in der Sicherungsmeldung. Linieneigener Schluessel, bis eine Modulfassung K_TTS_EINTRAG
+         * fuehrt (Entwurf, Stufe 2; 2.2.19: Modul 1.1.1, gemessen ohne den Schluessel). */
         'schluessel' => array('K_TTS_EINTRAG' => 'UI.SICH_TTS_EINTRAG'),
     );
 }

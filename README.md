@@ -2,7 +2,7 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.18 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.19 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
 
@@ -35,6 +35,24 @@ Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
 https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
 
+
+## Neu in 2.2.19
+
+Gemeinsames Sprachmodul 1.1.1 statt 1.0.2. Gemessen unter PHP 7.4 und 8.5 gegen Attrappen; nicht am Gerät.
+
+* **Adressen im Heimnetz:** Auch Namen auf `.intern` (etwa `ms.intern`) gelten als Heimnetz, ebenso `[::1]`
+  (dieselbe Maschine wie `127.0.0.1`). Andere Adressen werden wie bisher abgewiesen.
+* **Strengere Prüfung beim Speichern und Zurückspielen:** Lautstärke für Alexa-NG und Google-Lautsprecher
+  leer oder 1 bis 100 (0 wäre stumm und gälte trotzdem als gesprochen); Zonen als Zahlen durch Komma, je
+  wahlweise mit `~Lautstärke` 1 bis 100 – `1,2,` oder `2~0` werden benannt abgewiesen, nichts wird
+  gespeichert. Ein früher gespeicherter Wert dieser Art wird beim nächsten Speichern markiert, und die
+  Ansage unterbleibt mit einer Meldung im Protokoll, statt stumm als gesprochen zu gelten.
+* Ein Netzfehler zur Gegenstelle nennt jetzt auch den Fehlertext (Protokoll, Testansage, Reiter Test).
+* Die Texte des Abschnitts Sprachausgabe kommen aus der neuen Textdatei des Moduls (152 statt 137 Sätze).
+* Die Einstellungen bekommen zwei neue Felder `tts.sonos_zone` und `tts.sonos_laut` mit Vorgabewerten; Intercom
+  bietet die Ausgabeart Sonos4Lox nicht an. Eine Sicherung aus 2.2.18 wird angenommen.
+
+**In Loxone:** nichts zu tun.
 
 ## Neu in 2.2.18
 
