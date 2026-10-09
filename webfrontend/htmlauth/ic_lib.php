@@ -4831,10 +4831,8 @@ function ic_ansage_k()
         'kopf'   => array('User-Agent: LoxBerry Intercom'),
         'ordner' => @is_dir($p['datadir']) ? $p['datadir'] : '',
         't'      => function ($s) { return ic_sprachwert($s, $s); },
-        /* Zu dieser Kennung hat das Modul (1.0.2 bis 1.1.1) keinen Satz in [ANSAGE]; ohne ihn stuende sie
-         * roh in der Sicherungsmeldung. Linieneigener Schluessel, bis eine Modulfassung K_TTS_EINTRAG
-         * fuehrt (Entwurf, Stufe 2; 2.2.19: Modul 1.1.1, gemessen ohne den Schluessel). */
-        'schluessel' => array('K_TTS_EINTRAG' => 'UI.SICH_TTS_EINTRAG'),
+        /* K_TTS_EINTRAG: den Satz bringt das Modul seit 1.1.2 selbst mit; die Umlenkung auf
+         * UI.SICH_TTS_EINTRAG ist seit 2.2.21 gestrichen (X-10). Ab Werk aus - kein 'werk'. */
     );
 }
 
@@ -4847,7 +4845,9 @@ function ic_pruefe_ansage($mit_netz = false)
     /* Diese Linie fragt andere Plugins nur ueber den Knopf "Jetzt vollstaendig pruefen" - nicht bei
      * jedem Aufbau des Reiters. Der Satz des Moduls ("nur bei geoeffnetem Reiter Test") passte dazu
      * nicht; die Linie nennt ihren eigenen (Schluessel ueber 'schluessel', Entwurf 3.5). */
-    $k['schluessel'] += array('T_ALEXA_ZU' => 'TEST.A_ANSAGE_NG_KNOPF', 'T_GOOGLE_ZU' => 'TEST.A_ANSAGE_NG_KNOPF');
+    /* 2.2.21: ic_ansage_k() fuehrt keinen Eintrag 'schluessel' mehr - ohne Vorgabe waere das null + array. */
+    $k['schluessel'] = (isset($k['schluessel']) && is_array($k['schluessel']) ? $k['schluessel'] : array())
+        + array('T_ALEXA_ZU' => 'TEST.A_ANSAGE_NG_KNOPF', 'T_GOOGLE_ZU' => 'TEST.A_ANSAGE_NG_KNOPF');
     list($st, $text) = ansage_pruefzeile($tts, (bool) $mit_netz, $k);
     if (ic_ansage_an() && ic_klingel_an('sprache')) {
         $text .= ' ' . ic_uebersetzt('TEST.A_ANSAGE_DOPPELT', array(),

@@ -2,9 +2,23 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.20 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.21 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.21
+
+Baustein-Liste in der Schreibweise des Leitungswerkzeugs, gemeinsame Sprachausgabe 1.1.2.
+
+* **Baustein-Liste (Reiter Loxone, Schritt 9):** Die Spalte „Eingänge verbinden mit“ nennt die Quellen in
+  fester Form: `Ausgang von #1` statt „Eingang: Baustein 1“, am Video `Ausgang der Verzögerung (optional, #2)`,
+  am Eingang des Gateways „– (kommt vom MQTT-Gateway)“. Der Klingeltaster bleibt in Worten. Gleiche Bausteine,
+  gleiche Verbindungen.
+* **Sprachausgabe 1.1.2:** gemeinsames Modul und Abschnitt [ANSAGE] mit 157 Sätzen. Den Satz zu einem
+  unbekannten Eintrag im Block der Sprachausgabe bringt jetzt das Modul mit; die eigene Umlenkung ist
+  gestrichen (gleicher Wortlaut). Dazu aus dem Modul: Zeichenzahl bei kaputtem UTF-8 in Zeichen, die
+  Meldung „Port abgewiesen“ nennt das Feld nicht mehr doppelt.
+* Reiter Live, Bilder und Videos unverändert. Gerendert unter PHP 7.4, 8.4 und 8.5, nicht am Gerät angesehen.
 
 ## Neu in 2.2.20
 
