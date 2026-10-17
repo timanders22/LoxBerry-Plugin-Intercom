@@ -1578,6 +1578,7 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
 
 <div class="sm-step"><b><?= ic_txt('LOX.S8') ?></b><br>
 <?= ic_txt('LOX.S8_TEXT') ?>
+<p class="sm-klein"><?= ic_txt('LOX.S8_MQTT') ?></p>
 <div class="sm-hinweis sm-warn"><?= ic_txt('LOX.IMPORT_WARN') ?></div>
 <div class="sm-legende">
 <span><i class="sm-punkt sm-b-technik"></i> <?= ic_txt('UI.LEG_TECHNIK') ?></span>
@@ -1596,40 +1597,41 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
 
 <div class="sm-step"><b><?= ic_txt('LOX.S9') ?></b><br>
 <?= ic_txt('LOX.S9_TEXT') ?>
+<?php
+/* Welle Bild 18 (2.2.22): die Seite "Intercom" aus dem LoxBerry-Plugins Musterprojekt - Ueberschrift (=
+ * Seitenname in Config), Kasten "So uebernehmen Sie diese Seite", Tabelle, Hinweise, Bild und Link. Bis 2.2.21
+ * stand hier eine feste Tabelle mit sieben Zeilen (LOX.B1_* - B7_*) und vier Erlaeuterungen. Zellen, Schritte und
+ * Hinweise kommen als Klartext aus ic_bausteinliste() (ic_lib.php) und werden hier maskiert; Gateway-Namen und
+ * Befehlstitel rechnet die Funktion aus Praefix und erster Station. Nur der Link-Satz ist freigegebenes HTML. */
+$ic_bs = ic_bausteinliste();
+?>
+<h4 class="sm-h4"><?= ic_e($ic_bs['seite']) ?></h4>
+<div class="sm-hinweis"><b><?= ic_txt('LOX.SCHRITTE_TITEL') ?></b>
+<ol class="sm-schritte">
+<?php foreach ($ic_bs['schritte'] as $ic_x) { ?>
+<li><?= ic_e($ic_x) ?></li>
+<?php } ?>
+</ol></div>
 <div class="sm-tabrahmen">
-<table>
+<table class="sm-tbl">
 <tr><th>#</th><th><?= ic_txt('LOX.SP_BAUSTEIN') ?></th><th><?= ic_txt('LOX.SP_NAME') ?></th>
     <th><?= ic_txt('LOX.SP_PARAMETER') ?></th><th><?= ic_txt('LOX.SP_VERBINDEN') ?></th></tr>
-<tr><td>1</td><td><?= ic_txt('LOX.B1_TYP') ?></td><td><?= ic_txt('LOX.B1_NAME') ?></td>
-    <td><?= ic_txt('LOX.B1_PARAM') ?></td><td><?= ic_txt('LOX.B1_VERB') ?></td></tr>
-<tr><td>2</td><td><?= ic_txt('LOX.B2_TYP') ?></td><td><?= ic_txt('LOX.B2_NAME') ?></td>
-    <td><?= ic_txt('LOX.B2_PARAM') ?></td><td><?= ic_txt('LOX.B2_VERB') ?></td></tr>
-<tr><td>3</td><td><?= ic_txt('LOX.B3_TYP') ?></td><td><?= ic_txt('LOX.B3_NAME') ?></td>
-    <td><?= ic_txt('LOX.B3_PARAM') ?></td><td><?= ic_txt('LOX.B3_VERB') ?></td></tr>
-<tr><td>4</td><td><?= ic_txt('LOX.B4_TYP') ?></td><td><?= ic_txt('LOX.B4_NAME') ?></td>
-    <td><?= ic_txt('LOX.B4_PARAM') ?></td><td><?= ic_txt('LOX.B4_VERB') ?></td></tr>
-<!-- Der Name wird GERECHNET, nicht getippt: das Gateway benennt den Eingang
-     nach dem Thema und ersetzt dabei "/" durch "_". Bis 2.2.5 stand hier
-     woertlich "intercom_ok" - bei einer Zweitinstallation (intercom_01) oder
-     eigenem Praefix zeigte die Baustein-Liste auf einen Eingang, den das
-     Gateway nie anlegt. Und ausgerechnet an ihm haengt die Ausfallerkennung.
-     Baustein 5 haengt seit 2.2.6 an status/ts statt an ok. BERICHTIGT 2.2.13
-     (M8): hier stand "ok kommt nur nach einem Bildabruf" - gemessen geht ok
-     bei jedem Herzschlag hinaus, genau wie status/ts (mqtt-Pruefer, Befund 10).
-     Beide tragen denselben Zeitpunkt; status/ts ist der Name nach Hausschema,
-     ok bleibt fuer bestehende Anlagen. -->
-<tr><td>5</td><td><?= ic_txt('LOX.B5_TYP') ?></td><td><?= ic_txtf('LOX.B5_NAME', ic_mono(ic_gatewayname(ic_mqtt_praefix()) . '_status_ts')) ?></td>
-    <td><?= ic_txt('LOX.B5_PARAM') ?></td><td><?= ic_txt('LOX.B5_VERB') ?></td></tr>
-<tr><td>6</td><td><?= ic_txt('LOX.B6_TYP') ?></td><td><?= ic_txt('LOX.B6_NAME') ?></td>
-    <td><?= ic_txt('LOX.B6_PARAM') ?></td><td><?= ic_txt('LOX.B6_VERB') ?></td></tr>
-<tr><td>7</td><td><?= ic_txt('LOX.B7_TYP') ?></td><td><?= ic_txt('LOX.B7_NAME') ?></td>
-    <td><?= ic_txt('LOX.B7_PARAM') ?></td><td><?= ic_txt('LOX.B7_VERB') ?></td></tr>
+<?php foreach ($ic_bs['zeilen'] as $ic_z) { ?>
+<tr><td><?= (int) $ic_z[0] ?></td><td><?= ic_e($ic_z[1]) ?></td><td><?= ic_e($ic_z[2]) ?></td><td><?= ic_e($ic_z[3]) ?></td><td><?= ic_e($ic_z[4]) ?></td></tr>
+<?php } ?>
 </table>
 </div>
-<p class="sm-klein"><?= ic_txt('LOX.B_ZU2') ?></p>
-<p class="sm-klein"><?= ic_txt('LOX.B_ZU3') ?></p>
-<p class="sm-klein"><?= ic_txt('LOX.B_ZU5') ?></p>
-<p class="sm-klein"><?= ic_txt('LOX.B_ZU7') ?></p>
+<div class="sm-hinweis sm-warn"><b><?= ic_txt('LOX.HINWEISE_TITEL') ?></b>
+<ul class="sm-schritte">
+<?php foreach ($ic_bs['hinweise'] as $ic_x) { ?>
+<li><?= ic_e($ic_x) ?></li>
+<?php } ?>
+</ul></div>
+<figure class="sm-bild">
+<img src="<?= ic_e($ic_bs['bild']) ?>" alt="<?= ic_txt('LOX.BILD_ALT') ?>" loading="lazy">
+<figcaption><?= ic_txtf('LOX.BILD_UNTERSCHRIFT', ic_e($ic_bs['seite'])) ?></figcaption>
+</figure>
+<p class="sm-klein"><?= ic_roh('LOX.MUSTERPROJEKT') ?></p>
 </div>
 
 <div class="sm-step"><b><?= ic_txt('LOX.S10') ?></b><br>

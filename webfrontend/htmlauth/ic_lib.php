@@ -2342,18 +2342,30 @@ function ic_vorlage_ausgang($host, $token)
     foreach ($st as $i => $s) {
         $nr = (string) ($i + 1);
         $a = ic_adressen($host, $token, 'klingel', $nr);
+        $h = ic_adressen($host, $token, 'hand', $nr);
         /* Der Comment wird in Loxone Config zum ANZEIGENAMEN - eine
          * Beschriftung, kein Satz. Bis 2.2.5 standen hier 42 und 56
          * Zeichen; die Erklaerung steht jetzt im HintText der Wurzel. */
         /* Seit 2.2.13 (O8) aus der Sprachdatei, mit echten Umlauten; ohne
-         * Sprachdatei (Selbsttest am Endpunkt) der deutsche Wortlaut. */
+         * Sprachdatei (Selbsttest am Endpunkt) der deutsche Wortlaut.
+         * Seit 2.2.22 (Welle Bild 18, E5) gilt das nur noch fuer den
+         * Kommentar: der TITEL ist fest deutsch (ic_vorlage_titel()).
+         * Dazu je Station der Befehl "Foto <Name> ohne Meldung" (E4):
+         * dieselbe Aufnahme mit dem Ausloeser "hand" - gemeldet wird nur
+         * bei den Ausloesern aus klingel_ausloeser (ab Werk "klingel"),
+         * so sperrt Loxone die Klingel-Meldungen ohne Plugin-Eingriff. */
         $cmds[] = array(
-            'title' => ic_sprachwert('LOX.V_FOTO', 'Foto') . ' ' . $s['name'],
+            'title' => ic_vorlage_titel('foto', $s['name']),
             'comment' => ic_sprachwert('LOX.V_FOTO_KOMMENTAR', 'Foto ins Archiv'),
             'on' => $a['bild_trig'],
         );
         $cmds[] = array(
-            'title' => ic_sprachwert('LOX.V_VIDEO', 'Video') . ' ' . $s['name'],
+            'title' => ic_vorlage_titel('foto_ohne', $s['name']),
+            'comment' => ic_sprachwert('LOX.V_FOTO_OHNE_KOMMENTAR', 'Foto ohne Meldung'),
+            'on' => $h['bild_trig'],
+        );
+        $cmds[] = array(
+            'title' => ic_vorlage_titel('video', $s['name']),
             'comment' => ic_sprachwert('LOX.V_VIDEO_KOMMENTAR', 'Video 10 s'),
             'on' => $a['video'],
         );
@@ -2421,7 +2433,8 @@ function ic_vorlage_eingang($host)
               'analog' => true, 'min' => '0', 'max' => '2000000000', 'unit' => '<v.0> s'),
     );
     return ic_xml_virtual_in(array(
-        'title'   => ic_sprachwert('LOX.VI_TITEL', 'Intercom Rückmeldungen (LoxBerry-Plugin)'),
+        // Seit 2.2.22 (Welle Bild 18, E5) fest deutsch - wie die Befehlstitel.
+        'title'   => 'Intercom Rückmeldungen (LoxBerry-Plugin)',
         'comment' => ic_sprachwert('LOX.VI_KOMMENTAR',
                          'Die Werte kommen vom MQTT-Gateway, nicht von dieser Adresse.'),
         'address' => 'http://localhost',
@@ -2434,6 +2447,145 @@ function ic_vorlage_eingang($host)
                        . 'Ausfallerkennung: <praefix>_status_zaehler ändert sich in '
                        . 'jeder Minute - bleibt er stehen, läuft der Cron nicht.'),
     ), $cmds);
+}
+
+/* ==================================================================
+ * Welle Bild 18 (2.2.22): Seite "Intercom" aus dem LoxBerry-Plugins
+ * Musterprojekt und feste Befehlstitel
+ * ================================================================== */
+
+/**
+ * Titel eines Steuerbefehls - fest deutsch (Sprachregel der Hausplugins,
+ * 13.10.2026; Entwurf Welle 18 ic, E4/E5). Loxone Config ordnet einen
+ * Befehl ueber seinen Titel zu; bis 2.2.21 kam "Foto" aus der Sprachdatei,
+ * mit englischer Oberflaeche hiess derselbe Befehl "Photo <Name>", und ein
+ * Neuimport legte ein zweites Objekt an. EINE Quelle fuer die Vorlage und
+ * fuer die Baustein-Liste im Reiter.
+ *   foto       Foto mit dem Ausloeser "klingel" - meldet je nach Plugin-
+ *              Einstellung ueber SignalBot, Sprachsteuerung, eigene Ansage
+ *   foto_ohne  Foto mit dem Ausloeser "hand" - meldet nichts (solange
+ *              "hand" nicht in der Liste der Ausloeser steht)
+ *   video      10 s Video
+ */
+function ic_vorlage_titel($art, $name)
+{
+    $name = (string) $name;
+    if ($art === 'foto_ohne') { return 'Foto ' . $name . ' ohne Meldung'; }
+    if ($art === 'video') { return 'Video ' . $name; }
+    return 'Foto ' . $name;
+}
+
+/**
+ * Ein Sprachwert UNMASKIERT mit Einsetzungen fuer die Baustein-Liste; fehlt
+ * der Schluessel, kommt sein Name zurueck (die Pruefung des gerenderten
+ * Reiters findet ihn dann). Die Werte der Liste tragen keine Auszeichnung;
+ * index.php maskiert jede Zelle. Ohne Einsetzungen kommt der Wert wie er ist
+ * (Tabellenzeilen tragen kein "%" ausser %s - geprueft im Bau).
+ */
+function ic_bs_text($schluessel, array $args = array())
+{
+    global $L;
+    if (!is_array($L) || !isset($L[$schluessel]) || !is_string($L[$schluessel])) {
+        return $schluessel;
+    }
+    if (!$args) { return $L[$schluessel]; }
+    try {
+        $t = @vsprintf($L[$schluessel], $args);
+    } catch (\Throwable $e) {
+        return $schluessel;
+    }
+    return is_string($t) ? $t : $schluessel;
+}
+
+/**
+ * Die Seite "Intercom" des Reiters "Einbindung in Loxone" - Welle Bild 18
+ * (2.2.22, Hausherr 11.10.2026: Vollausstattung, ein absoluter Laie soll das
+ * Maximum leicht uebernehmen koennen; Entwurf Welle 18 ic, E1-E14 wie
+ * empfohlen, 17.10.2026). 29 Zeilen wie im LoxBerry-Plugins Musterprojekt
+ * (Musterprojekt/baustein_listen.txt, Abschnitt "Intercom"); bis 2.2.21
+ * standen hier sieben feste Zeilen (LOX.B1_* - B7_*), deren Ausfallmeldung
+ * direkt an einem Alter hing und deshalb nie einen Ausfall meldete.
+ *
+ * GERECHNET, nicht getippt: die Gateway-Namen (ic_gatewayname() des
+ * MQTT-Praefixes, ab Werk "intercom_..."), das Abo und die Befehlstitel aus
+ * dem Namen der ersten Station (wie ic_vorlage_ausgang(); ohne Station
+ * "Intercom"). Beim Ordner "intercom" ohne eigenes Praefix ist jede Zeile
+ * wortgleich mit der Liste des Musterprojekts.
+ *
+ * Rueckgabe: array('seite', 'bild', 'zeilen' => array(array(Nr, Typ, Name,
+ * Parameter, Eingaenge), ...), 'schritte', 'hinweise') - alles Klartext,
+ * index.php maskiert.
+ */
+function ic_bausteinliste()
+{
+    $p = ic_mqtt_praefix();
+    $g = ic_gatewayname($p);
+    $abo = $p . '/#';
+    $st = ic_stationen();
+    $n = ($st && isset($st[0]['name']) && (string) $st[0]['name'] !== '') ? (string) $st[0]['name'] : 'Intercom';
+    $foto = ic_vorlage_titel('foto', $n);
+    $foto_ohne = ic_vorlage_titel('foto_ohne', $n);
+    $video = ic_vorlage_titel('video', $n);
+    $zeilen = array();
+    foreach (array(
+        ic_bs_text('LOX.Z01', array($g . '_status_ok')),
+        ic_bs_text('LOX.Z02', array($g . '_status_zaehler')),
+        ic_bs_text('LOX.Z03', array($g . '_bilder')),
+        ic_bs_text('LOX.Z04', array($g . '_ai_count')),
+        ic_bs_text('LOX.Z05', array($g . '_fehler')),
+        ic_bs_text('LOX.Z06', array()),
+        ic_bs_text('LOX.Z07', array()),
+        ic_bs_text('LOX.Z08', array()),
+        ic_bs_text('LOX.Z09', array()),
+        ic_bs_text('LOX.Z10', array()),
+        ic_bs_text('LOX.Z11', array()),
+        ic_bs_text('LOX.Z12', array($abo)),
+        ic_bs_text('LOX.Z13', array()),
+        ic_bs_text('LOX.Z14', array()),
+        ic_bs_text('LOX.Z15', array()),
+        ic_bs_text('LOX.Z16', array()),
+        ic_bs_text('LOX.Z17', array($foto)),
+        ic_bs_text('LOX.Z18', array()),
+        ic_bs_text('LOX.Z19', array()),
+        ic_bs_text('LOX.Z20', array()),
+        ic_bs_text('LOX.Z21', array()),
+        ic_bs_text('LOX.Z22', array()),
+        ic_bs_text('LOX.Z23', array($foto_ohne)),
+        ic_bs_text('LOX.Z24', array()),
+        ic_bs_text('LOX.Z25', array()),
+        ic_bs_text('LOX.Z26', array($video)),
+        ic_bs_text('LOX.Z27', array()),
+        ic_bs_text('LOX.Z28', array()),
+        ic_bs_text('LOX.Z29', array())
+    ) as $i => $t) {
+        $c = explode(' | ', $t, 4);
+        $zeilen[] = array_merge(array($i + 1), array_pad($c, 4, ''));
+    }
+    return array(
+        'seite' => 'Intercom',
+        'bild' => 'einbindung_loxone.png',
+        'zeilen' => $zeilen,
+        'schritte' => array(
+            ic_bs_text('LOX.BS_SCHRITT1', array(ic_bs_text('UI.REITER_EINSTELLUNGEN'), ic_bs_text('UI.REITER_TEST'), ic_bs_text('UI.K_PRUEFEN'))),
+            ic_bs_text('LOX.BS_SCHRITT2', array(ic_bs_text('UI.REITER_MQTT'), ic_bs_text('UI.L_MQTT'), $abo, ic_bs_text('UI.REITER_MQTT'))),
+            ic_bs_text('LOX.BS_SCHRITT3', array(ic_bs_text('UI.REITER_LOXONE'), ic_bs_text('LOX.VORLAGE_AUSGANG'), ic_bs_text('LOX.VORLAGE_EINGANG'))),
+            ic_bs_text('LOX.BS_SCHRITT4', array($g . '_fehler')),
+            ic_bs_text('LOX.BS_SCHRITT5', array()),
+            ic_bs_text('LOX.BS_SCHRITT6', array()),
+            ic_bs_text('LOX.BS_SCHRITT7', array($g . '_status_zaehler', ic_bs_text('COMMON.BACKUP')))
+        ),
+        'hinweise' => array(
+            ic_bs_text('LOX.BS_H1', array(ic_bs_text('UI.REITER_EINSTELLUNGEN'), ic_bs_text('UI.H_KLINGEL'), ic_bs_text('UI.H_ANSAGE'), $foto, $foto_ohne)),
+            ic_bs_text('LOX.BS_H2', array()),
+            ic_bs_text('LOX.BS_H3', array()),
+            ic_bs_text('LOX.BS_H4', array(ic_bs_text('UI.REITER_EINSTELLUNGEN'), $foto_ohne)),
+            ic_bs_text('LOX.BS_H5', array()),
+            ic_bs_text('LOX.BS_H6', array()),
+            ic_bs_text('LOX.BS_H7', array($g . '_status_ok')),
+            ic_bs_text('LOX.BS_H8', array(ic_bs_text('LOX.TOKEN_NEU'))),
+            ic_bs_text('LOX.BS_H9', array($g . '_status_ts', $g . '_ok'))
+        ),
+    );
 }
 
 /* ==================================================================

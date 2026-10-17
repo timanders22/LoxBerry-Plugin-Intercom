@@ -153,6 +153,15 @@ if (!defined('IC_STIL_AUSGEGEBEN')) {
 .sm-tbl th, .sm-tbl td { border: 1px solid #ccc; padding: 5px 7px; text-align: left; vertical-align: top; }
 .sm-tbl th { background: #eef3e6; font-weight: 600; }
 
+/* Welle Bild 18 (2.2.22): Seite, Schritte, Hinweise und Bild der Baustein-Liste im Reiter Einbindung in Loxone
+   (Bauart der Hausplugins seit Welle Bild 13). */
+.smw h4.sm-h4 { color: #4f7d17; font-size: 0.98em; font-weight: 700; margin: 18px 0 4px; }
+.smw .sm-schritte { margin: 6px 0 0 18px; padding: 0; }
+.smw .sm-schritte li { margin: 3px 0; }
+.sm-bild { margin: 12px 0; }
+.sm-bild img { max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+.sm-bild figcaption { font-size: .9em; color: #555; margin-top: 4px; }
+
 /* Seit 2.2.20 hat die LoxBerry-Navigationsleiste keine Eintraege mehr
    (Live, Bilder, Videos sind Reiter, Nr. 43). LoxBerry zeichnet den leeren
    Behaelter trotzdem samt Unterkante; die bis 2.2.19 hier stehende Regel

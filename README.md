@@ -2,9 +2,37 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.21 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.22 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.22
+
+Einbindung in Loxone in Vollausstattung: die Seite „Intercom“ aus dem gemeinsamen
+[LoxBerry-Plugins Musterprojekt](https://github.com/timanders22/LoxBerry-Plugins-Musterprojekt) mit Bild und
+Schritt-für-Schritt-Anleitung („So übernehmen Sie diese Seite“). Sie ersetzt die Baustein-Liste mit sieben Zeilen.
+
+* **Seite „Intercom“ (29 Bausteine, Reiter Einbindung in Loxone, Schritt 9):** Überwachung am Lebenszeichen
+  `status/zaehler` (Analogwertvalidierung, Tmc 300 s) und am Stationskontakt `status/ok`, über ODER und 600 s an
+  eine Benachrichtigung, Status „Zustand (Intercom)“; beim Klingeln nach 3 s ein Foto, Sperre aus Loxone über den
+  Schalter „Klingel-Meldungen aus (Intercom)“, Taste „Foto jetzt“ und Platzhalter „Briefkasten (eigene Quelle)“,
+  Video nur bei „Niemand zu Hause“, Zähler „Klingeln in Abwesenheit“ und Status „Klingel und Bilder“. Die bisherige
+  Liste hängte die Ausfallmeldung direkt an ein Alter (`status/ts`) – eine Benachrichtigung meldet so nur einmal
+  nach dem Start und nie wieder einen Ausfall. Gateway-Namen und Befehlstitel rechnet die Seite aus dem MQTT-Präfix
+  und der ersten Station, wie die Vorlagen.
+* **Steuervorlage:** je Station ein dritter Befehl „Foto *Station* ohne Meldung“ (`&trigger=hand`) – er legt ein
+  Foto ab, ohne die Klingel-Meldungen (SignalBot, Sprachsteuerung, eigene Ansage) auszulösen. Damit sperrt Loxone
+  die Meldungen, ohne dass das Plugin etwas davon wissen muss. Wer schon importiert hat, ergänzt den Befehl von
+  Hand oder liest die Vorlage neu ein (dann doppelte Objekte aufräumen).
+* **Titel fest deutsch** (Sprachregel der Hausplugins): die Befehle „Foto …“/„Video …“ und der Behälter
+  „Intercom Rückmeldungen (LoxBerry-Plugin)“ heißen auch bei englischer Oberfläche so; übersetzt werden nur die
+  Kommentare. Wer mit deutscher Oberfläche schon importiert hat, muss nichts tun; mit englischer Oberfläche legt
+  ein Neuimport neue Objekte an.
+* **Texte:** Kommentar der Rückmeldung `status/ok` „Türstation antwortet“ (stand „Lebenszeichen“ – das ist
+  `status/zaehler`), Knopf „Vorlage der Rückmeldungen erzeugen“, Schritt 8 sagt, dass die Rückmeldungen nur mit
+  „Meldungen per MQTT verschicken“ und Abo kommen. Hilfe K06 beschreibt die neue Seite.
+* Kein anderes Verhalten: Endpunkte, Themen, Meldungen und Selbstprüfung unverändert. Gerendert unter PHP 7.4, 8.4
+  und 8.5, nicht am Gerät angesehen.
 
 ## Neu in 2.2.21
 
@@ -35,36 +63,6 @@ Kopf wie alle Hausplugins: Statusübersicht über den Reitern, Zusammenfassung o
 * Ohne die Navigationsleiste rückt die Seite nicht mehr 55 px nach oben (der Wert war auf die
   Leiste abgestimmt).
 * Nur Oberfläche; gerendert unter PHP 7.4, 8.4 und 8.5, nicht am Gerät angesehen.
-
-## Unterstützte Türstationen
-
-**Loxone Intercom (Gen. 1)**, **Loxone Intercom Gen. 2** und **Loxone Intercom XL**.
-
-**Gemessen wird ausschließlich an einer Intercom XL.** Für die Gen. 1 und
-die Gen. 2 steht hier kein Gerät zur Verfügung. Beide sollten laufen — das
-Plugin fragt bei allen Stationen denselben MJPEG-Strom ab und kennt keine
-Modellunterscheidung —, an einem Gerät nachgewiesen ist das aber nicht. Der
-Reiter *Test* beantwortet an Ihrer Station in einem Schritt, welcher Bildweg
-trägt; eine Rückmeldung darüber ist willkommen.
-
-Es gibt **keine Modellauswahl** — welcher Abrufweg benutzt wird, ist eine
-Einstellung und keine Modellfrage. Zur Wahl stehen im Reiter *Einstellungen*
-der MJPEG-Strom unter `/mjpg/video.mjpg`, das Standbild unter
-`/jpg/image.jpg` und „erst das Standbild, sonst den Strom"; ab Werk bleibt es
-beim Strom. Die Zugangsdaten holt sich das Plugin aus der
-Miniserver-Konfiguration, je Station lässt sich ein eigener Standbildpfad
-eintragen. Der Reiter *Test* holt ein Bild ohne Umweg über Loxone und
-beantwortet in einem Schritt, welcher Weg Ihre Station trägt.
-
-*Berichtigt in 2.2.6:* bis dahin stand hier „nichts modellabhängig
-einzustellen" — und 110 Zeilen weiter unten beschrieb dieselbe Datei die
-Umstellung auf das Standbild.
-
-Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
-
-https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
-https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
-
 
 ## Neu in 2.2.19
 
@@ -591,6 +589,36 @@ Jetzt werden die `#`-Kommentarzeilen vor dem Zerlegen entfernt. Nur ganze
 Zeilen, deren erstes sichtbares Zeichen `#` ist — ein `#` **innerhalb** eines
 Wertes bleibt erhalten.
 
+## Unterstützte Türstationen
+
+**Loxone Intercom (Gen. 1)**, **Loxone Intercom Gen. 2** und **Loxone Intercom XL**.
+
+**Gemessen wird ausschließlich an einer Intercom XL.** Für die Gen. 1 und
+die Gen. 2 steht hier kein Gerät zur Verfügung. Beide sollten laufen — das
+Plugin fragt bei allen Stationen denselben MJPEG-Strom ab und kennt keine
+Modellunterscheidung —, an einem Gerät nachgewiesen ist das aber nicht. Der
+Reiter *Test* beantwortet an Ihrer Station in einem Schritt, welcher Bildweg
+trägt; eine Rückmeldung darüber ist willkommen.
+
+Es gibt **keine Modellauswahl** — welcher Abrufweg benutzt wird, ist eine
+Einstellung und keine Modellfrage. Zur Wahl stehen im Reiter *Einstellungen*
+der MJPEG-Strom unter `/mjpg/video.mjpg`, das Standbild unter
+`/jpg/image.jpg` und „erst das Standbild, sonst den Strom"; ab Werk bleibt es
+beim Strom. Die Zugangsdaten holt sich das Plugin aus der
+Miniserver-Konfiguration, je Station lässt sich ein eigener Standbildpfad
+eintragen. Der Reiter *Test* holt ein Bild ohne Umweg über Loxone und
+beantwortet in einem Schritt, welcher Weg Ihre Station trägt.
+
+*Berichtigt in 2.2.6:* bis dahin stand hier „nichts modellabhängig
+einzustellen" — und 110 Zeilen weiter unten beschrieb dieselbe Datei die
+Umstellung auf das Standbild.
+
+Das Plugin ist QuickAndDirty aus einem Beitrag des Loxforum.com entstanden.
+
+https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/330121-loxone-intercom-gen2-webschnittstelle-um-bild-video-rauszubekommen/page3#post343007
+https://www.loxforum.com/forum/hardware-zubeh%C3%B6r-sensorik/353631-warnung-loxone-intercom-gen-2-aktuell-bekannte-probleme#post356031
+
+
 ## Installation
 
 Aktuelle Release URL in das URL Feld bei der Loxberry Plugininstallation kopieren.
@@ -626,6 +654,10 @@ Aktuelle Release URL in das URL Feld bei der Loxberry Plugininstallation kopiere
   Alexa-NG oder Google-Lautsprecher (Chromecast 4 Lox NG) – bei denselben Auslösern und mit derselben
   60-s-Grenze wie oben, der Satz aus der Sprachdatei. Adresse und Vorlage müssen im Heimnetz liegen;
   die Sprechtoken stehen in keiner Sicherung. Testansage und Prüfzeile im Reiter Test.
+- Einbindung in Loxone (Reiter, Schritt 9): die Seite „Intercom“ aus dem
+  [LoxBerry-Plugins Musterprojekt](https://github.com/timanders22/LoxBerry-Plugins-Musterprojekt)
+  mit Anleitung, 29 Bausteinen und Bild; Importdateien für die Steuerbefehle (je Station Foto, Foto ohne
+  Meldung, Video) und für die Rückmeldungen über das MQTT-Gateway.
 - Lebenszeichen `status/ok` (MQTT): die Türstation wird einmal je Minute kurz
   angefragt (kein Bild, kein Archiv); 1 heißt, sie hat in den letzten drei
   Minuten geantwortet.
