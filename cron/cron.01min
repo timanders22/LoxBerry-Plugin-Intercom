@@ -24,6 +24,15 @@
 # weder Zeitraffer noch Bereinigung hinterliessen eine Spur. Ein Cron-Dienst,
 # der schweigend nichts tut, ist schlimmer als keiner.
 
+# Waechter der Befehlsbruecke (seit 2.2.23, Gruppe 7; Entwurf 3.6, E15) - als ERSTE Anweisung, vor der Pruefung
+# des Web-Ordners und vor timelapse.php ("vor den Sperren"): startet die Bruecke nach Boot und Update
+# spaetestens nach einer Minute, wenn "Befehle ueber MQTT annehmen" gesetzt ist, und haelt sie sonst an
+# (befehlsbruecke.php --waechter: misst zustand.json, nie waehrend einer Aktualisierung, hoechstens alle 600 s
+# ein Neustart). Kein Start in den Hakenskripten - Intercom hat keinen Dauerdienst. Ausgabe nach /dev/null: die
+# Bruecke protokolliert selbst (log/plugins/<ordner>/befehle_start.log).
+BBSH="REPLACELBPBINDIR/befehlsbruecke.sh"
+[ -f "$BBSH" ] && /bin/bash "$BBSH" waechter >/dev/null 2>&1
+
 WEB="REPLACELBPHTMLDIR"
 
 if [ ! -d "$WEB" ]; then

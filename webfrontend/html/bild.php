@@ -50,6 +50,12 @@ if ($ic_code !== '') {
         echo "Dieser Link ist abgelaufen oder verbraucht.\n";
         exit;
     }
+    /* I7 (seit 2.2.23): ein Link aus einer Fassung bis 2.2.12 ('letztes', ohne gebundene Bildkopie) lieferte das
+     * jeweils neueste Bild. Jeder solche Link lief nach hoechstens 720 h ab (ic_bildlink_stunden), also spaetestens
+     * Ende Oktober 2026 - danach antwortet der Zweig 404 statt des neuesten Bildes. */
+    if ($ic_linkbild === 'letztes' && time() >= mktime(0, 0, 0, 10, 31, 2026)) {
+        $ic_linkbild = '';
+    }
     if ($ic_linkbild === '') {
         header('HTTP/1.1 404 Not Found');
         header('Content-Type: text/plain; charset=utf-8');
@@ -133,6 +139,15 @@ if ($ic_linkbild !== '' && $ic_linkbild !== 'letztes') {
     $datei = $ic_linkbild;
     $ic_quelle = 'link';
 }
+/* I7 (seit 2.2.23, Pruefbericht eigener Fund 3): ein Wettlauf - ein zweiter Prozess (neues Klingeln legt einen
+ * Link an) raeumte die Kopie des eben verbrauchten Links zwischen Einloesen und Lesen ab, und der Rueckfall unten
+ * lieferte das NEUESTE Bild statt des gebundenen. Ein Link-Abruf bekommt sein Bild oder 404 - nie ein anderes. */
+if ($ic_quelle === 'link' && !@is_file($datei)) {
+    header('HTTP/1.1 404 Not Found');
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "Das Bild zu diesem Link liegt nicht mehr vor.\n";
+    exit;
+}
 if (!@is_file($datei)) {
     $alt = __DIR__ . '/lastpicture.jpg';
     if (@is_file($alt)) {
@@ -159,7 +174,10 @@ $d = @file_get_contents($datei);
 if ($d === false) {
     header('HTTP/1.1 500 Internal Server Error');
     header('Content-Type: text/plain; charset=utf-8');
-    echo "Das Bild liess sich nicht lesen: " . $datei . "\n";
+    /* I6 (seit 2.2.23): kein Serverpfad in der Antwort - auch im unangemeldeten ?link=-Zweig. Der Pfad steht nur
+     * im Protokoll (gebremst), wie in mjpgproxy.php. */
+    ic_log_gebremst('bild_lesen', 'bild.php: ' . $datei . ' nicht lesbar.');
+    echo "Das Bild liess sich nicht lesen.\n";
     exit;
 }
 

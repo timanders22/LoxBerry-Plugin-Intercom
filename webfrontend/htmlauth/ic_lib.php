@@ -13,7 +13,8 @@
  * Bausteinen wie der Reiter "Einbindung in Loxone".
  */
 
-/* Gemeinsame Sprachausgabe (Abschrift von Werkzeuge/gemeinsam/sprachausgabe.php, Nr. 36 b).
+/* Gemeinsame Sprachausgabe (Abschrift von Werkzeuge/gemeinsam/sprachausgabe.php, Nr. 36 b; seit 2.2.23
+ * Fassung 1.1.3 - Intercom traegt sie zuerst, Entscheidung Gruppe 7 Punkt 3).
  * Liegt neben dieser Datei; die Datei schuetzt sich selbst gegen doppeltes Laden. */
 require_once __DIR__ . '/sprachausgabe.php';
 
@@ -74,9 +75,11 @@ function ic_paths()
     }
     $home = getenv('LBHOMEDIR');
     if (!$home || !is_dir($home)) {
-        foreach (array(lb_wurzel_ermitteln(), '/home/loxberry/loxberry') as $k) {
-            if (is_dir($k)) { $home = $k; break; }
-        }
+        /* BERICHTIGT 2.2.23 (Pruefbericht, eigener Fund 9): hier stand als zweiter Kandidat der feste Pfad
+         * '/home/loxberry/loxberry' - den gibt es auf keinem LoxBerry (Regeln/06 "Ein Systempfad wird nicht fest
+         * verdrahtet"). Der tote Kandidat ist weg; gesucht wird nur noch aufwaerts vom Ablageort. */
+        $k = lb_wurzel_ermitteln();
+        if ($k !== '' && is_dir($k)) { $home = $k; }
     }
     if (!$home) { $home = lb_wurzel_ermitteln(); }
     $ordner = ic_plugin_ordner();
@@ -89,6 +92,8 @@ function ic_paths()
         'html'    => $home . '/webfrontend/html/plugins/' . $ordner,
         'htmlauth' => $home . '/webfrontend/htmlauth/plugins/' . $ordner,
         'legacy'  => $home . '/webfrontend/legacy/' . $ordner . '_data/',
+        // NEU 2.2.23: bin/plugins/<ordner> - Befehlsbruecke, Auftragsprozess, healthcheck.
+        'bin'     => $home . '/bin/plugins/' . $ordner,
     );
     return $p;
 }
@@ -522,12 +527,19 @@ function ic_config_speichern(array $neu)
  * ================================================================== */
 
 /** Fuer HTML. */
-function ic_e($wert) { return htmlspecialchars((string) $wert, ENT_QUOTES, 'UTF-8'); }
+function ic_e($wert)
+{
+    /* BERICHTIGT 2.2.23 (Pruefbericht, eigener Fund 5): ENT_SUBSTITUTE. Ohne die Flagge liefert htmlspecialchars()
+     * fuer JEDE ungueltige UTF-8-Folge eine leere Zeichenkette - der ganze Satz verschwand (gemessen ueber die
+     * Beanstandung beim Zurueckspielen einer Sicherung). Fuer gueltigen Text byte-gleich. */
+    return htmlspecialchars((string) $wert, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
 
 /** Fuer XML-Attribute der Loxone-Vorlage. */
 function ic_x($wert)
 {
-    return htmlspecialchars((string) $wert, ENT_QUOTES | ENT_XML1, 'UTF-8');
+    // Seit 2.2.23 mit ENT_SUBSTITUTE - dieselbe Fehlerklasse wie ic_e() (Entwurf 2.10).
+    return htmlspecialchars((string) $wert, ENT_QUOTES | ENT_XML1 | ENT_SUBSTITUTE, 'UTF-8');
 }
 
 /* ==================================================================
@@ -1332,27 +1344,18 @@ function ic_mqtt_senden($unterthema, $wert, $retain = null)
             . 'des Gateways - es wird nichts veroeffentlicht.');
         return false;
     }
-    if (!function_exists('socket_create')) {
-        ic_log_gebremst('mqtt_sockets', 'MQTT: die PHP-Erweiterung sockets fehlt. '
-            . 'Abhilfe: sudo apt install php-sockets');
-        return false;
-    }
-    $s = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
-    if (!$s) {
-        ic_log_gebremst('mqtt_socket', 'MQTT: Socket liess sich nicht anlegen.');
-        return false;
-    }
+    /* BERICHTIGT 2.2.23 (Pruefbericht, eigener Fund 8; Entscheidung Zusatz): stream_socket_client statt
+     * socket_create (ic_udp_senden()). Bis 2.2.22 sendete Intercom ohne die PHP-Erweiterung sockets still nichts. */
     $thema = ic_mqtt_praefix();
     $unterthema = ic_mqtt_thema($unterthema);
     if ($unterthema !== '') { $thema .= '/' . $unterthema; }
     $msg = ($retain ? 'retain ' : 'publish ') . $thema . ' ' . ic_mqtt_nutzlast($wert);
-    $ok = @socket_sendto($s, $msg, strlen($msg), 0, '127.0.0.1', $port);
-    socket_close($s);
-    if ($ok === false) {
+    $ok = ic_udp_senden($msg, $port);
+    if (!$ok) {
         ic_log_gebremst('mqtt_senden', 'MQTT: das Senden an 127.0.0.1:' . $port
             . ' ist gescheitert.');
     }
-    return $ok !== false;
+    return $ok;
 }
 
 /**
@@ -1368,24 +1371,11 @@ function ic_mqtt_herzschlag()
 {
     /* Das Lebenszeichen nach Hausschema (Regeln/07): status/ok sagt, ob der
      * letzte Kontakt zur Tuerstation geklappt hat, status/ts wann der Lauf
-     * war, status/zaehler laeuft 0..999 um. Erst der Zaehler macht "der
-     * Dienst steht" von "er arbeitet" unterscheidbar - ein Zeitstempel allein
-     * sagt das nicht, wenn niemand die Uhr des Miniservers dagegenhaelt.
+     * war, status/zaehler laeuft 0..999 um.
      *
-     * BERICHTIGT 2.2.13, zwei Sachen an dieser Stelle:
-     * 1. (M7) Der Laufmerker wird IMMER geschrieben, nur das Senden haengt an
-     *    ic_mqtt_an(). Bis 2.2.12 stand der Ruecksprung davor: ohne MQTT
-     *    (Werksvorgabe) meldete ?selftest=1 dauerhaft alter=-1 ("noch nie
-     *    gelaufen"), obwohl der Cron jede Minute lief.
-     * 2. (M3, Entscheidung 8) status/ok stand fest auf 1 - auch bei einer
-     *    Station, die seit Tagen schweigt. Jetzt kommt es aus dem letzten
-     *    Stationskontakt (ic_stationskontakt_ok()).
-     *
-     * <praefix>/ok bleibt unveraendert daneben stehen. Es traegt seit jeher
-     * die Loxone-Zeit, und an dem Namen haengen bestehende Anlagen; ein
-     * Umbenennen waere ein Schnitt, keine Berichtigung. Die Themenliste
-     * kennzeichnet es als ueberholt.
-     */
+     * BERICHTIGT 2.2.13 (M7, M3): der Laufmerker wird IMMER geschrieben, nur das
+     * Senden haengt an ic_mqtt_an(); status/ok kommt aus dem letzten
+     * Stationskontakt (ic_stationskontakt_ok()). <praefix>/ok bleibt (ueberholt). */
     $zk = ic_merker_lesen('mqttzaehler');
     $zaehler = ($zk === null || !is_numeric($zk['text']))
              ? 0 : (((int) $zk['text']) + 1) % 1000;
@@ -1397,16 +1387,17 @@ function ic_mqtt_herzschlag()
     ic_mqtt_senden('status/zaehler', (string) $zaehler);
     ic_mqtt_senden('ok', (string) (time() - 1230768000));
 
-    /* Die Archivzahl kostet vier Verzeichnisdurchlaeufe. Der Herzschlag laeuft
-     * minuetlich; auf einer Anlage mit zehntausenden Archivdateien waere das
-     * dauerhafte Last, die es bis 2.1.13 nicht gab. Gezaehlt wird deshalb
-     * hoechstens alle fuenfzehn Minuten - fuer eine Zahl, die sich zwischen
-     * zwei Klingelvorgaengen nicht aendert, ist das reichlich. */
+    /* Die Archivzahl kostet vier Verzeichnisdurchlaeufe - hoechstens alle fuenfzehn Minuten.
+     * NEU 2.2.23 (-1-Regel, E9): im selben Takt ai_count = -1 (retained), solange die Objekterkennung aus ist
+     * (oder ohne Adresse). Bis 2.2.22 kam dann gar nichts, und Loxone zeigte "0 Objekte". */
     $mk = ic_merker_lesen('bilderzahl');
     if ($mk === null || (time() - $mk['zeit']) >= 900) {
         $z = ic_archiv_zahlen();
         ic_mqtt_senden('bilder', (string) $z['bilder']);
         ic_merker_setzen('bilderzahl', (string) $z['bilder']);
+        if (!ic_ki_an()) {
+            ic_mqtt_senden('ai_count', '-1');
+        }
     }
     return true;
 }
@@ -1422,36 +1413,21 @@ function ic_mqtt_herzschlag()
  */
 function ic_mqtt_an()
 {
+    /* NEU 2.2.23 (E6, stehende Entscheidung Gruppe 2/3): fehlt der Schluessel, gilt die Vorgabe - ab Werk AN fuer
+     * Neuinstallationen. Bestehende Anlagen bekommen beim Update "0" eingetragen (postupgrade.sh), wenn der
+     * Schluessel fehlt; sie bleiben so aus, wie sie waren. */
     $cfg = ic_config();
-    $w = isset($cfg['mqtt_enable']) ? (string) $cfg['mqtt_enable'] : '0';
+    $w = isset($cfg['mqtt_enable']) ? (string) $cfg['mqtt_enable'] : (string) ic_vorgabe('mqtt_enable', '0');
     return ($w === '1' || $w === 'on' || $w === 'true');
 }
 
 /** Alle Themen, die dieses Plugin veroeffentlicht - EINE Quelle. */
 function ic_mqtt_themen($p = null)
 {
-    /* Seit 2.2.13 mit wahlweise anderem Praefix: der Praefixwechsel raeumt die
-     * behaltenen Themen unter dem ALTEN Praefix ab (M2) und nimmt sie aus
-     * dieser Liste, nicht aus einer zweiten. */
+    /* Seit 2.2.13 mit wahlweise anderem Praefix (M2). Drittes Feld: retained? (Regeln/07; der Sender liest die
+     * Klasse aus DIESER Liste, ic_mqtt_retain()). Seit 2.2.23 dazu status/befehle und die Quittungen der
+     * Befehlsbruecke (beide nie retained, nicht nach Loxone) - die Namenstabelle ic_mqtt_namen() baut darauf. */
     if ($p === null) { $p = ic_mqtt_praefix(); }
-    /* Drittes Feld: wird das Thema RETAINED gesendet?
-     *
-     * Hausstandard seit 03.09.2026 (Regeln/07): Zustaende retained, damit
-     * Loxone nach einem Neustart des Miniservers oder des Gateways sofort den
-     * Stand hat; Messwerte mit Zeitbezug NICHT retained, damit nach einem
-     * Ausfall kein alter Wert als aktuell erscheint; das Lebenszeichen NIE -
-     * retained zeigte es immer "lebt".
-     *
-     * Bis 2.2.5 ging jedes der acht Themen retained hinaus (ic_mqtt_senden()
-     * hat retain=true als Vorgabe, und kein Aufruf uebergab etwas anderes;
-     * der publish-Zweig war toter Code). Nach einem Neustart hielt der Broker
-     * damit eine alte Klingelmeldung samt Bildadresse vor, die aussah, als
-     * sei gerade geklingelt worden.
-     *
-     * Der Sender liest die Klasse aus DIESER Liste (ic_mqtt_retain()), und
-     * die Tabelle im Reiter MQTT zeigt sie an - Sender und Anleitung koennen
-     * nicht auseinanderlaufen.
-     */
     return array(
         array($p,                     'MQTT.T_BILD',      false),
         array($p . '/video',          'MQTT.T_VIDEO',     false),
@@ -1466,6 +1442,9 @@ function ic_mqtt_themen($p = null)
         array($p . '/status/ts',      'MQTT.T_ST_TS',     false),
         array($p . '/status/zaehler', 'MQTT.T_ST_ZAEHLER', false),
         array($p . '/ok',             'MQTT.T_OK',        false),
+        // NEU 2.2.23: von der Befehlsbruecke (bin/befehlsbruecke.php).
+        array($p . '/status/befehle', 'MQTT.T_ST_BEFEHLE', false),
+        array($p . '/befehl/NR/BEFEHL/quittung', 'MQTT.T_QUITTUNG', false),
     );
 }
 
@@ -1518,17 +1497,14 @@ function ic_stationskontakt_ok()
  */
 function ic_mqtt_roh_senden($verb, $thema, $wert)
 {
+    // Seit 2.2.23 ueber ic_udp_senden() (stream_socket_client) statt socket_create.
     $port = ic_mqtt_udpport();
-    if (!$port || !function_exists('socket_create')) { return false; }
+    if (!$port) { return false; }
     $thema = ic_mqtt_thema($thema);
     if ($thema === '' || !in_array($verb, array('retain', 'publish'), true)) { return false; }
-    $s = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
-    if (!$s) { return false; }
     $w = ic_mqtt_nutzlast($wert);
     $msg = $verb . ' ' . $thema . ($w !== '' ? ' ' . $w : '');
-    $ok = @socket_sendto($s, $msg, strlen($msg), 0, '127.0.0.1', $port);
-    socket_close($s);
-    return $ok !== false;
+    return ic_udp_senden($msg, $port);
 }
 
 /**
@@ -1864,13 +1840,17 @@ function ic_wert_pruefen($schluessel, $wert)
     if (in_array($schluessel, array('timestamp_image', 'timestamp_video',
                                     'timelapse_enable', 'timelapse_video',
                                     'tv_enable', 'ai_enable',
-                                    'klingel_signal', 'klingel_sprache'), true)) {
+                                    'klingel_signal', 'klingel_sprache', 'klingel_nur_erkannt'), true)) {
         return $t === '' || $t === 'on';
     }
     /* Klingel-1 (seit 2.2.15): Ordner, Token und Rufnummer der Nachbarlinien -
      * dieselbe Pruefung wie im Formular (ic_klingel_wert_gueltig()). */
     if (in_array($schluessel, ic_klingel_textschluessel(), true)) {
         return ic_klingel_wert_gueltig($schluessel, $t);
+    }
+    /* 2.2.23 (Gruppe 7): die beiden Haken der Befehle - wie das Formular sie schreibt, nur "0" oder "1". */
+    if (in_array($schluessel, ic_befehle_haken(), true)) {
+        return $t === '0' || $t === '1';
     }
     if (in_array($schluessel, array('bild_oeffentlich', 'mqtt_enable',
                                     'archiv_schutz'), true)) {
@@ -2268,50 +2248,10 @@ function ic_xml_virtual_out(array $kopf, array $cmds)
     return $o;
 }
 
-/**
- * Der virtuelle Eingang fuer die MQTT-Themen.
- *
- * Gateway-Eingaenge sind nackte VirtualIn - dafuer kennt Loxone Config kein
- * Vorlagenformat, das Gateway legt sie beim ersten Empfang selbst an. Der
- * Hauskunstgriff: VirtualInHttp mit einer Dummy-Adresse und einer sehr langen
- * Abholzeit erzeugen; Loxone legt die richtig benannten Eingaenge an, die
- * Werte kommen danach vom Gateway. Titel = Thema mit Unterstrichen,
- * Check=" ".
- *
- * Textthemen bleiben aussen vor - das nachgebaute Format ist nur fuer
- * Zahlenwerte belegt. Das steht auch im Hinweistext des Reiters.
- */
-function ic_xml_virtual_in(array $kopf, array $cmds)
-{
-    $crlf = "\r\n";
-    $o = '<?xml version="1.0" encoding="utf-8"?>' . $crlf;
-    $o .= '<VirtualInHttp ';
-    $o .= 'HintText="' . ic_x(isset($kopf['hint']) ? $kopf['hint'] : '') . '" ';
-    $o .= 'Title="' . ic_x($kopf['title']) . '" ';
-    $o .= 'Comment="' . ic_x(isset($kopf['comment']) ? $kopf['comment'] : '') . '" ';
-    $o .= 'Address="' . ic_x(isset($kopf['address']) ? $kopf['address'] : '') . '" ';
-    $o .= 'PollingTime="' . (int) (isset($kopf['polling']) ? $kopf['polling'] : 604800) . '"';
-    $o .= '>' . $crlf;
-    $o .= "\t" . '<Info templateType="2" minVersion="17010727"/>' . $crlf;
-    foreach ($cmds as $c) {
-        $o .= "\t" . '<VirtualInHttpCmd ';
-        $o .= 'Title="' . ic_x($c['title']) . '" ';
-        $o .= 'Comment="' . ic_x(isset($c['comment']) ? $c['comment'] : '') . '" ';
-        $o .= 'Check="' . ic_x(isset($c['check']) ? $c['check'] : ' ') . '" ';
-        $o .= 'Signed="true" ';
-        $o .= 'Analog="' . (!empty($c['analog']) ? 'true' : 'false') . '" ';
-        $o .= 'SourceValLow="0" DestValLow="0" ';
-        $o .= 'SourceValHigh="1" DestValHigh="1" ';
-        $o .= 'DefVal="0" ';
-        $o .= 'MinVal="' . ic_x(isset($c['min']) ? $c['min'] : '0') . '" ';
-        $o .= 'MaxVal="' . ic_x(isset($c['max']) ? $c['max'] : '0') . '" ';
-        $o .= 'Unit="' . ic_x(isset($c['unit']) ? $c['unit'] : '<v.1>') . '" ';
-        $o .= 'HintText=""';
-        $o .= '/>' . $crlf;
-    }
-    $o .= '</VirtualInHttp>' . $crlf;
-    return $o;
-}
+/* ENTFERNT 2.2.23 (Pruefbericht, eigener Fund 7; E10): ic_xml_virtual_in() - der Hauskunstgriff
+ * VirtualInHttp mit http://localhost und einer Woche Abholzeit fuer Gateway-Eingaenge. Gateway-Werte
+ * sind einfache Virtuelle Eingaenge (Gedaechtnis "Gateway-Werte = Virtueller Eingang", Wiki
+ * widget_mqtt, Regeln/07 R2_078); ihre Namen stehen in der Namenstabelle (ic_mqtt_namen()). */
 
 /**
  * Eine erzeugte Vorlage ausliefern.
@@ -2396,58 +2336,8 @@ function ic_vorlage_ausgang($host, $token)
     ), $cmds);
 }
 
-/** Die Vorlage der Rueckmeldungen (MQTT-Gateway-Eingaenge). */
-function ic_vorlage_eingang($host)
-{
-    /* BERICHTIGT 04.09.2026 (2.2.6), vier Sachen an dieser Stelle:
-     *
-     * 1. Der Titel kommt aus ic_gatewayname(), nicht aus dem rohen Praefix -
-     *    das Gateway ersetzt "/" durch "_", die Vorlage tat es nicht.
-     * 2. ai_count fehlte, obwohl es ein reiner Zahlenwert ist und der
-     *    Hinweistext behauptete, es fehlten nur Texte.
-     * 3. Die drei Lebenszeichen-Themen sind dazugekommen.
-     * 4. Der Comment wird in Loxone Config zum ANZEIGENAMEN. "Herzschlag:
-     *    Loxone-Zeit des letzten Abrufs (Sekunden seit 01.01.2009)." sind
-     *    70 Zeichen - das ist ein Satz, kein Kachelname. Die Erklaerung steht
-     *    jetzt im HintText, wo sie hingehoert.
-     */
-    $g = ic_gatewayname(ic_mqtt_praefix());
-    $cmds = array(
-        array('title' => $g . '_status_ok',
-              'comment' => ic_sprachwert('LOX.VI_OK', 'Lebenszeichen'),
-              'analog' => true, 'min' => '0', 'max' => '1', 'unit' => '<v.0>'),
-        array('title' => $g . '_status_ts',
-              'comment' => ic_sprachwert('LOX.VI_TS', 'Herzschlag (Loxone-Zeit)'),
-              'analog' => true, 'min' => '0', 'max' => '2000000000', 'unit' => '<v.0> s'),
-        array('title' => $g . '_status_zaehler',
-              'comment' => ic_sprachwert('LOX.VI_ZAEHLER', 'Laufzähler 0-999'),
-              'analog' => true, 'min' => '-1', 'max' => '999', 'unit' => '<v.0>'),
-        array('title' => $g . '_bilder',
-              'comment' => ic_sprachwert('LOX.VI_BILDER', 'Bilder im Archiv'),
-              'analog' => true, 'min' => '0', 'max' => '1000000', 'unit' => '<v.0>'),
-        array('title' => $g . '_ai_count',
-              'comment' => ic_sprachwert('LOX.VI_KI', 'Erkannte Objekte'),
-              'analog' => true, 'min' => '0', 'max' => '100', 'unit' => '<v.0>'),
-        array('title' => $g . '_ok',
-              'comment' => ic_sprachwert('LOX.VI_OK_ALT', 'Herzschlag (überholt)'),
-              'analog' => true, 'min' => '0', 'max' => '2000000000', 'unit' => '<v.0> s'),
-    );
-    return ic_xml_virtual_in(array(
-        // Seit 2.2.22 (Welle Bild 18, E5) fest deutsch - wie die Befehlstitel.
-        'title'   => 'Intercom Rückmeldungen (LoxBerry-Plugin)',
-        'comment' => ic_sprachwert('LOX.VI_KOMMENTAR',
-                         'Die Werte kommen vom MQTT-Gateway, nicht von dieser Adresse.'),
-        'address' => 'http://localhost',
-        'polling' => 604800,
-        'hint'    => ic_sprachwert('LOX.VI_HINWEIS',
-                         'Nur Zahlenwerte. Texte (Bildadresse, erkannte Objekte, '
-                       . 'Zeitrafferdatei) legt das Gateway beim ersten Empfang selbst '
-                       . 'an. Die Zeile <praefix>_ok ist überholt und steht nur für '
-                       . 'bestehende Anlagen hier; neu ist <praefix>_status_ts. '
-                       . 'Ausfallerkennung: <praefix>_status_zaehler ändert sich in '
-                       . 'jeder Minute - bleibt er stehen, läuft der Cron nicht.'),
-    ), $cmds);
-}
+/* ENTFERNT 2.2.23 (eigener Fund 7, E10): ic_vorlage_eingang() samt Knopf "Vorlage der Rueckmeldungen" -
+ * siehe ic_xml_virtual_in() oben. Die Ausgangsvorlage (HTTP, Token) bleibt fuer bestehende Anlagen. */
 
 /* ==================================================================
  * Welle Bild 18 (2.2.22): Seite "Intercom" aus dem LoxBerry-Plugins
@@ -2522,10 +2412,17 @@ function ic_bausteinliste()
     $g = ic_gatewayname($p);
     $abo = $p . '/#';
     $st = ic_stationen();
+    $mehrere = count($st) > 1;
     $n = ($st && isset($st[0]['name']) && (string) $st[0]['name'] !== '') ? (string) $st[0]['name'] : 'Intercom';
-    $foto = ic_vorlage_titel('foto', $n);
-    $foto_ohne = ic_vorlage_titel('foto_ohne', $n);
-    $video = ic_vorlage_titel('video', $n);
+    /* Seit 2.2.23 (Gruppe 7, Entwurf Abschnitt 9): Befehle ueber MQTT am gemeinsamen Ausgang "LoxBerry
+     * MQTT-Gateway", Titel "Intercom: ..." (ic_vorlage_titel_mqtt(); bei mehreren Stationen mit dem Namen der
+     * ersten), Thema <praefix>/befehl/1/... (Station 1); Werte als einfache Virtuelle Eingaenge. */
+    $foto = ic_vorlage_titel_mqtt('foto', $n, $mehrere);
+    $foto_ohne = ic_vorlage_titel_mqtt('foto_ohne', $n, $mehrere);
+    $video = ic_vorlage_titel_mqtt('video', $n, $mehrere);
+    $t_foto = $p . '/befehl/1/foto';
+    $t_ohne = $p . '/befehl/1/foto_ohne_meldung';
+    $t_video = $p . '/befehl/1/video';
     $zeilen = array();
     foreach (array(
         ic_bs_text('LOX.Z01', array($g . '_status_ok')),
@@ -2544,16 +2441,16 @@ function ic_bausteinliste()
         ic_bs_text('LOX.Z14', array()),
         ic_bs_text('LOX.Z15', array()),
         ic_bs_text('LOX.Z16', array()),
-        ic_bs_text('LOX.Z17', array($foto)),
+        ic_bs_text('LOX.Z17', array($foto, $t_foto)),
         ic_bs_text('LOX.Z18', array()),
         ic_bs_text('LOX.Z19', array()),
         ic_bs_text('LOX.Z20', array()),
         ic_bs_text('LOX.Z21', array()),
         ic_bs_text('LOX.Z22', array()),
-        ic_bs_text('LOX.Z23', array($foto_ohne)),
+        ic_bs_text('LOX.Z23', array($foto_ohne, $t_ohne)),
         ic_bs_text('LOX.Z24', array()),
         ic_bs_text('LOX.Z25', array()),
-        ic_bs_text('LOX.Z26', array($video)),
+        ic_bs_text('LOX.Z26', array($video, $t_video)),
         ic_bs_text('LOX.Z27', array()),
         ic_bs_text('LOX.Z28', array()),
         ic_bs_text('LOX.Z29', array())
@@ -2567,21 +2464,21 @@ function ic_bausteinliste()
         'zeilen' => $zeilen,
         'schritte' => array(
             ic_bs_text('LOX.BS_SCHRITT1', array(ic_bs_text('UI.REITER_EINSTELLUNGEN'), ic_bs_text('UI.REITER_TEST'), ic_bs_text('UI.K_PRUEFEN'))),
-            ic_bs_text('LOX.BS_SCHRITT2', array(ic_bs_text('UI.REITER_MQTT'), ic_bs_text('UI.L_MQTT'), $abo, ic_bs_text('UI.REITER_MQTT'))),
-            ic_bs_text('LOX.BS_SCHRITT3', array(ic_bs_text('UI.REITER_LOXONE'), ic_bs_text('LOX.VORLAGE_AUSGANG'), ic_bs_text('LOX.VORLAGE_EINGANG'))),
-            ic_bs_text('LOX.BS_SCHRITT4', array($g . '_fehler')),
+            ic_bs_text('LOX.BS_SCHRITT2', array(ic_bs_text('UI.REITER_MQTT'), ic_bs_text('UI.L_MQTT'), ic_bs_text('BEFEHL.L_EIN'), ic_bs_text('BEFEHL.L_MELDEN'), $abo, ic_bs_text('UI.REITER_LOXONE'), $g . '_status_ok')),
+            ic_bs_text('LOX.BS_SCHRITT3', array(ic_bs_text('UI.REITER_LOXONE'))),
+            ic_bs_text('LOX.BS_SCHRITT4', array(ic_bs_text('UI.REITER_LOXONE'), ic_bs_text('BEFEHL.K_VORLAGE'), $g . '_fehler')),
             ic_bs_text('LOX.BS_SCHRITT5', array()),
             ic_bs_text('LOX.BS_SCHRITT6', array()),
             ic_bs_text('LOX.BS_SCHRITT7', array($g . '_status_zaehler', ic_bs_text('COMMON.BACKUP')))
         ),
         'hinweise' => array(
-            ic_bs_text('LOX.BS_H1', array(ic_bs_text('UI.REITER_EINSTELLUNGEN'), ic_bs_text('UI.H_KLINGEL'), ic_bs_text('UI.H_ANSAGE'), $foto, $foto_ohne)),
+            ic_bs_text('LOX.BS_H1', array(ic_bs_text('UI.REITER_EINSTELLUNGEN'), ic_bs_text('UI.H_KLINGEL'), ic_bs_text('UI.H_ANSAGE'), $foto, ic_bs_text('BEFEHL.L_MELDEN'), $foto_ohne)),
             ic_bs_text('LOX.BS_H2', array()),
             ic_bs_text('LOX.BS_H3', array()),
             ic_bs_text('LOX.BS_H4', array(ic_bs_text('UI.REITER_EINSTELLUNGEN'), $foto_ohne)),
             ic_bs_text('LOX.BS_H5', array()),
             ic_bs_text('LOX.BS_H6', array()),
-            ic_bs_text('LOX.BS_H7', array($g . '_status_ok')),
+            ic_bs_text('LOX.BS_H7', array($p, $g . '_status_ok')),
             ic_bs_text('LOX.BS_H8', array(ic_bs_text('LOX.TOKEN_NEU'))),
             ic_bs_text('LOX.BS_H9', array($g . '_status_ts', $g . '_ok'))
         ),
@@ -2786,10 +2683,8 @@ function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
         $z[] = ic_pz('hinweis', 'TEST.F_ARCHIVSCHUTZ', 'TEST.A_ARCHIVSCHUTZ_AUS',
                      'TEST.R_ARCHIVSCHUTZ');
     }
-    $z[] = function_exists('socket_create')
-        ? ic_pz('ok', 'TEST.F_SOCKETS', 'TEST.A_JA')
-        : ic_pz(!ic_mqtt_an() ? 'hinweis' : 'fehl',
-                'TEST.F_SOCKETS', 'TEST.A_NEIN', 'TEST.R_SOCKETS');
+    /* ENTFERNT 2.2.23 (E7): die Zeile "PHP-Erweiterung sockets" - gesendet wird mit stream_socket_client
+     * (Kern). Ob der UDP-Eingang des Gateways bekannt ist, sagt die Zeile TEST.F_MQTTPORT. */
 
     /* BERICHTIGT 04.09.2026 (2.2.6): der Schalter wird ausschliesslich ueber
      * ic_mqtt_an() beantwortet. Bis 2.2.5 stand daneben zweimal empty() und
@@ -2830,6 +2725,13 @@ function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
     } else {
         $z[] = ic_pz('hinweis', 'TEST.F_MQTT', 'TEST.A_MQTT_AUS');
     }
+
+    /* -------- Befehle ueber MQTT (seit 2.2.23, Entwurf 2.4/3.6) -------- */
+    $z[] = ic_pruefe_bruecke();
+    $z[] = ic_pruefe_bruecke_einrichtung();
+    $z[] = ic_pruefe_auftraege();
+    $z[] = ic_pruefe_namen();
+    $z[] = ic_pruefe_nur_erkannt();
 
     /* -------- Archiv -------- */
     $schreibbar = true;
@@ -3016,32 +2918,47 @@ function ic_pruefe_themen()
 function ic_pruefe_vorlage()
 {
     $cfg = ic_config();
-    /* BERICHTIGT 04.09.2026 (2.2.6): php-xml ist nicht garantiert geladen.
-     * Bis 2.2.5 stand simplexml_load_string() ohne Wache hier - es war die
-     * EINZIGE ungeschuetzte Erweiterungsfunktion des Plugins. Fehlte
-     * php-xml, starb ic_selbsttest() mit einem fatalen Fehler, und weil
-     * ic_start.php display_errors abschaltet, war das HTTP 500 mit leerem
-     * Rumpf - an allen fuenf Endpunkten, ausgerechnet an der Stelle, die
-     * dem Anwender sagen soll, ob sein Token stimmt. php-xml steht seit
-     * 2.2.6 zusaetzlich in dpkg/apt. */
+    /* BERICHTIGT 04.09.2026 (2.2.6): php-xml ist nicht garantiert geladen. */
     if (!function_exists('simplexml_load_string')) {
         return ic_pz('unklar', 'TEST.F_VORLAGE', 'TEST.A_VORLAGE_UNKLAR', 'TEST.R_VORLAGE_XML');
     }
+    /* BERICHTIGT 2.2.23 (Pruefbericht, eigener Fund 7; E10): die Vorlage der Rueckmeldungen (VirtualInHttp mit
+     * http://localhost) gibt es nicht mehr - Gateway-Werte sind einfache Virtuelle Eingaenge (Namenstabelle).
+     * Geprueft werden die HTTP-Ausgangsvorlage (bestehende Anlagen) und die Vorlage "Intercom MQTT-Befehle"; dazu:
+     * kein Befehlstitel heisst wie ein Gateway-Eingang aus ic_mqtt_namen() (Entwurf 3.7, sonst droht unter
+     * Gateway V1 die Schleife). */
     $token = isset($cfg['aktionstoken']) ? (string) $cfg['aktionstoken'] : 'TOKEN';
-    $xml = ic_vorlage_ausgang(ic_host(), $token) . ic_vorlage_eingang(ic_host());
+    $vorlagen = array('ausgang' => ic_vorlage_ausgang(ic_host(), $token));
+    $vb = ic_vorlage_bruecke(ic_host());
+    if ($vb !== '') { $vorlagen['bruecke'] = $vb; }
     $vorher = libxml_use_internal_errors(true);
-    $ok1 = simplexml_load_string(ic_vorlage_ausgang(ic_host(), $token)) !== false;
-    $ok2 = simplexml_load_string(ic_vorlage_eingang(ic_host())) !== false;
     $fehler = '';
-    if (!$ok1 || !$ok2) {
-        $e = libxml_get_errors();
-        $fehler = $e ? trim($e[0]->message) : 'unbekannt';
+    $titel = array();
+    $laenge = 0;
+    foreach ($vorlagen as $n => $x) {
+        $laenge += strlen($x);
+        $s = simplexml_load_string($x);
+        if ($s === false) {
+            $e = libxml_get_errors();
+            $fehler = $n . ': ' . ($e ? trim($e[0]->message) : 'unbekannt');
+            break;
+        }
+        foreach ($s->xpath('//VirtualOutCmd') as $c) { $titel[] = (string) $c['Title']; }
+        libxml_clear_errors();
     }
     libxml_clear_errors();
     libxml_use_internal_errors($vorher);
-    return ($ok1 && $ok2)
-        ? ic_pz('ok', 'TEST.F_VORLAGE', 'TEST.A_VORLAGE', '', array(), array(strlen($xml)))
-        : ic_pz('fehl', 'TEST.F_VORLAGE', $fehler, 'TEST.R_VORLAGE');
+    if ($fehler !== '') {
+        return ic_pz('fehl', 'TEST.F_VORLAGE', $fehler, 'TEST.R_VORLAGE');
+    }
+    $namen = array();
+    foreach (ic_mqtt_namen() as $z) { $namen[$z['name']] = true; }
+    $gleich = array_values(array_unique(array_filter($titel, function ($t) use ($namen) { return isset($namen[$t]); })));
+    if ($gleich) {
+        return ic_pz('fehl', 'TEST.F_VORLAGE', 'TEST.A_VORLAGE_NAMENSGLEICH', 'TEST.R_VORLAGE', array(),
+                     array(implode(', ', $gleich)));
+    }
+    return ic_pz('ok', 'TEST.F_VORLAGE', 'TEST.A_VORLAGE', '', array(), array($laenge));
 }
 
 /**
@@ -3254,24 +3171,20 @@ function ic_speicherort_anwenden()
  * In timelapse.php war die Pruefung vorhanden, in getpicture.php nicht:
  * dieselbe Aufgabe, zwei Sorgfaltsgrade.
  */
-function ic_zeitstempel_ins_bild($datei, $text = null)
+function ic_zeitstempel_ins_bild($datei, $text = null, $modus = 0644)
 {
+    /* BERICHTIGT 2.2.23 (I13): unteilbar. Bis 2.2.22 schrieb imagejpeg($img, $datei) direkt - abschneiden und neu
+     * schreiben am selben Inode: ein gleichzeitiger Leser bekam ein halbes JPEG, und bei voller Karte blieb ein
+     * abgeschnittenes Bild statt des ungestempelten. Jetzt Stempel im Speicher (ic_zeitstempel_daten()) und
+     * ic_datei_ersetzen(). Gebraucht noch von Zeitraffer und Intervallaufnahme; der Klingelweg stempelt seit 2.2.23
+     * VOR dem ersten Schreiben (ic_foto_ausloesen()). */
     if (!function_exists('imagecreatefromjpeg')) { return false; }
     if (!@is_file($datei)) { return false; }
-    $text = $text === null ? date('d.m.Y H:i:s') : $text;
-    $img = @imagecreatefromjpeg($datei);
-    if (!$img) {
-        ic_log_gebremst('gd', 'Der Zeitstempel liess sich nicht setzen: die Datei '
-            . basename($datei) . ' ist kein lesbares JPEG.');
-        return false;
-    }
-    $weiss = imagecolorallocate($img, 255, 255, 255);
-    $schwarz = imagecolorallocate($img, 0, 0, 0);
-    imagefilledrectangle($img, 9, 29, strlen($text) * imagefontwidth(5) + 11, 45, $schwarz);
-    imagestring($img, 5, 10, 30, $text, $weiss);
-    $ok = @imagejpeg($img, $datei);
-    imagedestroy($img);
-    return $ok;
+    $roh = @file_get_contents($datei);
+    if ($roh === false || $roh === '') { return false; }
+    $neu = ic_zeitstempel_daten($roh, $text);
+    if ($neu === $roh) { return false; }
+    return ic_datei_ersetzen($datei, $neu, $modus);
 }
 
 /**
@@ -3583,7 +3496,7 @@ function ic_timelapse_lauf($erzwingen = false)
  * ausgeschaltet, nicht erreichbar oder ohne Fund; sonst
  * array('objects' => [...], 'count' => n).
  */
-function ic_ki_erkennen($bilddatei)
+function ic_ki_erkennen($bilddatei, $frist = IC_KI_FRIST)
 {
     $cfg = ic_config();
     if (empty($cfg['ai_enable']) || $cfg['ai_enable'] !== 'on'
@@ -3592,22 +3505,23 @@ function ic_ki_erkennen($bilddatei)
         return array();
     }
     /* BERICHTIGT 04.09.2026 (2.2.6): die Wache bleibt - php-curl ist nicht
-     * garantiert geladen -, aber sie schweigt nicht mehr. Bis 2.2.5 sprang
-     * die Erkennung ohne curl kommentarlos ab; eingeschaltet und nutzlos
-     * ist schlimmer als abgeschaltet. */
+     * garantiert geladen -, aber sie schweigt nicht mehr. */
     if (!function_exists('curl_init')) {
         ic_log_gebremst('curl_ki', 'Die Objekterkennung ist eingeschaltet, aber die '
             . 'PHP-Erweiterung curl fehlt - es wird nichts erkannt. '
             . 'Abhilfe: sudo apt install php-curl');
         return array();
     }
+    /* NEU 2.2.23 (E13): $frist - wartet eine Klingel-Meldung auf das Ergebnis, hoechstens 5 s (IC_KI_FRIST_MELDUNG);
+     * sonst wie bisher 15 s. Seit 2.2.23 laeuft die Erkennung erst NACH der Antwort an Loxone. */
+    $frist = max(1, (int) $frist);
     $minconf = (isset($cfg['ai_minconf']) && is_numeric($cfg['ai_minconf']))
              ? ((float) $cfg['ai_minconf']) / 100 : 0.5;
     $ch = curl_init($cfg['ai_url']);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, $frist);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, min(3, $frist));
     curl_setopt($ch, CURLOPT_POSTFIELDS, array(
         'image' => new CURLFile($bilddatei, 'image/jpeg', basename($bilddatei)),
         'min_confidence' => $minconf,
@@ -3858,7 +3772,10 @@ function ic_vorgaben()
         'cleanup_days' => '90', 'cleanup_count' => '', 'cleanup_mb' => '',
         'intervall_min' => '', 'standbild_pfad' => '/jpg/image.jpg',
         'bildweg' => 'strom', 'bild_oeffentlich' => '1',
-        'mqtt_enable' => '0', 'mqtt_praefix' => '',
+        // 2.2.23 (E6): MQTT ab Werk AN - nur fuer Neuinstallationen; ein Update traegt "0" ein, wo der Schluessel fehlt.
+        'mqtt_enable' => '1', 'mqtt_praefix' => '',
+        // 2.2.23 (E2, Entscheidung 1): Befehle ueber MQTT und der zweite Haken (Foto MIT Meldung), ab Werk AUS.
+        'befehle_mqtt_ein' => '0', 'befehle_mqtt_melden' => '0',
         'webhook1' => '', 'webhook2' => '', 'webhook3' => '', 'webhook4' => '',
         'videowebhook1' => '', 'videowebhook2' => '',
         'timestamp_image' => '', 'timestamp_video' => '', 'timelapse_enable' => '',
@@ -3873,6 +3790,8 @@ function ic_vorgaben()
         'klingel_sprache_token' => '',
         // Entscheidung 13: nur bei diesen Ausloesern (Komma-Liste).
         'klingel_ausloeser' => 'klingel',
+        // 2.2.23 (V1, E13): nur melden, wenn die Objekterkennung etwas fand - ab Werk AUS, nie fuer "klingel".
+        'klingel_nur_erkannt' => '',
         // Nr. 36 b (Stufe 2, F10): eigene Ansage ueber die gemeinsame Sprachausgabe, ab Werk aus.
         'tts' => ansage_vorgaben('aus'),
     );
@@ -3905,10 +3824,10 @@ function ic_sicherungsschluessel()
 {
     return array(
         'ai_enable', 'ai_minconf', 'ai_url', 'aktionstoken',
-        'archiv_schutz', 'bild_oeffentlich', 'bildweg',
+        'archiv_schutz', 'befehle_mqtt_ein', 'befehle_mqtt_melden', 'bild_oeffentlich', 'bildweg',
         'cleanup_count', 'cleanup_days', 'cleanup_mb',
         'intercomip', 'intervall_min',
-        'klingel_ausloeser', 'klingel_signal', 'klingel_signal_an', 'klingel_signal_ordner', 'klingel_signal_token',
+        'klingel_ausloeser', 'klingel_nur_erkannt', 'klingel_signal', 'klingel_signal_an', 'klingel_signal_ordner', 'klingel_signal_token',
         'klingel_sprache', 'klingel_sprache_ordner', 'klingel_sprache_token',
         'tts',
         'mqtt_enable', 'mqtt_praefix',
@@ -4003,7 +3922,7 @@ function ic_sicherung_lesen($roh)
             $tp = ansage_wert_pruefen($w, $tg, ic_ansage_modi());
             if ($tp === null) {
                 $mangel[] = sprintf(ic_txt('UI.SICH_TTS'),
-                    htmlspecialchars(ansage_kennung_text($tg, ic_ansage_k()), ENT_QUOTES, 'UTF-8'));
+                    htmlspecialchars(ansage_kennung_text($tg, ic_ansage_k()), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
                 continue;
             }
             $tj = (isset($neu['tts']) && is_array($neu['tts'])) ? $neu['tts'] : array();
@@ -4034,6 +3953,13 @@ function ic_sicherung_lesen($roh)
         }
         $neu[$k] = $w;
         $anzahl++;
+    }
+    /* E6 (seit 2.2.23): MQTT ist ab Werk an - eine Sicherung aus einer Fassung vor 2.2.23 ohne mqtt_enable stammt
+     * von einer Anlage, deren MQTT aus war (alte Vorgabe "0"). Dann "0", wie beim Update (postupgrade.sh). */
+    if (!array_key_exists('mqtt_enable', $daten)
+        && (!isset($daten['_fassung']) || !is_string($daten['_fassung'])
+            || version_compare($daten['_fassung'], '2.2.23', '<'))) {
+        $neu['mqtt_enable'] = '0';
     }
     if ($anzahl === 0) {
         $mangel[] = ic_txt('UI.SICH_LEER');
@@ -4408,23 +4334,34 @@ function ic_pruefe_cron()
  */
 function ic_pruefe_formulare()
 {
-    $formen = 0;
-    $merkmale = 0;
+    /* BERICHTIGT 2.2.23 (I14, Regeln/04 "Eine Pruefzeile, die die eigene Oberflaeche auszaehlt, liest ALLE ihre
+     * Dateien"): BLOCKWEISE ueber index.php und ic_bereiche.php. Bis 2.2.22 zaehlte die Zeile <form gegen
+     * ic_formularfelder() global ueber index.php, archive.php, videoarchive.php und live.php (die drei letzten sind
+     * Weiterleitungen) - ein Formular ohne Merkmal fiel nicht auf, wenn ein anderes zwei trug, und ic_bereiche.php
+     * fehlte. Jetzt muss in JEDEM Block <form ...>...</form> genau ein ic_formularfelder( stehen; ein <form ohne
+     * </form> zaehlt als Block ohne Merkmal (Gedaechtnis "Formulartoken hinter </form>"). */
+    $bloecke = 0;
+    $gut = 0;
     $gelesen = 0;
-    foreach (array('index.php', 'archive.php', 'videoarchive.php', 'live.php') as $d) {
+    foreach (array('index.php', 'ic_bereiche.php') as $d) {
         $t = @file_get_contents(__DIR__ . '/' . $d);
         if ($t === false) { continue; }
         $gelesen++;
-        $formen += preg_match_all('/<form\b/i', $t);
-        $merkmale += preg_match_all('/<\?=\s*ic_formularfelder\(/', $t);
+        $m = array();
+        $n = preg_match_all('#<form\b.*?</form>#is', $t, $m);
+        foreach ($m[0] as $b) {
+            $bloecke++;
+            if (preg_match_all('/<\?=\s*ic_formularfelder\(/', $b) === 1) { $gut++; }
+        }
+        $bloecke += max(0, preg_match_all('/<form\b/i', $t) - (int) $n);
     }
     if ($gelesen === 0) {
         return ic_pz('unklar', 'TEST.F_FORMULARE', 'TEST.A_UNKLAR');
     }
-    return ($formen > 0 && $formen === $merkmale)
-        ? ic_pz('ok', 'TEST.F_FORMULARE', 'TEST.A_FORMULARE', '', array(), array($merkmale, $formen))
+    return ($bloecke > 0 && $gut === $bloecke)
+        ? ic_pz('ok', 'TEST.F_FORMULARE', 'TEST.A_FORMULARE', '', array(), array($gut, $bloecke))
         : ic_pz('fehl', 'TEST.F_FORMULARE', 'TEST.A_FORMULARE_NEIN', 'TEST.R_FORMULARE',
-                array(), array($merkmale, $formen));
+                array(), array($gut, $bloecke));
 }
 
 /* ------------------------------------------------------------------
@@ -4834,10 +4771,27 @@ function ic_klingel_ergebnis($art, $name, $ok, $grund)
  * eingeschalteten Wege; array('gebremst' => true), wenn die 60-s-Bremse griff;
  * leer, wenn nicht gefragt (aus oder Ausloeser nicht in der Liste).
  */
-function ic_klingel_melden($station, $trigger, $mehrere, $bildquelle, $basis)
+function ic_klingel_melden($station, $trigger, $mehrere, $bildquelle, $basis, $ai = null)
 {
     $aus = array();
     if (!ic_klingel_gefragt((string) $trigger)) { return $aus; }
+    /* V1 (seit 2.2.23, E13): "nur melden, wenn die Objekterkennung etwas gefunden hat" - ab Werk aus, NIE fuer den
+     * Ausloeser klingel, und VOR der 60-s-Bremse (ein unterdruecktes Ereignis verbraucht sie nicht). Lief die
+     * Erkennung nicht (aus, nicht erreichbar, fremde Antwort - $ai leer), wird gemeldet: eine Klingel-Meldung zu
+     * verlieren wiegt schwerer als eine ueberfluessige (fail-open, nur ins Protokoll). */
+    $cfg = ic_config();
+    if (!empty($cfg['klingel_nur_erkannt']) && $cfg['klingel_nur_erkannt'] === 'on'
+        && strcasecmp((string) $trigger, 'klingel') !== 0) {
+        if (is_array($ai) && isset($ai['count']) && (int) $ai['count'] === 0) {
+            ic_log('Klingel: Meldung fuer "' . $station . '" (Ausloeser ' . $trigger
+                . ') unterdrueckt - die Objekterkennung fand nichts.');
+            return array('nichts_erkannt' => true);
+        }
+        if (!is_array($ai) || !isset($ai['count'])) {
+            ic_log_gebremst('nur_erkannt_ohne_ki', 'Klingel: "nur melden, wenn erkannt" ist an, aber die '
+                . 'Objekterkennung lieferte kein Ergebnis (aus oder nicht erreichbar) - es wird trotzdem gemeldet.');
+        }
+    }
     if (!ic_klingel_bremse_frei($station)) {
         ic_log_gebremst('klingel_bremse_' . substr(md5((string) $station), 0, 12),
             'Klingel: Meldung fuer "' . $station . '" unterdrueckt - hoechstens eine je 60 s und Station.', 300);
@@ -4845,8 +4799,10 @@ function ic_klingel_melden($station, $trigger, $mehrere, $bildquelle, $basis)
     }
     $sig = ic_klingel_an('signal');
     $spr = ic_klingel_an('sprache');
-    $cfg = ic_config();
     $text = ic_klingel_text((string) $trigger, $mehrere ? (string) $station : '');
+    /* V1 (seit 2.2.23): die erkannten Objekte, gefiltert, hoechstens 3 (ic_ki_kurz()). */
+    $ki = ic_ki_satz($ai);
+    if ($ki !== '') { $text .= ' ' . $ki; }
     if ($sig) {
         $tok = isset($cfg['klingel_signal_token']) ? (string) $cfg['klingel_signal_token'] : '';
         if ($tok === '') {
@@ -4865,6 +4821,7 @@ function ic_klingel_melden($station, $trigger, $mehrere, $bildquelle, $basis)
                     'Bild (24 h, 5 Abrufe): ' . $basis . 'bild.php?link=' . rawurlencode($code));
             }
             $t = $text . ' ' . $zusatz;
+            /* KEIN 'absender' an SignalBot: dort heisst das Feld etwas anderes (Rufnummernliste, sg_lib.php:290). */
             $p = array('token' => $tok, 'aktion' => 'senden', 'text' => $t);
             $an = isset($cfg['klingel_signal_an']) ? trim((string) $cfg['klingel_signal_an']) : '';
             if ($an !== '') { $p['an'] = $an; }
@@ -4887,9 +4844,8 @@ function ic_klingel_melden($station, $trigger, $mehrere, $bildquelle, $basis)
         }
     }
     if (ic_ansage_an()) {
-        /* Nr. 36 b (Stufe 2, F10): Intercom spricht selbst ueber die gemeinsame Sprachausgabe -
-         * derselbe Satz, dieselben Ausloeser und dieselbe 60-s-Bremse wie SignalBot und
-         * Sprachsteuerung. Ins Protokoll kommt nur das Ergebnis, nie der Text (Nr. 18). */
+        /* Nr. 36 b (Stufe 2, F10): Intercom spricht selbst ueber die gemeinsame Sprachausgabe - derselbe Satz,
+         * dieselben Ausloeser und dieselbe 60-s-Bremse. Ins Protokoll kommt nur das Ergebnis, nie der Text. */
         $ak = ic_ansage_k();
         $ar = ansage_sprechen($text, ic_tts(), $ak);
         $aus['ansage'] = ic_klingel_ergebnis('ansage', ic_uebersetzt('UI.ANSAGE_NAME', array(), 'Sprachausgabe'),
@@ -4946,7 +4902,9 @@ function ic_pruefe_klingel($art, $mit_netz = false)
  * beide an, kommen zwei Ansagen - die Oberflaeche und der Reiter Test sagen es.
  */
 
-/** Erlaubte Ausgabearten: alle des Moduls ausser 'audioserver' (kein Antwortweg zu Loxone). */
+/** Erlaubte Ausgabearten: alle des Moduls ausser 'audioserver' (kein Antwortweg zu Loxone) und 'sonos4lox'
+ *  (erst, wenn Sonos im Haus ist; README 2.2.19). BERICHTIGT 2.2.23 (Pruefbericht S1): der Kommentar nannte
+ *  sonos4lox nicht. */
 function ic_ansage_modi()
 {
     return array('aus', 'musicserver', 'ms4h', 'custom', 'alexang', 'cc4lox');
@@ -4980,9 +4938,17 @@ function ic_ansage_k()
     $p = ic_paths();
     return array(
         'port'   => ansage_webport($p['home'] . '/config/system/general.json'),
+        /* S2 (seit 2.2.23, Pruefbericht): https-Port und Wurzel an das Modul - wie ic_paths(). sslport wirkt nur,
+         * wenn der LoxBerry auf https umleitet, ohne Port in Location und mit anderem SSL-Port als 443. */
+        'sslport' => ansage_sslport($p['home'] . '/config/system/general.json'),
+        'home'   => $p['home'],
         'kopf'   => array('User-Agent: LoxBerry Intercom'),
         'ordner' => @is_dir($p['datadir']) ? $p['datadir'] : '',
         't'      => function ($s) { return ic_sprachwert($s, $s); },
+        /* S3 (seit 2.2.23, Sprachmodul 1.1.3): Absender fuer die Uebersicht in Alexa NG. Das Modul sendet ihn nur
+         * an Alexa NG und nur in gueltiger Form; Chromecast uebergeht ihn. ic_nachbar_rufen() (SignalBot) bekommt
+         * ihn nie. */
+        'absender' => 'intercom',
         /* K_TTS_EINTRAG: den Satz bringt das Modul seit 1.1.2 selbst mit; die Umlenkung auf
          * UI.SICH_TTS_EINTRAG ist seit 2.2.21 gestrichen (X-10). Ab Werk aus - kein 'werk'. */
     );
@@ -5026,4 +4992,1149 @@ function ic_sicherung_selbstpruefung()
     if ($js === false) { return array(ic_txt('UI.SICH_KEIN_JSON')); }
     $erg = ic_sicherung_lesen($js);
     return ($erg[0] === null && isset($erg[1]) && is_array($erg[1])) ? $erg[1] : array();
+}
+
+/* ==================================================================
+ * Gruppe 7 / MQTT (2.2.23): Befehlsbruecke, Namenstabelle, Auftragsprozess,
+ * eine Logik fuer Foto und Video, befristeter Videolink, V1 (Objekte im
+ * Klingeltext), Adresse fuer Abnehmer ausserhalb des LoxBerry
+ *
+ * Grundlage: Musterprojekt/entwurf_gruppe7_ic.txt (E1-E18), ENTSCHEIDUNGEN_GRUPPE7_INTERCOM.md,
+ * Bauvorschrift wz_bild/GRUPPE7_BAUVORSCHRIFT.md, Pruefbericht intercom_fremdbefunde_pruefung.md.
+ * Werte gehen wie bisher als Zeile ueber den UDP-Eingang des MQTT-Gateways (seit 2.2.23 mit
+ * stream_socket_client, ic_udp_senden()); in Loxone ist je Wert ein einfacher Virtueller Eingang
+ * anzulegen, Name genau so, wie das Gateway ihn vergibt (ic_mqtt_namen()). Befehle kommen ueber die
+ * gemeinsame Befehlsbruecke (bin/befehlsbruecke.php, Stammfassung; Zuordnung bin/befehle_zuordnung.php),
+ * die einen kurzen Auftragsprozess startet (bin/ic_auftrag.sh -> bin/ic_auftrag.php). Der ruft DIESELBE
+ * Funktion wie der HTTP-Endpunkt: ic_foto_ausloesen() bzw. ic_video_starten(). Kein HTTP auf sich selbst.
+ * ================================================================== */
+
+/** Hoechstens so viele Auftragsprozesse zugleich (Entwurf 3.3, E4). */
+define('IC_AUFTRAEGE_MAX', 4);
+/** Ein Auftrag laenger als das gilt im Reiter Test als haengend (Entwurf 3.6). */
+define('IC_AUFTRAG_ALT_S', 400);
+/** Frist der Objekterkennung, wenn eine Klingel-Meldung darauf wartet (E13), sonst wie bisher 15 s. */
+define('IC_KI_FRIST_MELDUNG', 5);
+define('IC_KI_FRIST', 15);
+/** Befristeter Videolink (E11): 24 Stunden, 5 Abrufe. */
+define('IC_VIDEOLINK_STUNDEN', 24);
+define('IC_VIDEOLINK_ABRUFE', 5);
+
+/* ------------------------------------------------------------------
+ * MQTT ueber UDP: EIN Weg fuer alle Zeilen (Entscheidung Zusatz, Eigener Fund 8)
+ * ------------------------------------------------------------------
+ * Bis 2.2.22 ueber socket_create() - mit function_exists abgesichert, aber ohne die
+ * PHP-Erweiterung sockets sendete Intercom still nichts (Regeln/03:800 sagt
+ * stream_socket_client('udp://...')). stream_socket_client gehoert zum Kern. */
+
+/** Eine Zeile an den UDP-Eingang des Gateways. true nur, wenn die volle Laenge hinausging. */
+function ic_udp_senden($zeile, $port)
+{
+    $zeile = (string) $zeile;
+    $port = (int) $port;
+    if ($zeile === '' || $port < 1 || $port > 65535) { return false; }
+    $en = 0;
+    $es = '';
+    $s = @stream_socket_client('udp://127.0.0.1:' . $port, $en, $es, 1);
+    if (!is_resource($s)) { return false; }
+    $n = @fwrite($s, $zeile);
+    @fclose($s);
+    return $n === strlen($zeile);
+}
+
+/* ------------------------------------------------------------------
+ * Namenstabelle, Hakenliste, Abo-Datei (Entwurf 2.4, E8)
+ * ------------------------------------------------------------------ */
+
+/** Der Name, den das MQTT-Gateway einem Thema gibt: / % und Leerzeichen werden _ (Regeln/07). */
+function ic_gateway_name($thema)
+{
+    return str_replace(array('/', '%', ' '), '_', (string) $thema);
+}
+
+/**
+ * Die Namenstabelle - EINE Quelle fuer Reiter Einbindung, V2-Hakenliste, Baustein-Liste und Pruefzeile.
+ * Je Zeile: thema (ohne Praefix), voll, name (Gateway), bedeutung (Sprachschluessel), bereich, art (zahl|text),
+ * retained, haken (V2-Haken = im Musterprojekt), noncached. Haken (5): status/ok (Noncached), status/zaehler,
+ * bilder, ai_count, fehler (Text). Die uebrigen Themen stehen unter "Weitere Themen".
+ */
+function ic_mqtt_namen($p = null)
+{
+    if ($p === null) { $p = ic_mqtt_praefix(); }
+    $z = array(
+        // thema, Schluessel, art, bereich, haken, noncached
+        array('status/ok', 'MQTT.T_ST_OK', 'zahl', '0 … 1', true, true),
+        array('status/zaehler', 'MQTT.T_ST_ZAEHLER', 'zahl', '0 … 999', true, false),
+        array('bilder', 'MQTT.T_BILDER', 'zahl', '0 … 1000000', true, false),
+        array('ai_count', 'MQTT.T_AI_COUNT', 'zahl', '-1 … 100', true, false),
+        array('fehler', 'MQTT.T_FEHLER', 'text', '', true, false),
+        array('status/ts', 'MQTT.T_ST_TS', 'zahl', '', false, false),
+        array('ok', 'MQTT.T_OK', 'zahl', '', false, false),
+        array('', 'MQTT.T_BILD', 'text', '', false, false),
+        array('trigger/NAME', 'MQTT.T_TRIGGER', 'text', '', false, false),
+        array('video', 'MQTT.T_VIDEO', 'text', '', false, false),
+        array('ai', 'MQTT.T_AI', 'text', '', false, false),
+        array('timelapse', 'MQTT.T_TIMELAPSE', 'text', '', false, false),
+        array('status/befehle', 'MQTT.T_ST_BEFEHLE', 'zahl', '-1 … 1', false, false),
+    );
+    $aus = array();
+    foreach ($z as $e) {
+        $voll = $e[0] === '' ? $p : $p . '/' . $e[0];
+        $aus[] = array('thema' => $e[0], 'voll' => $voll, 'name' => ic_gateway_name($voll), 'bedeutung' => $e[1],
+                       'art' => $e[2], 'bereich' => $e[3], 'retained' => ic_mqtt_retain_voll($voll, $p),
+                       'haken' => $e[4], 'noncached' => $e[5]);
+    }
+    return $aus;
+}
+
+/** Wird ein volles Thema retained gesendet? (aus ic_mqtt_themen(), wie ic_mqtt_retain()) */
+function ic_mqtt_retain_voll($voll, $p)
+{
+    foreach (ic_mqtt_themen($p) as $t) {
+        if ($t[0] === $voll) { return (bool) $t[2]; }
+    }
+    return false;
+}
+
+/** Hakenliste fuer Gateway V2: nur die Zeilen mit Haken; Noncached nur status/ok. */
+function ic_mqtt_hakenliste($p = null)
+{
+    return array_values(array_filter(ic_mqtt_namen($p), function ($z) { return $z['haken']; }));
+}
+
+/** Die Abo-Zeile fuer Gateway V1: <praefix>/#. */
+function ic_abo_zeile($praefix)
+{
+    return trim((string) $praefix, '/') . '/#';
+}
+
+/**
+ * Die Abo-Datei des Gateways V1 (config/plugins/<ordner>/mqtt_subscriptions.cfg, Bauart ax/cc E12) nachfuehren -
+ * beim Speichern im Reiter MQTT nach einem Praefixwechsel. Nur in einer Anlage. Rueckgabe array(Pfad, steht drin).
+ */
+function ic_abo_datei($praefix, $schreiben = false)
+{
+    $p = ic_paths();
+    $pfad = $p['config'] . '/mqtt_subscriptions.cfg';
+    $soll = ic_abo_zeile($praefix);
+    if ($p['home'] === '' || !@is_dir($p['config'])) {
+        return array($pfad, false);
+    }
+    $roh = @is_readable($pfad) ? (string) @file_get_contents($pfad) : '';
+    $da = in_array($soll, array_map('trim', preg_split('/\r?\n/', $roh)), true);
+    if ($schreiben && !$da) {
+        $da = ic_datei_ersetzen($pfad, $soll . "\n", 0644);
+    }
+    return array($pfad, $da);
+}
+
+/* ------------------------------------------------------------------
+ * Adresse fuer Abnehmer ausserhalb des LoxBerry (Eigener Fund H1, E12)
+ * ------------------------------------------------------------------
+ * videowebhook.php baute 'file' aus ic_host() = HTTP_HOST. Aufgerufen wird es seit 2.2.13 nur noch
+ * intern ueber http://127.0.0.1/... - die Adresse in <praefix>/video und in den Video-Webhooks zeigte
+ * damit auf 127.0.0.1 und war fuer jeden Abnehmer ausserhalb des LoxBerry unbrauchbar. Ebenso hat der
+ * Auftragsprozess der Befehlsbruecke gar keinen HTTP_HOST. */
+
+/** Der Rechnername fuer Adressen an Abnehmer: HTTP_HOST, wenn gesetzt und nicht Loopback; sonst gethostname() (+ Port). */
+function ic_host_aussen()
+{
+    $h = isset($_SERVER['HTTP_HOST']) ? (string) $_SERVER['HTTP_HOST'] : '';
+    $h = preg_replace('/[^A-Za-z0-9\.\-:\[\]]/', '', $h);
+    $name = strtolower((string) preg_replace('/:[0-9]+\z/', '', $h));
+    $loop = ($name === '' || $name === 'localhost' || $name === '[::1]' || $name === '::1'
+             || preg_match('/^127\./', $name) === 1);
+    if (!$loop) { return $h; }
+    $r = function_exists('gethostname') ? gethostname() : '';
+    $r = is_string($r) ? (string) preg_replace('/[^A-Za-z0-9\.\-]/', '', $r) : '';
+    if ($r === '' || strtolower($r) === 'localhost') { $r = 'loxberry'; }
+    $port = ic_webport();
+    return $r . ($port === 80 ? '' : ':' . $port);
+}
+
+/** Basisadresse der Endpunkte fuer Abnehmer (mit Schraegstrich am Ende). */
+function ic_basis_aussen()
+{
+    return 'http://' . ic_host_aussen() . '/plugins/' . ic_plugin_ordner() . '/';
+}
+
+/* ------------------------------------------------------------------
+ * Objekterkennung im Klingeltext (V1, E13)
+ * ------------------------------------------------------------------ */
+
+/** Ist die Objekterkennung eingeschaltet und mit Adresse? (dieselbe Bedingung wie in ic_ki_erkennen()) */
+function ic_ki_an()
+{
+    $cfg = ic_config();
+    return !empty($cfg['ai_enable']) && $cfg['ai_enable'] === 'on' && !empty($cfg['ai_url']);
+}
+
+/**
+ * Die erkannten Objekte fuer einen Meldetext: je Eintrag nur das Label (der Zusatz " (NN%)" faellt weg),
+ * Zeichen ausser [A-Za-z0-9 äöüÄÖÜß()-] weg, hoechstens 30 Zeichen, doppelte (Gross/klein egal) weg,
+ * hoechstens 3. Fuer Deutsch eine kleine feste Uebersetzung der haeufigsten Labels. Rueckgabe Liste.
+ */
+function ic_ki_kurz($ai, $sprache = 'de')
+{
+    if (!is_array($ai) || !isset($ai['objects']) || !is_array($ai['objects'])) { return array(); }
+    $de = array('person' => 'Person', 'car' => 'Auto', 'truck' => 'Lastwagen', 'bicycle' => 'Fahrrad',
+                'motorcycle' => 'Motorrad', 'dog' => 'Hund', 'cat' => 'Katze', 'bird' => 'Vogel', 'bus' => 'Bus');
+    $aus = array();
+    $gesehen = array();
+    foreach ($ai['objects'] as $o) {
+        if (!is_string($o) && !is_int($o)) { continue; }
+        $l = (string) preg_replace('/\s*\(\d{1,3}%\)\s*\z/', '', (string) $o);
+        $l = (string) preg_replace('/[^A-Za-z0-9 äöüÄÖÜß()\-]/u', '', $l);
+        if (@preg_match('//u', $l) !== 1) { $l = (string) preg_replace('/[^A-Za-z0-9 ()\-]/', '', $l); }
+        $l = trim((string) preg_replace('/\s+/', ' ', $l));
+        if (function_exists('mb_substr')) { $l = trim(mb_substr($l, 0, 30, 'UTF-8')); } else { $l = trim(ansage_kuerzen($l, 30)); }
+        if ($l === '') { continue; }
+        if ($sprache === 'de' && isset($de[strtolower($l)])) { $l = $de[strtolower($l)]; }
+        $k = strtolower($l);
+        if (isset($gesehen[$k])) { continue; }
+        $gesehen[$k] = true;
+        $aus[] = $l;
+        if (count($aus) >= 3) { break; }
+    }
+    return $aus;
+}
+
+/** Der Zusatz "Erkannt: Person, Hund." fuer den Meldetext - '' ohne Objekte. */
+function ic_ki_satz($ai)
+{
+    ic_sprache_laden();
+    // UI.KI_UEBERSETZEN: "1" in der deutschen Sprachdatei (person -> Person ...), "0" in der englischen.
+    $sprache = ic_uebersetzt('UI.KI_UEBERSETZEN', array(), '1') === '1' ? 'de' : 'en';
+    $o = ic_ki_kurz($ai, $sprache);
+    if (!$o) { return ''; }
+    return ic_uebersetzt('UI.KLINGEL_M_KI', array(implode(', ', $o)), 'Erkannt: ' . implode(', ', $o) . '.');
+}
+
+/* ------------------------------------------------------------------
+ * Zeitstempel unteilbar (I13)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Den Zeitstempel in JPEG-Daten setzen - VOR dem ersten Schreiben (I13). Rueckgabe die gestempelten Daten oder,
+ * ohne php-gd bzw. bei einem unlesbaren Bild, die Eingabe unveraendert.
+ */
+function ic_zeitstempel_daten($jpeg, $text = null)
+{
+    if (!function_exists('imagecreatefromstring') || !is_string($jpeg) || $jpeg === '') { return $jpeg; }
+    $text = $text === null ? date('d.m.Y H:i:s') : (string) $text;
+    $img = @imagecreatefromstring($jpeg);
+    if (!$img) {
+        ic_log_gebremst('gd', 'Der Zeitstempel liess sich nicht setzen: das Bild ist kein lesbares JPEG.');
+        return $jpeg;
+    }
+    $weiss = imagecolorallocate($img, 255, 255, 255);
+    $schwarz = imagecolorallocate($img, 0, 0, 0);
+    imagefilledrectangle($img, 9, 29, strlen($text) * imagefontwidth(5) + 11, 45, $schwarz);
+    imagestring($img, 5, 10, 30, $text, $weiss);
+    ob_start();
+    $ok = @imagejpeg($img);
+    $j = (string) ob_get_clean();
+    imagedestroy($img);
+    return ($ok && $j !== '') ? $j : $jpeg;
+}
+
+/**
+ * Das jeweils letzte Bild ablegen (getpicture.php bis 2.2.22 :115-123) - unter einer Sperre und nur, wenn kein
+ * JUENGERES Bild schon liegt (I13: ein aelteres Bild ueberschreibt kein neueres). $stand ist der Zeitpunkt des
+ * Bildabrufs (microtime). $ziele: Pfad => Rechte. Ist die Sperre nicht zu bekommen, wird wie bisher geschrieben.
+ */
+function ic_letztes_bild_ablegen(array $ziele, $daten, $stand)
+{
+    $d = ic_paths()['datadir'];
+    if (!@is_dir($d)) { @mkdir($d, 0775, true); }
+    $sperre = ic_sperre_warten($d . '/.letztes_bild.sperre', 5);
+    $m = ic_merker_lesen('letztes_bild');
+    if ($sperre !== false && $m !== null && is_numeric($m['text']) && (float) $m['text'] > (float) $stand) {
+        ic_sperre_frei($sperre);
+        ic_log('Ein aelteres Bild (Abruf ' . date('H:i:s', (int) $stand) . ') ersetzt das letzte Bild nicht - '
+            . 'ein juengeres liegt schon.');
+        return false;
+    }
+    foreach ($ziele as $pfad => $modus) {
+        ic_datei_ersetzen($pfad, $daten, $modus);
+    }
+    ic_merker_setzen('letztes_bild', sprintf('%.6F', (float) $stand));
+    ic_sperre_frei($sperre);
+    return true;
+}
+
+/* ------------------------------------------------------------------
+ * EINE Logik fuer Foto und Video (Entwurf 3.4, E5)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Ein Foto ausloesen - der Rumpf von getpicture.php bis 2.2.22 (:50-346) ohne $_GET, fuer den HTTP-Endpunkt und
+ * fuer den Auftragsprozess der Befehlsbruecke.
+ *
+ * $antwort: Rueckruf function ($code, $json, $nacharbeit) fuer die Antwort an Loxone (getpicture.php: Kopfzeilen,
+ * echo, flush) oder null (Auftragsprozess: nur Protokoll). $nacharbeit heisst: danach geht die Arbeit weiter
+ * (Content-Length und Connection: close, wie bisher).
+ *
+ * REIHENFOLGE NEU (Entscheidung Zusatz "Objekterkennung erst NACH der Antwort", Eigener Fund 6): Bild holen ->
+ * letztes Bild (unteilbar, Stempel vorher, I13) -> Archiv -> Bildadresse -> ANTWORT -> Objekterkennung (Frist 5 s,
+ * wenn eine Klingel-Meldung darauf wartet; E13) -> Anzeigegeraet -> MQTT -> Klingel-Meldungen mit den erkannten
+ * Objekten (V1) -> Webhooks. Die Antwort an Loxone traegt 'ai' nur noch als leere Liste (Leser brechen nicht);
+ * MQTT und Webhooks tragen die Objekte weiter.
+ *
+ * Rueckgabe array('ok' => bool, 'grund' => Text, 'json' => Antwort).
+ */
+function ic_foto_ausloesen(array $station, $trigger, $nur_vorschau = false, $antwort = null)
+{
+    $trigger = (string) $trigger;
+    $nur_vorschau = (bool) $nur_vorschau;
+    $arr = ic_config();
+    $senden = function ($code, $json, $nacharbeit) use ($antwort) {
+        if (is_callable($antwort)) { call_user_func($antwort, $code, $json, $nacharbeit); }
+    };
+    $mehrere = count(ic_stationen()) > 1;
+
+    /* ---------------- Bild holen ---------------- */
+    $stand = microtime(true);
+    $r = ic_bild_holen($station);
+    if (!$r['ok']) {
+        // Gebremst: bei einer ausgeschalteten Station kaeme sonst bei jedem Klingeln eine Zeile.
+        ic_log_gebremst('station_' . $station['name'],
+            'Die Tuerstation "' . $station['name'] . '" lieferte kein Bild: ' . $r['fehler']);
+        /* M4 (seit 2.2.13): eine misslungene Aufnahme erreicht Loxone - <praefix>/fehler und status/ok 0. */
+        if (ic_mqtt_an()) {
+            ic_mqtt_senden('fehler', $station['name'] . ': ' . $r['fehler']);
+            ic_mqtt_senden('status/ok', '0');
+        }
+        $fjson = json_encode(array('success' => false, 'station' => $station['name'],
+                                   'weg' => $r['weg'], 'error' => $r['fehler']));
+        /* Klingel-1 (seit 2.2.15, Entscheidung 13): scheitert der Bildabruf, wird trotzdem gemeldet - ohne Bild.
+         * Erst die Antwort an Loxone, dann die Meldung. */
+        $melden = !$nur_vorschau && ic_klingel_gefragt($trigger);
+        $senden(502, $fjson, $melden);
+        if ($melden) {
+            ic_klingel_melden($station['name'], $trigger, $mehrere, '', ic_basis_aussen(), null);
+        }
+        return array('ok' => false, 'grund' => $r['fehler'], 'json' => $fjson);
+    }
+    $frame = $r['bild'];
+
+    if (!$nur_vorschau) { ic_archiv_sicherstellen(); }
+
+    /* ---------------- Das jeweils letzte Bild ----------------
+     * data/plugins/<ordner>/lastpicture.jpg immer (bild.php liefert es mit Token aus);
+     * webfrontend/html/plugins/<ordner>/lastpicture.jpg nur, solange "bild_oeffentlich" an ist.
+     * I13 (seit 2.2.23): der Zeitstempel kommt VOR das erste Schreiben, jedes Ziel wird genau einmal unteilbar
+     * geschrieben, und ein aelterer Abruf ersetzt kein juengeres Bild. */
+    $mit_stempel = isset($arr['timestamp_image']) && $arr['timestamp_image'] === 'on';
+    $bild = $mit_stempel ? ic_zeitstempel_daten($frame) : $frame;
+    $ic_intern = ic_paths()['datadir'] . '/lastpicture.jpg';
+    $ic_offen = !isset($arr['bild_oeffentlich']) || $arr['bild_oeffentlich'] !== '0';
+    $lastpicture = ic_paths()['html'] . '/lastpicture.jpg';
+    $ziele = array($ic_intern => 0640);
+    if ($ic_offen) { $ziele[$lastpicture] = 0644; }
+    ic_letztes_bild_ablegen($ziele, $bild, $stand);
+    if (!$ic_offen && @is_file($lastpicture)) {
+        @unlink($lastpicture);
+    }
+
+    /* ---------------- Archiv ---------------- */
+    $archiviert = false;
+    $archivhinweis = '';
+    $archivname = '';
+    $ziel = '';
+    if (!$nur_vorschau) {
+        $o = ic_archivordner();
+        // Ohne Doppelpunkte (FAT32/exFAT/NTFS) und EXKLUSIV belegt (C10, seit 2.2.13).
+        $archivname = ic_archivdatei_anlegen($o['bild'],
+            ($station['name'] !== '' && $mehrere
+             ? preg_replace('/[^A-Za-z0-9_\-]/', '', $station['name']) . '-' : '')
+            . $trigger);
+        $ziel = $o['bild'] . $archivname;
+        if ($archivname !== '' && ic_datei_ersetzen($ziel, $bild)) {
+            $archiviert = true;
+        } else {
+            if ($archivname !== '') { @unlink($ziel); }
+            $archivhinweis = 'Archivbild konnte nicht geschrieben werden: ' . $ziel;
+            ic_log_gebremst('archiv', 'Ein Archivbild liess sich nicht schreiben: ' . $ziel
+                . ' - Rechte und freien Platz pruefen.');
+        }
+    } else {
+        $archivhinweis = 'Nicht archiviert: Aufruf mit ?hook-Parameter (nur Vorschau).';
+    }
+
+    /* ---------------- Bildadresse ----------------
+     * KEIN Aktionstoken in dieser Adresse (seit 2.2.6): ohne offenes Bild ein befristeter Bildlink an DIESES Bild
+     * (C11), 24 Stunden, fuenf Abrufe. H1 (seit 2.2.23): der Rechner aus ic_host_aussen(), nie 127.0.0.1. */
+    $basis = ic_basis_aussen();
+    if ($ic_offen) {
+        $bildurl = $basis . 'lastpicture.jpg';
+    } else {
+        $ic_code = ic_bildlink_erzeugen(24, 5, $archiviert ? $ziel : $ic_intern);
+        $bildurl = $ic_code === '' ? '' : $basis . 'bild.php?link=' . rawurlencode($ic_code);
+        if ($ic_code === '') {
+            ic_log_gebremst('bildlink', 'Es liess sich kein befristeter Bildlink anlegen - '
+                . 'die Meldung geht ohne Bildadresse hinaus.');
+        }
+    }
+    $felder = array(
+        'success'      => true,
+        'timestamp'    => date('d.m.Y-H:i:s'),
+        'station'      => $station['name'],
+        'weg'          => $r['weg'],
+        'dauer'        => round($r['dauer'], 2),
+        'trigger'      => $trigger,
+        'ai'           => array(),
+        'archived'     => $archiviert,
+        'archive_file' => $archivname,
+        'archive_info' => $archivhinweis,
+        'image'        => $bildurl,
+    );
+    $json = json_encode($felder);
+
+    /* ---------------- Antwort an Loxone ----------------
+     * Ab hier wartet der Miniserver nicht mehr mit (Content-Length und Connection: close seit 2.2.13, M6). */
+    $senden(200, $json, !$nur_vorschau);
+
+    ic_log('Bild von "' . $station['name'] . '" geholt (' . $r['weg'] . ', '
+        . ic_byte(strlen($frame)) . ')'
+        . ($trigger !== '' ? ', Ausloeser ' . $trigger : '')
+        . ($archiviert ? ', archiviert als ' . $archivname : ''));
+
+    // Bei ?hook ist Schluss - die Oberflaeche wollte nur nachsehen.
+    if ($nur_vorschau) {
+        return array('ok' => true, 'grund' => '', 'json' => $json);
+    }
+
+    /* ---------------- Objekterkennung (NACH der Antwort) ----------------
+     * Wartet eine Klingel-Meldung darauf, hoechstens 5 s (E13); sonst wie bisher 15 s. */
+    $gefragt = ic_klingel_gefragt($trigger);
+    $ai = ic_ki_erkennen($ic_intern, $gefragt ? IC_KI_FRIST_MELDUNG : IC_KI_FRIST);
+    $felder['ai'] = $ai;
+    $json_voll = json_encode($felder);
+    if ($json_voll === false) { $json_voll = $json; }
+
+    /* ---------------- Bild an ein Anzeigegeraet ---------------- */
+    // App "Notifications for Android TV", Port 7676
+    if (!empty($arr['tv_enable']) && $arr['tv_enable'] === 'on'
+        && !empty($arr['tv_ip']) && !function_exists('curl_init')) {
+        ic_log_gebremst('curl_tv', 'Das Bild sollte an das Anzeigegeraet gehen, aber die '
+            . 'PHP-Erweiterung curl fehlt. Abhilfe: sudo apt install php-curl');
+    }
+    if (!empty($arr['tv_enable']) && $arr['tv_enable'] === 'on'
+        && !empty($arr['tv_ip']) && function_exists('curl_init')) {
+        $tvport = (isset($arr['tv_port']) && is_numeric($arr['tv_port'])) ? (int) $arr['tv_port'] : 7676;
+        $tvmsg = $trigger !== '' ? 'Ausloeser: ' . $trigger : 'Jemand hat geklingelt';
+        if ($mehrere) { $tvmsg .= ' (' . $station['name'] . ')'; }
+        $ch = curl_init('http://' . $arr['tv_ip'] . ':' . $tvport . '/');
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, array(
+            'type' => '0', 'title' => 'Loxone Intercom', 'msg' => $tvmsg,
+            'duration' => '10', 'fontsize' => '0', 'position' => '0',
+            'bkgcolor' => '#009688', 'transparency' => '0', 'offset' => '0',
+            'app' => 'intercom', 'force' => 'true', 'interrupt' => '0',
+            'filename' => new CURLFile($ic_intern, 'image/jpeg', 'lastpicture.jpg'),
+        ));
+        @curl_exec($ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($ch); }
+    }
+
+    /* ---------------- MQTT ueber das LoxBerry-Gateway (UDP) ---------------- */
+    if (ic_mqtt_an()) {
+        ic_mqtt_senden('', $json_voll);
+        if ($trigger !== '') {
+            ic_mqtt_senden('trigger/' . $trigger, $json_voll);
+        }
+        ic_ki_melden($ai);
+        ic_mqtt_herzschlag();
+    }
+
+    /* ---------------- Klingel-Meldungen (SignalBot, Sprachsteuerung, eigene Ansage) ----------------
+     * Ab Werk aus; nach der Antwort an Loxone; seit 2.2.23 mit den erkannten Objekten (V1). */
+    ic_klingel_melden($station['name'], $trigger, $mehrere, $archiviert ? $ziel : $ic_intern, $basis, $ai);
+
+    /* ---------------- Webhooks (mit den erkannten Objekten) ---------------- */
+    $jsonarr = json_decode($json_voll, true);
+    foreach (array(1, 3) as $nr) {
+        if (empty($arr['webhook' . $nr])) { continue; }
+        if (!function_exists('curl_init')) {
+            ic_log_gebremst('curl_webhook', 'Webhook ' . $nr . ' ist eingetragen, aber die '
+                . 'PHP-Erweiterung curl fehlt - es wird nichts aufgerufen. '
+                . 'Abhilfe: sudo apt install php-curl');
+            continue;
+        }
+        $ch = curl_init($arr['webhook' . $nr]);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $json_voll);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type:application/json'));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        $ic_antwort = @curl_exec($ch);
+        $ic_wcode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $ic_wfehler = curl_error($ch);
+        if (PHP_VERSION_ID < 80000) { curl_close($ch); }
+        ic_webhook_pruefen('Webhook ' . $nr, $ic_antwort !== false, $ic_wcode, $ic_wfehler);
+    }
+    foreach (array(2, 4) as $nr) {
+        if (empty($arr['webhook' . $nr])) { continue; }
+        $url = str_replace('<imgurl>', urlencode($jsonarr['image']), $arr['webhook' . $nr]);
+        list($ic_winhalt, $ic_wcode, $ic_wfehler) = ic_http_holen_voll($url, 5);
+        ic_webhook_pruefen('Webhook ' . $nr, $ic_winhalt !== false, $ic_wcode, $ic_wfehler);
+    }
+    return array('ok' => true, 'grund' => '', 'json' => $json_voll);
+}
+
+/** Jedes Argument einzeln maskieren und mit Leerzeichen verbinden (bis 2.2.22 ic_befehl() in getvideo.php). */
+function ic_befehl_zeile(array $teile)
+{
+    $out = array();
+    foreach ($teile as $t) {
+        // Feste Schalter (beginnen mit -) unveraendert, alles andere maskiert.
+        $out[] = (strlen($t) > 0 && $t[0] === '-' && strpos($t, ' ') === false)
+               ? $t : escapeshellarg($t);
+    }
+    return implode(' ', $out);
+}
+
+/**
+ * Eine Videoaufzeichnung starten - der Rumpf von getvideo.php bis 2.2.22 (:112-311) ohne $_GET, fuer den
+ * HTTP-Endpunkt und den Auftragsprozess. $sekunden ist schon geprueft (1-300). Rueckgabe array('code' => HTTP-Code,
+ * 'json' => Antwort, 'ok' => bool, 'grund' => Text). Die Sperre 'video' wird VOR dem Start von ffmpeg freigegeben:
+ * die ffmpeg-Kette soll keinen gehaltenen Deskriptor erben (Gedaechtnis "Sperre vererbt sich an Kinder"); ueber die
+ * Laufzeit haelt seit 2.2.13 die Marke (C2).
+ */
+function ic_video_starten(array $station, $sekunden)
+{
+    $seconds = (int) $sekunden;
+    $fehler = function ($code, $text) {
+        return array('code' => $code, 'json' => json_encode(array('success' => false, 'error' => $text)),
+                     'ok' => false, 'grund' => $text);
+    };
+    $arr = ic_config();
+
+    /* ---------------- Voraussetzungen PRUEFEN, nicht annehmen ---------------- */
+    $ffmpeg = ic_programm('ffmpeg');
+    if (!$ffmpeg) {
+        ic_log_gebremst('ffmpeg', 'Eine Videoaufzeichnung wurde angefordert, aber ffmpeg '
+            . 'ist nicht installiert. Abhilfe: sudo apt-get install -y ffmpeg');
+        return $fehler(501, 'ffmpeg ist nicht installiert - ohne ffmpeg gibt es keine Videoaufzeichnung.');
+    }
+    if (!ic_archiv_sicherstellen()) {
+        return $fehler(500, 'Das Archivverzeichnis liess sich nicht anlegen: ' . ic_paths()['legacy']);
+    }
+    $o = ic_archivordner();
+    if (!@is_writable($o['video'])) {
+        ic_log_gebremst('videoordner', 'Der Videoordner ist nicht beschreibbar: ' . $o['video']);
+        return $fehler(500, 'Der Videoordner ist nicht beschreibbar: ' . $o['video']);
+    }
+
+    /* ---------------- Sperre ---------------- */
+    $ic_sperre = ic_sperre('video');
+    if ($ic_sperre === false) {
+        return $fehler(429, 'Es laeuft bereits eine Aufzeichnung.');
+    }
+    /* C2 (seit 2.2.13): laeuft noch eine Aufzeichnung? Die Marke gilt bis Start + Dauer + 60 s oder bis ihre
+     * Rueckmeldung eintrifft. */
+    $ic_lauf = ic_videolauf_lesen(60);
+    if ($ic_lauf !== null) {
+        flock($ic_sperre, LOCK_UN);
+        fclose($ic_sperre);
+        return $fehler(429, 'Es laeuft bereits eine Aufzeichnung (seit '
+                 . max(0, time() - (int) $ic_lauf['start']) . ' s, Dauer '
+                 . (int) $ic_lauf['dauer'] . ' s).');
+    }
+
+    /* ---------------- Dateinamen ---------------- */
+    $stationsteil = count(ic_stationen()) > 1
+        ? preg_replace('/[^A-Za-z0-9_\-]/', '', $station['name']) . '-' : '';
+    $videofile = $o['video'] . date('Y_m_d-H_i_s') . '-' . $stationsteil . $seconds . 's-intercom.avi';
+    $video_tn_file = preg_replace('/\.avi$/', '.jpg', $videofile);
+    $videofilenameonly = basename($videofile);
+
+    /* ---------------- Zeitstempel-Filter ----------------
+     * BERICHTIGT 2.2.23 (I11, Pruefbericht gemessen mit ffmpeg 8.0 und einem Bau von 2016): Das Argument geht als
+     * eigenes Wort an ffmpeg, ohne Shell-Ebene - die Rueckstriche sind aber NICHT entbehrlich. ffmpeg liest den
+     * Filter in drei Ebenen: Filtergraph ('...' faellt weg), Optionsliste (':' trennt, '\' maskiert) und bei drawtext
+     * die Textexpansion %{fn:arg} (':' trennt die Argumente der Funktion). Ein Doppelpunkt im strftime-Format muss
+     * auch die dritte Ebene ueberstehen: innerhalb von '...' braucht er drei Rueckstriche an ffmpeg (\\\:), Ebene 2
+     * macht daraus \:, Ebene 3 daraus :. Bis 2.2.22 kam nur \: an - ffmpeg meldete "%{localtime} requires at most
+     * 1 arguments", endete mit 0, und der Zeitstempel fehlte still. Zwei Rueckstriche (Fremdvorschlag) brechen die
+     * Aufnahme ab (rc -22). Im PHP-Quelltext stehen deshalb sechs Rueckstriche je Doppelpunkt. */
+    $vf = array();
+    if (isset($arr['timestamp_video']) && $arr['timestamp_video'] === 'on') {
+        $vf = array('-vf', "drawtext=text='%{localtime\\:%d.%m.%Y %H\\\\\\:%M\\\\\\:%S}'"
+                         . ':x=10:y=10:fontsize=24:fontcolor=white:box=1:boxcolor=black');
+    }
+
+    /* ---------------- Befehl zusammensetzen ---------------- */
+    $basis = ic_eigene_basis();
+    /* Weitergegeben wird die NUMMER, nicht der Name (eindeutig, steht auch in der Loxone-Vorlage). */
+    $ic_nummer = 0;
+    foreach (ic_stationen() as $ic_i => $ic_s) {
+        if ($ic_s['ip'] === $station['ip'] && $ic_s['name'] === $station['name']) {
+            $ic_nummer = $ic_i + 1;
+            break;
+        }
+    }
+    $stationsparameter = (count(ic_stationen()) > 1 && $ic_nummer > 0)
+        ? '&station=' . $ic_nummer : '';
+
+    /* C4 (seit 2.2.13): KEIN Token in der Adresse; mjpgproxy.php nimmt diesen einen Aufruf von 127.0.0.1 waehrend
+     * der laufenden Aufzeichnung ohne Token an. */
+    $aufnahme = ic_befehl_zeile(array_merge(
+        array($ffmpeg, '-f', 'mjpeg', '-t', (string) $seconds, '-r', '20',
+              '-i', $basis . '/mjpgproxy.php?intern=1' . $stationsparameter),
+        $vf,
+        array('-r', '5', $videofile)
+    ));
+    $vorschau = ic_befehl_zeile(array($ffmpeg, '-i', $videofile, '-ss', '00:00:02',
+                                      '-vframes', '1', '-q:v', '2', $video_tn_file));
+
+    // Die Rueckmeldung laeuft ueber wget, wenn es da ist - sonst ueber php-cli.
+    $hookurl = $basis . '/videowebhook.php?intern=1&file=' . rawurlencode($videofilenameonly);
+    $wget = ic_programm('wget');
+    if ($wget) {
+        $hook = ic_befehl_zeile(array($wget, '-q', '-O', '/dev/null', '--timeout=10', $hookurl));
+    } else {
+        $php = ic_programm('php');
+        $hook = $php
+            ? ic_befehl_zeile(array($php, '-r',
+                'echo @file_get_contents(' . var_export($hookurl, true) . ');'))
+            : '';
+        if ($hook === '') {
+            ic_log_gebremst('hookweg', 'Weder wget noch php stehen zur Verfuegung - die '
+                . 'Rueckmeldung nach der Videoaufzeichnung entfaellt.');
+        }
+    }
+
+    /* C3 (seit 2.2.13): der Rueckgabewert von ffmpeg geht in eine Datei im Datenordner. */
+    $rcdatei = ic_paths()['datadir'] . '/.video_rc_' . $videofilenameonly;
+    $command = '(' . $aufnahme . ' ; echo $? > ' . escapeshellarg($rcdatei) . ' ; ' . $vorschau
+             . ($hook !== '' ? ' ; ' . $hook : '') . ')';
+
+    /* C2: die Marke der laufenden Aufzeichnung - VOR dem Start, unter der Sperre. */
+    if (!ic_videolauf_setzen(array(
+            'start'   => time(),
+            'dauer'   => $seconds,
+            'pid'     => getmypid(),
+            'datei'   => $videofilenameonly,
+            'station' => ($stationsparameter !== '' ? (string) $ic_nummer : ''),
+            'proxy'   => 0,
+        ))) {
+        flock($ic_sperre, LOCK_UN);
+        fclose($ic_sperre);
+        ic_log_gebremst('videolauf', 'Die Marke der Videoaufzeichnung liess sich nicht anlegen: '
+            . ic_videolauf_datei() . ' - es wird nichts aufgenommen.');
+        return $fehler(500, 'Die Marke der Aufzeichnung liess sich nicht anlegen: ' . ic_videolauf_datei());
+    }
+    // Die Marke liegt; die Sperre wird vor dem Start freigegeben (siehe Funktionskopf).
+    flock($ic_sperre, LOCK_UN);
+    fclose($ic_sperre);
+
+    // Im Hintergrund starten; der gesamte Befehl steht in der Maskierung, von aussen kommt nichts hinzu.
+    shell_exec($command . ' > /dev/null 2>&1 &');
+
+    ic_log('Videoaufzeichnung gestartet: ' . $videofilenameonly . ' (' . $seconds . ' s, Station "'
+        . $station['name'] . '")');
+    ic_merker_setzen('video', $videofilenameonly);
+
+    /* ---------------- Antwort ----------------
+     * H1 (seit 2.2.23): der Rechner aus ic_host_aussen() - eine JSON-Antwort, keine Befehlszeile. */
+    $wwwpfad = str_replace(ic_paths()['home'] . '/webfrontend', '', $videofile);
+    $videourl = 'http://' . ic_host_aussen() . $wwwpfad;
+    $json = json_encode(array(
+        'success'   => true,
+        'started'   => true,
+        'timestamp' => date('d.m.Y-H:i:s'),
+        'station'   => $station['name'],
+        'videofile' => $videourl,
+        'file'      => $videofilenameonly,
+        'length'    => $seconds,
+        'ready_in'  => $seconds,
+        'hinweis'   => 'Die Aufnahme laeuft. Die Datei ist erst nach '
+                     . $seconds . ' Sekunden vollstaendig.',
+    ));
+    return array('code' => 200, 'json' => $json, 'ok' => true, 'grund' => '');
+}
+
+/** Die Statuszeile einer Videoantwort fuer header() - dieselben Texte wie bis 2.2.22 in getvideo.php. */
+function ic_status_zeile($code)
+{
+    $t = array(429 => 'Too Many Requests', 500 => 'Internal Server Error', 501 => 'Not Implemented',
+               502 => 'Bad Gateway', 400 => 'Bad Request', 403 => 'Forbidden', 404 => 'Not Found',
+               503 => 'Service Unavailable');
+    return 'HTTP/1.1 ' . (int) $code . ' ' . (isset($t[$code]) ? $t[$code] : 'OK');
+}
+
+/* ------------------------------------------------------------------
+ * Befristeter Videolink (I10, E11)
+ * ------------------------------------------------------------------
+ * Nur bei eingeschaltetem Archivschutz: dann verlangt /legacy/ die LoxBerry-Anmeldung, und die Videoadresse in
+ * <praefix>/video und den Video-Webhooks antwortete jedem Abnehmer 401. Der Link gilt fuer GENAU eine Datei im
+ * Videoarchiv, 24 Stunden, 5 Abrufe; ohne Kopie (Videos bis ~30 MB) - raeumt die Bereinigung die Datei ab,
+ * antwortet der Link 404. Ohne Schutz bleibt die /legacy/-Adresse (bestehende Abnehmer unveraendert). */
+
+function ic_videolink_datei()
+{
+    $p = ic_paths();
+    return dirname($p['datadir']) . '/' . basename($p['datadir']) . '.videolinks.json';
+}
+
+/** Die gueltigen Eintraege (abgelaufene und verbrauchte fallen weg). */
+function ic_videolink_liste()
+{
+    $d = @file_get_contents(ic_videolink_datei());
+    $a = $d === false ? null : json_decode($d, true);
+    if (!is_array($a)) { return array(); }
+    $jetzt = time();
+    $rest = array();
+    foreach ($a as $code => $e) {
+        if (is_array($e) && isset($e['bis'], $e['rest'], $e['datei']) && (int) $e['bis'] > $jetzt
+            && (int) $e['rest'] > 0 && is_string($e['datei'])) {
+            $rest[(string) $code] = $e;
+        }
+    }
+    return $rest;
+}
+
+/** Einen Link fuer eine Datei des Videoarchivs anlegen. Rueckgabe Code oder ''. */
+function ic_videolink_erzeugen($datei, $stunden = IC_VIDEOLINK_STUNDEN, $abrufe = IC_VIDEOLINK_ABRUFE)
+{
+    $datei = basename((string) $datei);
+    if (!preg_match('/^[A-Za-z0-9._-]{1,128}\.avi\z/', $datei) || !@is_file(ic_archivordner()['video'] . $datei)) {
+        return '';
+    }
+    $sperre = ic_sperre_warten(ic_videolink_datei() . '.sperre', 10);
+    if ($sperre === false) { return ''; }
+    try {
+        $code = ic_token_neu(20);
+    } catch (RuntimeException $e) {
+        ic_sperre_frei($sperre);
+        return '';
+    }
+    $liste = ic_videolink_liste();
+    $liste[$code] = array('bis' => time() + max(1, (int) $stunden) * 3600, 'rest' => max(1, (int) $abrufe),
+                          'erzeugt' => time(), 'datei' => $datei);
+    $js = json_encode($liste, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    $ok = $js !== false && ic_datei_ersetzen(ic_videolink_datei(), $js, 0600);
+    ic_sperre_frei($sperre);
+    return $ok ? $code : '';
+}
+
+/**
+ * Einen Videolink einloesen (der Abruf wird mitgezaehlt). Rueckgabe false (ungueltig, abgelaufen, verbraucht),
+ * '' (der Link gilt, die Datei liegt nicht mehr vor) oder der Pfad der Datei.
+ */
+function ic_videolink_einloesen($code)
+{
+    if (!is_string($code) || !preg_match('/^[A-Za-z0-9]{10,40}\z/', $code)) { return false; }
+    $sperre = ic_sperre_warten(ic_videolink_datei() . '.sperre', 10);
+    if ($sperre === false) { return false; }
+    $liste = ic_videolink_liste();
+    $treffer = '';
+    foreach ($liste as $c => $e) {
+        if (hash_equals((string) $c, $code)) { $treffer = (string) $c; }
+    }
+    if ($treffer === '') {
+        ic_sperre_frei($sperre);
+        return false;
+    }
+    $e = $liste[$treffer];
+    $liste[$treffer]['rest'] = (int) $e['rest'] - 1;
+    $js = json_encode($liste, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    if ($js !== false) { ic_datei_ersetzen(ic_videolink_datei(), $js, 0600); }
+    ic_sperre_frei($sperre);
+    $pfad = ic_archivordner()['video'] . basename((string) $e['datei']);
+    return (preg_match('/\.avi\z/', $pfad) && @is_file($pfad)) ? $pfad : '';
+}
+
+/* ------------------------------------------------------------------
+ * Befehlsbruecke: Einstellungen, Protokoll, Auftragsprozess (Entwurf 3.3, E1-E4)
+ * ------------------------------------------------------------------ */
+
+/** Die beiden Haken der Befehle - EINE Liste fuer Formular, Pruefung und Sicherung. */
+function ic_befehle_haken()
+{
+    return array('befehle_mqtt_ein', 'befehle_mqtt_melden');
+}
+
+/**
+ * Einstellungen fuer die Zuordnung: Praefix = ic_mqtt_praefix(); annehmen = "Befehle ueber MQTT annehmen";
+ * eingreifend = zweiter Haken "Klingel-Meldungen ueber MQTT ausloesen"; mqtt_ein = ic_mqtt_an() (status/befehle
+ * nur bei eingeschaltetem MQTT, Quittungen gehen immer). Liest nur, schreibt nie.
+ */
+function ic_bb_einstellungen()
+{
+    $c = ic_config();
+    return array('praefix' => ic_mqtt_praefix(),
+                 'annehmen' => isset($c['befehle_mqtt_ein']) && (string) $c['befehle_mqtt_ein'] === '1',
+                 'eingreifend' => isset($c['befehle_mqtt_melden']) && (string) $c['befehle_mqtt_melden'] === '1',
+                 'mqtt_ein' => ic_mqtt_an());
+}
+
+/** Protokoll der Befehlsbruecke: log/plugins/<ordner>/befehle_start.log (dieselbe Datei wie befehlsbruecke.sh). */
+function ic_bb_protokoll($stufe, $text)
+{
+    $d = ic_paths()['log'];
+    $zeile = date('Y-m-d H:i:s') . ' ' . str_pad((string) $stufe, 7) . ' ' . (string) $text . "\n";
+    if ((@is_dir($d) || @mkdir($d, 0775, true))
+        && @file_put_contents($d . '/befehle_start.log', $zeile, FILE_APPEND | LOCK_EX) !== false) {
+        return;
+    }
+    if (defined('STDERR')) {
+        fwrite(STDERR, $zeile);
+    }
+}
+
+/** Der Ordner der Arbeitermarken: data/plugins/<ordner>/auftraege. */
+function ic_auftrag_ordner()
+{
+    return ic_paths()['datadir'] . '/auftraege';
+}
+
+/**
+ * Laufende Auftragsprozesse: Marken data/plugins/<ordner>/auftraege/<pid>.json mit /proc/<pid>-Probe (der Prozess
+ * muss ic_auftrag.php sein). Eine Marke ohne Prozess wird abgeraeumt - ausser mit $aufraeumen = false (Reiter Test,
+ * healthcheck: nur lesen). Rueckgabe array(Zahl, aeltestes Alter in s).
+ */
+function ic_auftraege($aufraeumen = true)
+{
+    $n = 0;
+    $alt = 0;
+    foreach ((@glob(ic_auftrag_ordner() . '/*.json') ?: array()) as $f) {
+        $pid = basename($f, '.json');
+        if (!preg_match('/^[0-9]{1,9}\z/', $pid)) { continue; }
+        $cmd = @file_get_contents('/proc/' . $pid . '/cmdline');
+        if (!is_string($cmd) || strpos($cmd, 'ic_auftrag.php') === false) {
+            if ($aufraeumen) { @unlink($f); }
+            continue;
+        }
+        $n++;
+        $d = json_decode((string) @file_get_contents($f), true);
+        if (is_array($d) && isset($d['start'])) { $alt = max($alt, time() - (int) $d['start']); }
+    }
+    return array($n, $alt);
+}
+
+/** Wo liegt eine Datei unter bin/? Installiert bin/plugins/<ordner>/, im Archiv <wurzel>/bin/. '' = fehlt. */
+function ic_bin_datei($name)
+{
+    foreach (array(ic_paths()['bin'] . '/' . $name, dirname(dirname(__DIR__)) . '/bin/' . $name) as $k) {
+        if (@is_file($k)) { return $k; }
+    }
+    return '';
+}
+
+/**
+ * Ein Befehl der Befehlsbruecke (tun() in bin/befehle_zuordnung.php). Prueft synchron (schnell, ohne Netz):
+ * Upgrade-Marke, Station, bei Video ffmpeg und laufende Aufnahme, Arbeitergrenze - und startet dann einen kurzen
+ * Auftragsprozess (bin/ic_auftrag.sh), der DIESELBE Funktion wie der HTTP-Endpunkt aufruft. Die Bruecke wartet
+ * nie auf Kamera, Objekterkennung, Meldungen oder ffmpeg (Wache 180 s, Entwurf 3.3). $art foto|hand|video,
+ * $nr Stationsnummer (1-99 aus dem Thema), $wert Sekunden bei video. Rueckgabe array(bool ok, string grund).
+ */
+function ic_bb_tun($art, $nr, $wert = '1')
+{
+    $art = (string) $art;
+    if (!in_array($art, array('foto', 'hand', 'video'), true)) { return array(false, 'ART_UNBEKANNT'); }
+    if (ic_upgrade_marke_liegt()) { return array(false, 'AKTUALISIERUNG'); }
+    if (!ic_stationen()) { return array(false, 'KEINE_STATION'); }
+    $nr = (string) $nr;
+    if (!preg_match('/^[1-9][0-9]?\z/', $nr) || ic_station($nr) === null) { return array(false, 'STATION_UNBEKANNT'); }
+    $wert = (string) $wert;
+    if ($art === 'video') {
+        if (!preg_match('/^[0-9]{1,3}\z/', $wert) || (int) $wert < 1 || (int) $wert > 300) {
+            return array(false, 'DAUER');
+        }
+        if (!ic_programm('ffmpeg')) { return array(false, 'FFMPEG_FEHLT'); }
+        if (ic_videolauf_lesen(60) !== null) { return array(false, 'LAEUFT_BEREITS'); }
+    } else {
+        $wert = '1';
+    }
+    list($laufend) = ic_auftraege();
+    if ($laufend >= IC_AUFTRAEGE_MAX) { return array(false, 'BESCHAEFTIGT'); }
+    return ic_auftrag_starten($art, $nr, $wert);
+}
+
+/**
+ * Den Auftragsprozess starten: /bin/bash bin/ic_auftrag.sh <art> <nr> <wert> mit /dev/null als Ein- und Ausgabe,
+ * Fehler an log/plugins/<ordner>/intercom_auftrag.log. ic_auftrag.sh schliesst zuerst alle geerbten Deskriptoren
+ * ueber 2 (das Rohr zu mosquitto_sub der Bruecke) und endet nach dem Start - proc_close() kommt in Millisekunden.
+ */
+function ic_auftrag_starten($art, $nr, $wert)
+{
+    $sh = ic_bin_datei('ic_auftrag.sh');
+    if ($sh === '' || DIRECTORY_SEPARATOR === '\\' || !function_exists('proc_open')) {
+        return array(false, 'AUFTRAG_FEHLT');
+    }
+    $log = ic_paths()['log'];
+    if (!@is_dir($log)) { @mkdir($log, 0775, true); }
+    $p = @proc_open(array('/bin/bash', $sh, (string) $art, (string) $nr, (string) $wert),
+                    array(0 => array('file', '/dev/null', 'r'), 1 => array('file', '/dev/null', 'w'),
+                          2 => array('file', $log . '/intercom_auftrag.log', 'a')), $rohre);
+    if (!is_resource($p)) { return array(false, 'AUFTRAG_START'); }
+    $rc = proc_close($p);
+    return $rc === 0 ? array(true, '') : array(false, 'AUFTRAG_START_' . (int) $rc);
+}
+
+/** Wo liegt bin/befehlsbruecke.php? '' = fehlt. */
+function ic_bruecke_datei()
+{
+    return ic_bin_datei('befehlsbruecke.php');
+}
+
+/** Die Bruecke als Bibliothek laden (BB_NUR_LADEN: kein Hauptteil). */
+function ic_bruecke_laden()
+{
+    if (function_exists('bb_waechter')) { return true; }
+    $f = ic_bruecke_datei();
+    if ($f === '') { return false; }
+    if (!defined('BB_NUR_LADEN')) { define('BB_NUR_LADEN', true); }
+    require_once $f;
+    return function_exists('bb_waechter');
+}
+
+/**
+ * Direktstart bzw. -stopp der Bruecke beim Speichern im Reiter MQTT (Entwurf 3.5, Bauart ax/cc):
+ * befehlsbruecke.sh start startet nur nach --soll, nie als root, nie waehrend eines Updates, nie doppelt; der
+ * Waechter in cron.01min startet hoechstens alle 600 s neu. $neustart: Praefix gewechselt (stop, dann start).
+ * Rueckgabe array(''|'ein'|'aus'|'start_fehl'|'stop_fehl', Ausgabe).
+ */
+function ic_bruecke_schalten($neustart = false)
+{
+    if (DIRECTORY_SEPARATOR === '\\' || ic_paths()['home'] === '' || !ic_bruecke_laden()) {
+        return array('', '');
+    }
+    $p = bb_pfade();
+    if (!$p) { return array('', ''); }
+    $e = ic_bb_einstellungen();
+    $laeuft = (bool) bb_dienste();
+    if ($e['annehmen']) {
+        if ($laeuft && !$neustart) { return array('', ''); }
+        if ($laeuft) { bb_sh($p, 'stop'); }
+        list($rc, $aus) = bb_sh($p, 'start');
+        return array(($rc === 0 && bb_dienste()) ? 'ein' : 'start_fehl', $aus);
+    }
+    if (!$laeuft) { return array('', ''); }
+    list($rc, $aus) = bb_sh($p, 'stop');
+    return array(($rc === 0 && !bb_dienste()) ? 'aus' : 'stop_fehl', $aus);
+}
+
+/** Ein Satz zum Ergebnis von ic_bruecke_schalten() ('' = nichts zu sagen), maskiert. */
+function ic_bruecke_satz(array $r)
+{
+    $a = $r[1] !== '' ? $r[1] : '-';
+    $k = array('ein' => 'BEFEHL.H_GESTARTET', 'aus' => 'BEFEHL.H_ANGEHALTEN', 'start_fehl' => 'BEFEHL.H_START_FEHL',
+               'stop_fehl' => 'BEFEHL.H_STOP_FEHL');
+    return isset($k[$r[0]]) ? ic_e(ic_uebersetzt($k[$r[0]], array($a), $r[0] . ': ' . $a)) : '';
+}
+
+/** Die Befehlsliste der Bruecke (bb_liste(): EINE Quelle fuer Reiter und Vorlage) oder null. */
+function ic_bb_liste()
+{
+    if (!ic_bruecke_laden()) { return null; }
+    list($z) = bb_zuordnung_laden();
+    if ($z === null) { return null; }
+    list($f) = bb_zuordnung_pruefen($z);
+    if ($f) { return null; }
+    return bb_liste($z, bb_einstellungen($z));
+}
+
+/**
+ * Titel eines MQTT-Befehls fuer Vorlage und Musterprojekt - fest deutsch (Sprachregel der Hausplugins):
+ * "Intercom: Foto", "Intercom: Foto ohne Meldung", "Intercom: Video"; bei mehreren Stationen mit dem Namen
+ * ("Intercom: Foto Haustür"). Kein Titel gleicht einem Gateway-Eingang (Doppelpunkt, Leerzeichen).
+ */
+function ic_vorlage_titel_mqtt($art, $name, $mehrere)
+{
+    $t = array('foto' => 'Foto', 'foto_ohne' => 'Foto ohne Meldung', 'video' => 'Video');
+    $w = isset($t[$art]) ? $t[$art] : 'Foto';
+    if ($mehrere) {
+        $w = $art === 'foto_ohne' ? 'Foto ' . $name . ' ohne Meldung' : $w . ' ' . $name;
+    }
+    return 'Intercom: ' . $w;
+}
+
+/**
+ * Die Befehle fuer Reiter und Vorlage ausgerollt (Entwurf 2.5 S3): je Station die drei Zeilen der Bruecke mit der
+ * Nummer statt {station}. Rueckgabe Liste array(station, nr, art, titel, thema, wert, loxone, eingreifend, sperre_s,
+ * quittung) oder null, wenn die Bruecke fehlt oder ihre Tabelle defekt ist.
+ */
+function ic_befehle_ausgerollt()
+{
+    $l = ic_bb_liste();
+    if ($l === null) { return null; }
+    $st = ic_stationen();
+    if (!$st) {
+        $st = array(array('name' => 'Intercom', 'ip' => '', 'user' => '', 'pass' => '', 'ms' => 1, 'standbild' => ''));
+    }
+    $mehrere = count($st) > 1;
+    $arten = array('{station}/foto' => array('foto', '1'), '{station}/foto_ohne_meldung' => array('foto_ohne', '1'),
+                   '{station}/video' => array('video', '10'));
+    $aus = array();
+    foreach ($st as $i => $s) {
+        $nr = (string) ($i + 1);
+        foreach ($l['befehle'] as $b) {
+            if (!isset($arten[$b['name']])) { continue; }
+            list($art, $wert) = $arten[$b['name']];
+            $thema = str_replace('{station}', $nr, $b['thema']);
+            $aus[] = array('station' => $s['name'], 'nr' => $nr, 'art' => $art,
+                           'titel' => ic_vorlage_titel_mqtt($art, $s['name'], $mehrere), 'thema' => $thema,
+                           'wert' => $b['art'] === 'ganz' ? $b['min'] . ' … ' . $b['max'] : '1',
+                           'loxone' => 'publish ' . $thema . ' ' . $wert, 'eingreifend' => $b['eingreifend'],
+                           'sperre_s' => $b['sperre_s'], 'quittung' => $b['quittung']);
+        }
+    }
+    return $aus;
+}
+
+/**
+ * Vorlage "Intercom MQTT-Befehle" (Entwurf 3.7, E10): ein Ausgang an /dev/udp/<LoxBerry>/<Udpinport>, je Station
+ * drei digitale Befehle. bb_vorlage() der Stammfassung laesst Musterbefehle ({station}) aus - deshalb linieneigen,
+ * Daten aus ic_befehle_ausgerollt(). Video fest 10 s (wie bisher); andere Dauer = Zahl im Befehl (1-300).
+ */
+function ic_vorlage_bruecke($host)
+{
+    $b = ic_befehle_ausgerollt();
+    if ($b === null) { return ''; }
+    $port = ic_mqtt_udpport();
+    $kom = array('foto' => ic_sprachwert('BEFEHL.V_FOTO', 'Foto mit Klingel-Meldung'),
+                 'foto_ohne' => ic_sprachwert('BEFEHL.V_FOTO_OHNE', 'Foto ohne Meldung'),
+                 'video' => ic_sprachwert('BEFEHL.V_VIDEO', 'Video 10 s'));
+    $cmds = array();
+    foreach ($b as $z) {
+        $cmds[] = array('title' => $z['titel'], 'comment' => $kom[$z['art']], 'on' => $z['loxone'], 'off' => '');
+    }
+    return ic_xml_virtual_out(array(
+        'title'   => 'Intercom MQTT-Befehle',
+        'comment' => ic_sprachwert('BEFEHL.V_KOMMENTAR', 'UDP-Eingang des MQTT-Gateways; wirkt nur mit dem Haken "Befehle über MQTT annehmen"'),
+        'address' => '/dev/udp/' . $host . '/' . ($port ? $port : 11884),
+        'hint'    => ic_sprachwert('BEFEHL.V_HINWEIS', 'Foto mit Klingel-Meldung braucht zusätzlich den Haken "Klingel-Meldungen über MQTT auslösen". Video: die Zahl im Befehl ist die Dauer (1 bis 300 s). Nie retain.'),
+    ), $cmds);
+}
+
+/* ------------------------------------------------------------------
+ * Pruefzeilen der Befehlsbruecke und der Namen (Entwurf 2.4, 3.6)
+ * ------------------------------------------------------------------ */
+
+/** Laeuft die Befehlsbruecke? Aus (Haken) ist ein Hinweis, kein Kreuz. Liest nur. */
+function ic_pruefe_bruecke()
+{
+    $cfg = ic_config();
+    if (!ic_bruecke_laden()) {
+        return ic_pz('fehl', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_FEHLT', 'TEST.R_BRUECKE');
+    }
+    list($z, $fehler) = bb_zuordnung_laden();
+    if ($z === null) {
+        return ic_pz('fehl', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_DEFEKT', 'TEST.R_BRUECKE', array(), array($fehler));
+    }
+    list($f) = bb_zuordnung_pruefen($z);
+    if ($f) {
+        return ic_pz('fehl', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_DEFEKT', 'TEST.R_BRUECKE', array(), array($f[0]));
+    }
+    if (!isset($cfg['befehle_mqtt_ein']) || (string) $cfg['befehle_mqtt_ein'] !== '1') {
+        return ic_pz('hinweis', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_AUS');
+    }
+    $pr = ic_mqtt_praefix();
+    if (!bb_praefix_gueltig($pr)) {
+        return ic_pz('fehl', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_PRAEFIX', 'TEST.R_BRUECKE_PRAEFIX', array(), array($pr));
+    }
+    if (DIRECTORY_SEPARATOR === '\\' || ic_paths()['home'] === '' || !bb_pfade()) {
+        return ic_pz('hinweis', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_ARCHIV');
+    }
+    $zu = bb_zustand_lesen();
+    $alter = ($zu && isset($zu['ts'])) ? time() - (int) $zu['ts'] : null;
+    if (!bb_dienste()) {
+        return ic_pz('fehl', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_STEHT', 'TEST.R_BRUECKE_STEHT');
+    }
+    if ($alter === null || $alter > BB_WACHE_GRENZE) {
+        return ic_pz('fehl', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_HAENGT', 'TEST.R_BRUECKE_STEHT', array(), array((int) $alter));
+    }
+    if (empty($zu['abo'])) {
+        return ic_pz('fehl', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_OHNE_ABO', 'TEST.R_BRUECKE_STEHT', array(),
+                     array(isset($zu['fehler']) ? (string) $zu['fehler'] : ''));
+    }
+    $zl = (isset($zu['zaehler']) && is_array($zu['zaehler'])) ? $zu['zaehler'] : array();
+    $letzte = (!empty($zu['letzter']) && is_array($zu['letzter']))
+        ? (string) $zu['letzter']['name'] . ': ' . (string) $zu['letzter']['ergebnis'] . ' (vor '
+          . max(0, time() - (int) $zu['letzter']['zeit']) . ' s)' : '-';
+    return ic_pz('ok', 'TEST.F_BRUECKE', 'TEST.A_BRUECKE_LAEUFT', '', array(),
+                 array(date('d.m.Y H:i', isset($zu['start']) ? (int) $zu['start'] : time()),
+                       isset($zl['angenommen']) ? (int) $zl['angenommen'] : 0,
+                       isset($zl['abgelehnt']) ? (int) $zl['abgelehnt'] : 0, $letzte));
+}
+
+/** Die Zeilen von "befehlsbruecke.php --pruefen" (bb_pruefen(): Programme mosquitto_sub/_pub, Zuordnung) als EINE Zeile. */
+function ic_pruefe_bruecke_einrichtung()
+{
+    if (!ic_bruecke_laden()) {
+        return ic_pz('fehl', 'TEST.F_BRUECKE_EINRICHTUNG', 'TEST.A_BRUECKE_FEHLT', 'TEST.R_BRUECKE');
+    }
+    ob_start();
+    bb_pruefen();
+    $aus = array_values(array_filter(explode("\n", (string) ob_get_clean()), 'strlen'));
+    if (!$aus) {
+        return ic_pz('unklar', 'TEST.F_BRUECKE_EINRICHTUNG', 'TEST.A_UNKLAR');
+    }
+    $fehl = array_values(preg_grep('/^\[FEHL\]/', $aus));
+    $cfg = ic_config();
+    $an = isset($cfg['befehle_mqtt_ein']) && (string) $cfg['befehle_mqtt_ein'] === '1';
+    if ($fehl) {
+        // Fehlende mosquitto-clients bei ausgeschaltetem Haken: ein Hinweis, kein Kreuz.
+        return ic_pz($an ? 'fehl' : 'hinweis', 'TEST.F_BRUECKE_EINRICHTUNG', implode(' | ', $fehl), 'TEST.R_BRUECKE_EINRICHTUNG');
+    }
+    return ic_pz('ok', 'TEST.F_BRUECKE_EINRICHTUNG', implode(' | ', array($aus[0], end($aus))));
+}
+
+/** Arbeitermarken der Auftragsprozesse: keine aelter als IC_AUFTRAG_ALT_S. */
+function ic_pruefe_auftraege()
+{
+    list($n, $alt) = ic_auftraege(false);
+    if ($n === 0) {
+        return ic_pz('hinweis', 'TEST.F_AUFTRAEGE', 'TEST.A_AUFTRAEGE_KEINE');
+    }
+    return $alt > IC_AUFTRAG_ALT_S
+        ? ic_pz('fehl', 'TEST.F_AUFTRAEGE', 'TEST.A_AUFTRAEGE_ALT', 'TEST.R_AUFTRAEGE', array(), array($n, $alt))
+        : ic_pz('ok', 'TEST.F_AUFTRAEGE', 'TEST.A_AUFTRAEGE', '', array(), array($n, IC_AUFTRAEGE_MAX));
+}
+
+/**
+ * Pruefzeile "Namenstabelle" (Entwurf 2.4): jeder Name ist ein Thema der Themenliste (ic_mqtt_themen()), und der
+ * Name entsteht wie im Gateway - die Gegenseite OHNE ic_gateway_name(). $namen: Liste array(voll, name) fuer die
+ * Gegenprobe (ein verdrehter Name muss rot werden). Rueckgabe Pruefzeile.
+ */
+function ic_pruefe_namen($namen = null)
+{
+    $p = ic_mqtt_praefix();
+    if ($namen === null) {
+        $namen = array();
+        foreach (ic_mqtt_namen($p) as $z) { $namen[] = array($z['voll'], $z['name']); }
+    }
+    $themen = array();
+    foreach (ic_mqtt_themen($p) as $t) { $themen[$t[0]] = true; }
+    $falsch = array();
+    foreach ($namen as $z) {
+        if (!isset($themen[$z[0]]) || $z[1] !== strtr($z[0], array('/' => '_', '%' => '_', ' ' => '_'))) {
+            $falsch[] = $z[1];
+        }
+    }
+    if (!$namen) {
+        return ic_pz('fehl', 'TEST.F_NAMEN', 'TEST.A_UNKLAR', 'TEST.R_NAMEN');
+    }
+    return $falsch
+        ? ic_pz('fehl', 'TEST.F_NAMEN', 'TEST.A_NAMEN_FEHL', 'TEST.R_NAMEN', array(), array(implode(', ', $falsch)))
+        : ic_pz('ok', 'TEST.F_NAMEN', 'TEST.A_NAMEN_OK', '', array(), array(count($namen), count(ic_mqtt_hakenliste($p))));
+}
+
+/** Zeile "nur melden, wenn erkannt" (V1): an ohne eingeschaltete Objekterkennung wirkt nicht (fail-open). */
+function ic_pruefe_nur_erkannt()
+{
+    $cfg = ic_config();
+    if (empty($cfg['klingel_nur_erkannt']) || $cfg['klingel_nur_erkannt'] !== 'on') {
+        return ic_pz('hinweis', 'TEST.F_NUR_ERKANNT', 'TEST.A_NUR_ERKANNT_AUS');
+    }
+    return ic_ki_an()
+        ? ic_pz('ok', 'TEST.F_NUR_ERKANNT', 'TEST.A_NUR_ERKANNT_AN')
+        : ic_pz('unklar', 'TEST.F_NUR_ERKANNT', 'TEST.A_NUR_ERKANNT_OHNE_KI', 'TEST.R_NUR_ERKANNT');
 }

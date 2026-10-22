@@ -2,9 +2,44 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.22 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.23 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.23
+
+Werte und Befehle über MQTT, wie im gemeinsamen
+[LoxBerry-Plugins Musterprojekt](https://github.com/timanders22/LoxBerry-Plugins-Musterprojekt). Die HTTP-Adressen
+bleiben für bestehende Anlagen, den Baustein Türsteuerung und Fremdsysteme (Türstation, Bewegungsmelder) unverändert.
+
+* **Befehle über MQTT** (gemeinsame Befehlsbrücke, `bin/befehlsbruecke.php`): `intercom/befehl/<Nr>/foto` (Foto mit
+  den Klingel-Meldungen), `…/foto_ohne_meldung` und `…/video` (Wert = Sekunden, 1 bis 300); `<Nr>` ist die Nummer
+  der Station. Zwei Haken im Reiter MQTT, **beide ab Werk aus**: „Befehle über MQTT annehmen“ und „Klingel-Meldungen
+  über MQTT auslösen“ – ein Foto MIT Meldung braucht den zweiten, sonst wird es abgelehnt (kein Foto). Keine
+  Sperrminute: Intercom bremst Meldungen selbst (eine je 60 s und Station) und nimmt nur eine Aufnahme zugleich. Die
+  Brücke startet einen kurzen Auftrag (`bin/ic_auftrag.sh`), der dieselbe Funktion wie die HTTP-Adresse aufruft –
+  kein HTTP auf sich selbst. Neue Vorlage „Intercom MQTT-Befehle“ im Reiter Einbindung in Loxone. Neues Paket
+  `mosquitto-clients`.
+* **Werte als einfache Virtuelle Eingänge** (Namenstabelle mit Kopierknopf, V2-Hakenliste mit 5 Haken, Noncached nur
+  `status/ok`, `config/mqtt_subscriptions.cfg` für Gateway V1). Die Vorlage der Rückmeldungen (Virtueller
+  HTTP-Eingang mit `http://localhost`) entfällt.
+* **MQTT ab Werk an** – nur bei einer Neuinstallation; nach einem Update bleibt es, wie es war.
+* **`intercom/ai_count` meldet -1**, solange die Objekterkennung ausgeschaltet ist (vorher kam nichts).
+* **Objekterkennung nach der Antwort an Loxone:** der Miniserver wartet nicht mehr bis zu 18 s. Die Antwort an
+  Loxone trägt das Feld `ai` nur noch als leere Liste; MQTT und Webhooks tragen die Objekte weiter.
+* **Klingel-Meldungen nennen erkannte Objekte** (höchstens drei, „Erkannt: Person, Hund.“); die Meldung wartet dafür
+  höchstens 5 s. Neuer Haken „nur melden, wenn erkannt“ (ab Werk aus, nie für den Auslöser `klingel`).
+* **Videoadresse:** zeigt nicht mehr auf `127.0.0.1`, sondern auf den Rechnernamen des LoxBerry; bei
+  eingeschaltetem Archivschutz ein befristeter Link `video.php?link=` (24 h, 5 Abrufe).
+* **MQTT ohne die PHP-Erweiterung sockets** (`stream_socket_client`).
+* **`bin/healthcheck`** für den Healthcheck des LoxBerry.
+* **Sprachmodul 1.1.3** (absender an Alexa NG, UTF-8-sicheres Kürzen, dringend über die Kommandozeile).
+* **Berichtigt:** Zeitstempel im Video (die Doppelpunkte brauchen drei Rückstriche an ffmpeg – bisher fehlte er
+  still), Aufzeichnung bei toter Station meldet Fehler statt eines 0,2-s-Videos (neues Ersatzbild), Zeitstempel im
+  Bild unteilbar, bild.php ohne Serverpfad und ohne Wettlauf beim letzten Linkabruf, Hakenskripte mit einheitlicher
+  Wurzelprüfung, Zurückspielen unteilbar, Deinstallation überschreibt vor dem Löschen und tut nichts für ein
+  anderes Plugin mit ähnlichem Namen, Text zur Aufräumzeit, Formularprüfung blockweise.
+* Nicht am Gerät gemessen; Messliste im Baubericht.
 
 ## Neu in 2.2.22
 

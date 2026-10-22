@@ -30,20 +30,47 @@
 # Das Bild- und Videoarchiv (webfrontend/legacy/<ordner>_data) bleibt wie
 # zugesagt liegen: das sind die Aufnahmen des Anwenders. Die Bereinigung
 # loescht darin erst, wenn eine Konfiguration mit Inhalt steht (I3).
-ARGV3=$3
-ARGV5=$5
-PFOLDER="${ARGV3:-intercom}"
-BASE="${ARGV5:-$LBHOMEDIR}"
-# Wurzelsuche wie in den uebrigen Hakenskripten: ohne config/plugins,
-# data/plugins UND config/system/general.json wird nichts angefasst.
-if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ] \
-   || [ ! -f "$BASE/config/system/general.json" ]; then
-    echo "<WARNING> Kein LoxBerry-Wurzelverzeichnis erkannt ('$BASE') - nichts beiseitegelegt."
-    exit 0
-fi
-case "$PFOLDER" in
-    ''|*/*|*..*) echo "<WARNING> Unzulaessiger Ordnername '$PFOLDER' - nichts beiseitegelegt."; exit 0 ;;
+# ---- Wurzelblock (I1, seit 2.2.23; in allen Hakenskripten und uninstall woertlich gleich) ----
+# Ordner aus $3 mit Schranke ('' . .. und alles mit / oder ..); Wurzel aus $5, sonst LBHOMEDIR, sonst vom Ablageort
+# aufwaerts gesucht (Regeln/06 "Ein Systempfad wird nicht fest verdrahtet"). Eine Wurzel gilt nur mit
+# config/plugins, data/plugins UND config/system/general.json - ein Rest alter Prueflaeufe hat die dritte nie.
+# ic_wurzel setzt PDIR und BASE; Rueckgabe 0 = erkannt, 1 = Ordnername unzulaessig, 2 = keine LoxBerry-Wurzel.
+# Bis 2.2.22 prueften preupgrade/postupgrade nur -z/-d, postinstall gar nicht (ohne $5 entstanden Ordner unter /,
+# Pruefbericht I1), und keines suchte die Wurzel.
+lb_wurzel_suchen() {
+    v=$(cd "$(dirname "$(readlink -f "$0")")" 2>/dev/null && pwd)
+    i=0
+    while [ -n "$v" ] && [ "$v" != "/" ] && [ $i -lt 8 ]; do
+        if [ -d "$v/config/plugins" ] && [ -d "$v/data/plugins" ] \
+           && [ -f "$v/config/system/general.json" ]; then
+            echo "$v"; return 0
+        fi
+        v=$(dirname "$v"); i=$((i + 1))
+    done
+    return 1
+}
+ic_wurzel() {
+    PDIR="${1:-intercom}"
+    case "$PDIR" in
+        ''|.|..|*/*|*..*) return 1 ;;
+    esac
+    BASE="${2:-$LBHOMEDIR}"
+    [ -n "$BASE" ] && [ -d "$BASE" ] || BASE=$(lb_wurzel_suchen)
+    if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ] \
+       || [ ! -f "$BASE/config/system/general.json" ]; then
+        return 2
+    fi
+    return 0
+}
+# ---- Ende Wurzelblock ----
+# Seit 2.2.23 (I1, I9): der Wurzelblock oben - mit Wurzelsuche und mit "." in der Schranke. Wie bisher
+# <WARNING> und Ende ohne Abbruch der Installation.
+ic_wurzel "$3" "$5"
+case $? in
+    1) echo "<WARNING> Unzulaessiger Ordnername '$3' - nichts beiseitegelegt."; exit 0 ;;
+    2) echo "<WARNING> Kein LoxBerry-Wurzelverzeichnis erkannt ('${5:-$LBHOMEDIR}') - nichts beiseitegelegt."; exit 0 ;;
 esac
+PFOLDER="$PDIR"
 [ -f "$BASE/data/plugins/$PFOLDER.upgrade_laeuft" ] && exit 0
 
 BEISEITE=""
@@ -52,7 +79,8 @@ for ZIEL in "$BASE/config/plugins/$PFOLDER.backup.json" \
             "$BASE/config/plugins/$PFOLDER.backup.data.json" \
             "$BASE/config/plugins/$PFOLDER.data.json.kaputt" \
             "$BASE/data/plugins/$PFOLDER.bildlinks.json" \
-            "$BASE/data/plugins/$PFOLDER.bildlinks"; do
+            "$BASE/data/plugins/$PFOLDER.bildlinks" \
+            "$BASE/data/plugins/$PFOLDER.videolinks.json"; do
     if [ -e "$ZIEL" ] || [ -L "$ZIEL" ]; then
         rm -rf "${ZIEL:?}.alt" 2>/dev/null
         if mv -f "$ZIEL" "$ZIEL.alt" 2>/dev/null; then
@@ -67,7 +95,8 @@ done
 for A in "$BASE/config/plugins/$PFOLDER.backup.json.alt" \
          "$BASE/config/plugins/$PFOLDER.backup.data.json.alt" \
          "$BASE/config/plugins/$PFOLDER.data.json.kaputt.alt" \
-         "$BASE/data/plugins/$PFOLDER.bildlinks.json.alt"; do
+         "$BASE/data/plugins/$PFOLDER.bildlinks.json.alt" \
+         "$BASE/data/plugins/$PFOLDER.videolinks.json.alt"; do
     [ -f "$A" ] && [ ! -L "$A" ] && chmod 600 "$A" 2>/dev/null
 done
 D="$BASE/data/plugins/$PFOLDER.bildlinks.alt"

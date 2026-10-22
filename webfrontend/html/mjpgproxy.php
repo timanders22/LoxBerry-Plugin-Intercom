@@ -176,6 +176,18 @@ if ($fp) {
             . 'beginnt einen neuen Abruf). Weitere innerhalb einer Stunde stehen nicht im Protokoll.');
     }
     ic_sperre_frei($ic_platz);
+} elseif ($ic_intern) {
+    /* I12 (seit 2.2.23, Pruefbericht eigener Fund 2): die Aufzeichnung (ffmpeg ueber ?intern=1) bekommt bei toter
+     * Station 503 statt des Ersatzbildes. Bis 2.2.22 nahm ffmpeg das eine Ersatzbild als 0,2-s-"Video" auf (rc 0),
+     * die Vorschau scheiterte, und videowebhook.php meldete success:true an MQTT und Webhooks. Jetzt endet ffmpeg
+     * mit einem Fehler, und die Rueckmeldung meldet die Aufnahme als gescheitert. Live-Leser bekommen weiter das Bild. */
+    ic_log_gebremst('proxy_intern_' . $station['name'],
+        'Der Kamerastrom von "' . $station['name'] . '" (' . $station['ip'] . ') war fuer die Aufzeichnung nicht '
+        . 'erreichbar - Antwort 503, die Aufnahme scheitert sichtbar.');
+    header('HTTP/1.1 503 Service Unavailable');
+    header('Cache-Control: no-cache, private');
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "Die Tuerstation ist nicht erreichbar.\n";
 } else {
     // Die Station antwortet nicht - Ersatzbild ausliefern und das EINMAL
     // je Stunde ins Protokoll schreiben. Bis 2.1.13 blieb dieser Fall

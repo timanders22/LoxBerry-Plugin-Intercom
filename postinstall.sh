@@ -4,11 +4,47 @@
 # Bis 1.5.0 stand hier nur die LoxBerry-Vorlage: sechs Variablenzuweisungen
 # und exit 0. Getan wurde nichts.
 
-ARGV3=$3   # Installationsordner des Plugins
-ARGV5=$5   # Wurzelverzeichnis des LoxBerry
-
-BASE="${ARGV5:-$LBHOMEDIR}"
-PDIR="${ARGV3:-intercom}"
+# ---- Wurzelblock (I1, seit 2.2.23; in allen Hakenskripten und uninstall woertlich gleich) ----
+# Ordner aus $3 mit Schranke ('' . .. und alles mit / oder ..); Wurzel aus $5, sonst LBHOMEDIR, sonst vom Ablageort
+# aufwaerts gesucht (Regeln/06 "Ein Systempfad wird nicht fest verdrahtet"). Eine Wurzel gilt nur mit
+# config/plugins, data/plugins UND config/system/general.json - ein Rest alter Prueflaeufe hat die dritte nie.
+# ic_wurzel setzt PDIR und BASE; Rueckgabe 0 = erkannt, 1 = Ordnername unzulaessig, 2 = keine LoxBerry-Wurzel.
+# Bis 2.2.22 prueften preupgrade/postupgrade nur -z/-d, postinstall gar nicht (ohne $5 entstanden Ordner unter /,
+# Pruefbericht I1), und keines suchte die Wurzel.
+lb_wurzel_suchen() {
+    v=$(cd "$(dirname "$(readlink -f "$0")")" 2>/dev/null && pwd)
+    i=0
+    while [ -n "$v" ] && [ "$v" != "/" ] && [ $i -lt 8 ]; do
+        if [ -d "$v/config/plugins" ] && [ -d "$v/data/plugins" ] \
+           && [ -f "$v/config/system/general.json" ]; then
+            echo "$v"; return 0
+        fi
+        v=$(dirname "$v"); i=$((i + 1))
+    done
+    return 1
+}
+ic_wurzel() {
+    PDIR="${1:-intercom}"
+    case "$PDIR" in
+        ''|.|..|*/*|*..*) return 1 ;;
+    esac
+    BASE="${2:-$LBHOMEDIR}"
+    [ -n "$BASE" ] && [ -d "$BASE" ] || BASE=$(lb_wurzel_suchen)
+    if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ] \
+       || [ ! -f "$BASE/config/system/general.json" ]; then
+        return 2
+    fi
+    return 0
+}
+# ---- Ende Wurzelblock ----
+# BERICHTIGT 2.2.23 (I1): bis 2.2.22 stand hier BASE="${ARGV5:-$LBHOMEDIR}" ohne Pruefung - ohne $5 (Handaufruf)
+# legte das Skript config/plugins/..., log/... und das Archiv unter / an und loeschte /data/plugins/<ordner>.
+# upgrade_laeuft (Pruefbericht, Probe). Jetzt: ohne erkannte Wurzel <ERROR> und Ende, nichts angefasst.
+ic_wurzel "$3" "$5"
+case $? in
+    1) echo "<ERROR> Unzulaessiger Ordnername '$3' - es wurde nichts angefasst."; exit 1 ;;
+    2) echo "<ERROR> Das LoxBerry-Wurzelverzeichnis ist nicht bestimmbar ('${5:-$LBHOMEDIR}') - es wurde nichts angefasst."; exit 1 ;;
+esac
 PCONFIG="$BASE/config/plugins/$PDIR"
 PDATA="$BASE/data/plugins/$PDIR"
 LEGACY="$BASE/webfrontend/legacy/${PDIR}_data"
@@ -106,6 +142,19 @@ mit_inhalt() {
           || (isset($d["intercomip"]) && is_string($d["intercomip"]) && trim($d["intercomip"]) !== "");
         exit(($t || $s) ? 0 : 1);' "$1" 2>/dev/null
 }
+# I3 (seit 2.2.23): Zurueckspielen UNTEILBAR - Nebendatei (umask 077), Vergleich, chmod 600, mv -f. Bis 2.2.22
+# schrieb cp -p in die vorhandene Datei; bei voller Karte blieb eine abgeschnittene data.json zurueck (Regeln/05
+# "Unteilbar schreiben mit Nebendatei und rename()", Vorbild preupgrade.sh). Misslingt es, bleibt data.json, wie
+# sie war, und die Nebendatei geht weg.
+ic_zurueckspielen() {
+    IC_NEU="$CF.neu.$$"
+    if ( umask 077; cp "$1" "$IC_NEU" ) 2>/dev/null && cmp -s "$1" "$IC_NEU" \
+       && chmod 600 "$IC_NEU" 2>/dev/null && mv -f "$IC_NEU" "$CF" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$IC_NEU" 2>/dev/null
+    return 1
+}
 zweitschriften_rechte() {
     for z in "$ZWEIT" "$ZWEIT_ALT"; do
         [ -f "$z" ] && [ ! -L "$z" ] && chmod 0600 "$z" 2>/dev/null
@@ -113,7 +162,7 @@ zweitschriften_rechte() {
 }
 
 if [ -f "$MARKE" ] && ! verloren && mit_inhalt "$ZWEIT" && ! cmp -s "$ZWEIT" "$CF"; then
-    if cp -p "$ZWEIT" "$CF" 2>/dev/null; then
+    if ic_zurueckspielen "$ZWEIT"; then
         chmod 0600 "$CF" 2>/dev/null
         zweitschriften_rechte
         echo "<OK> Einstellungen aus der Zweitschrift wiederhergestellt ($ZWEIT)."
@@ -130,7 +179,7 @@ elif verloren && [ -f "$MARKE" ]; then
         [ -s "$kandidat" ] && UNBRAUCHBAR="$UNBRAUCHBAR $kandidat"
     done
     if [ -n "$ZURUECK" ]; then
-        if cp -p "$ZURUECK" "$CF" 2>/dev/null; then
+        if ic_zurueckspielen "$ZURUECK"; then
             chmod 0600 "$CF" 2>/dev/null
             zweitschriften_rechte
             echo "<OK> Einstellungen aus der Zweitschrift wiederhergestellt ($ZURUECK)."
@@ -154,8 +203,13 @@ elif verloren; then
         echo "<WARNING> Neuinstallation: diese Zweitschriften einer frueheren Installation werden NICHT eingespielt:$REST"
     fi
     echo "<INFO> Neuinstallation - die Einstellungen entstehen beim ersten Oeffnen der Plugin-Seite."
-else
+elif mit_inhalt "$CF"; then
     echo "<OK> Die Einstellungen sind vorhanden."
+else
+    # I2 (seit 2.2.23): eine Datei mit Form, aber ohne Token und Station (oder kein lesbares JSON) ist kein
+    # "vorhanden" - bis 2.2.22 stand hier auch dann <OK> (gemessen, Pruefbericht I2).
+    echo "<WARNING> data.json traegt weder Zugriffstoken noch Tuerstation (oder ist kein lesbares JSON)."
+    echo "<WARNING> Bitte die Einstellungen pruefen (Reiter Einstellungen) oder eine Sicherung zurueckspielen."
 fi
 
 # Die Marke erst NACH der Rueckholung entfernen - vorher haette die
@@ -186,11 +240,13 @@ if php -r 'exit(function_exists("imagecreatefromjpeg") ? 0 : 1);' 2>/dev/null; t
 else
     echo "<WARNING> php-gd fehlt. Ohne php-gd bleibt der Zeitstempel im Bild aus."
 fi
-if php -r 'exit(function_exists("socket_create") ? 0 : 1);' 2>/dev/null; then
-    echo "<OK> PHP-Erweiterung sockets vorhanden - MQTT moeglich."
+# Seit 2.2.23 sendet das Plugin mit stream_socket_client (PHP-Kern) - die Erweiterung sockets braucht es nicht
+# mehr (E7). Die Befehlsbruecke braucht mosquitto_sub und mosquitto_pub (Paket mosquitto-clients, dpkg/apt).
+if command -v mosquitto_sub >/dev/null 2>&1 && command -v mosquitto_pub >/dev/null 2>&1; then
+    echo "<OK> mosquitto-clients vorhanden - Befehle ueber MQTT moeglich (Haken im Reiter MQTT, ab Werk aus)."
 else
-    echo "<WARNING> Die PHP-Erweiterung sockets fehlt. Ohne sie sendet das Plugin"
-    echo "<WARNING> nichts an das MQTT-Gateway: sudo apt-get install -y php-sockets"
+    echo "<WARNING> mosquitto-clients fehlt. Ohne das Paket laufen keine Befehle ueber MQTT:"
+    echo "<WARNING> sudo apt-get install -y mosquitto-clients"
 fi
 
 # Die Erstanleitung (Oberflaeche oeffnen, damit ein Zugriffstoken entsteht)

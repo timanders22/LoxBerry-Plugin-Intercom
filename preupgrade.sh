@@ -1,20 +1,47 @@
 #!/bin/bash
 # Intercom - preupgrade (laeuft als Benutzer loxberry)
 
-ARGV1=$1   # Temporaerer Ordner waehrend der Installation
-ARGV3=$3   # Installationsordner des Plugins
-ARGV5=$5   # Wurzelverzeichnis des LoxBerry
-
-BASE="${ARGV5:-$LBHOMEDIR}"
-PDIR="${ARGV3:-intercom}"
-
-# NEU 2.2.6: ohne Wurzel arbeitet dieses Skript auf /config/plugins/... und
-# scheitert lautlos, weil alles nach /dev/null geht.
-if [ -z "$BASE" ] || [ ! -d "$BASE" ]; then
-    echo "<ERROR> Das LoxBerry-Wurzelverzeichnis ist nicht bestimmbar (LBHOMEDIR leer)."
-    echo "<ERROR> Es wurde nichts gesichert."
-    exit 1
-fi
+# ---- Wurzelblock (I1, seit 2.2.23; in allen Hakenskripten und uninstall woertlich gleich) ----
+# Ordner aus $3 mit Schranke ('' . .. und alles mit / oder ..); Wurzel aus $5, sonst LBHOMEDIR, sonst vom Ablageort
+# aufwaerts gesucht (Regeln/06 "Ein Systempfad wird nicht fest verdrahtet"). Eine Wurzel gilt nur mit
+# config/plugins, data/plugins UND config/system/general.json - ein Rest alter Prueflaeufe hat die dritte nie.
+# ic_wurzel setzt PDIR und BASE; Rueckgabe 0 = erkannt, 1 = Ordnername unzulaessig, 2 = keine LoxBerry-Wurzel.
+# Bis 2.2.22 prueften preupgrade/postupgrade nur -z/-d, postinstall gar nicht (ohne $5 entstanden Ordner unter /,
+# Pruefbericht I1), und keines suchte die Wurzel.
+lb_wurzel_suchen() {
+    v=$(cd "$(dirname "$(readlink -f "$0")")" 2>/dev/null && pwd)
+    i=0
+    while [ -n "$v" ] && [ "$v" != "/" ] && [ $i -lt 8 ]; do
+        if [ -d "$v/config/plugins" ] && [ -d "$v/data/plugins" ] \
+           && [ -f "$v/config/system/general.json" ]; then
+            echo "$v"; return 0
+        fi
+        v=$(dirname "$v"); i=$((i + 1))
+    done
+    return 1
+}
+ic_wurzel() {
+    PDIR="${1:-intercom}"
+    case "$PDIR" in
+        ''|.|..|*/*|*..*) return 1 ;;
+    esac
+    BASE="${2:-$LBHOMEDIR}"
+    [ -n "$BASE" ] && [ -d "$BASE" ] || BASE=$(lb_wurzel_suchen)
+    if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ] \
+       || [ ! -f "$BASE/config/system/general.json" ]; then
+        return 2
+    fi
+    return 0
+}
+# ---- Ende Wurzelblock ----
+# Seit 2.2.6 ohne Wurzel <ERROR>; seit 2.2.23 (I1) mit dem Wurzelblock oben (Ordner-Schranke, general.json,
+# Wurzelsuche) - bis 2.2.22 nur -z/-d.
+ic_wurzel "$3" "$5"
+case $? in
+    1) echo "<ERROR> Unzulaessiger Ordnername '$3' - es wurde nichts gesichert."; exit 1 ;;
+    2) echo "<ERROR> Das LoxBerry-Wurzelverzeichnis ist nicht bestimmbar ('${5:-$LBHOMEDIR}')."
+       echo "<ERROR> Es wurde nichts gesichert."; exit 1 ;;
+esac
 
 # ==== Zuerst die Marke "Aktualisierung laeuft" ====
 #
@@ -41,6 +68,14 @@ if grep -Eq '^[0-9]+$' "$MARKE" 2>/dev/null; then
 else
     echo "<WARNING> Die Marke fuer die laufende Aktualisierung liess sich nicht anlegen: $MARKE"
     echo "<WARNING> Bitte die Plugin-Seite erst nach dem Ende der Installation oeffnen."
+fi
+
+# ==== Befehlsbruecke anhalten (NEU 2.2.23, Entwurf 3.6) ====
+# Nach der Marke: die Bruecke startet waehrend der Aktualisierung nicht neu (der Waechter achtet auf die Marke).
+# Beim Umstieg von 2.2.22 gibt es sie noch nicht - dann nichts. Laufende Auftragsprozesse enden von selbst.
+BBSH="$BASE/bin/plugins/$PDIR/befehlsbruecke.sh"
+if [ -f "$BBSH" ]; then
+    echo "<INFO> Befehlsbruecke: $(timeout 40 bash "$BBSH" stop 2>&1 | head -n 1)"
 fi
 
 # ==== EINE Zweitschrift, nicht zwei ====

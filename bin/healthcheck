@@ -1,0 +1,55 @@
+#!/usr/bin/env php
+<?php
+/**
+ * Intercom - Anschluss an den LoxBerry-Healthcheck (Regeln/03; V4, Gruppe 7 / 2.2.23)
+ *
+ * sbin/healthcheck.pl ruft bin/healthcheck mit "title" und mit "check". Antwort JSON: desc, status (3 Fehler,
+ * 4 Warnung, 5 in Ordnung, 6 Hinweis), result, logfile. Form wie Alexa NG (bin/healthcheck); die Befunde kommen aus
+ * ic_selbsttest(false, true) - DERSELBEN Funktion wie der Reiter Test und ?selftest=1 -, die Bilanz aus
+ * ic_selbsttest_bilanz(). Kein Netz (ohne $mit_netz), nichts wird geschrieben (Reiter Test ohne Netz liest nur;
+ * die Arbeitermarken werden hier nicht abgeraeumt). Laeuft als loxberry.
+ */
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
+ini_set('display_errors', '0');
+
+$ic_was = isset($argv[1]) ? strtolower((string) $argv[1]) : 'check';
+if ($ic_was === 'title') { echo "Intercom\n"; exit(0); }
+
+foreach (array('loxberry_system.php', 'loxberry_io.php') as $ic_lbf) {
+    if (stream_resolve_include_path($ic_lbf) !== false) { require_once $ic_lbf; }
+}
+if (basename(dirname(__DIR__)) === 'plugins') {
+    $ic_lib = dirname(dirname(dirname(__DIR__))) . '/webfrontend/htmlauth/plugins/' . basename(__DIR__) . '/ic_lib.php';
+} else {
+    $ic_lib = dirname(__DIR__) . '/webfrontend/htmlauth/ic_lib.php';
+}
+if (!is_file($ic_lib)) {
+    echo json_encode(array('desc' => 'Intercom', 'status' => 3,
+        'result' => 'ic_lib.php nicht gefunden - das Plugin ist unvollstaendig installiert.')) . "\n";
+    exit(0);
+}
+require_once $ic_lib;
+$ic_p = ic_paths();
+if ($ic_p['home'] === '') {
+    echo json_encode(array('desc' => 'Intercom', 'status' => 3,
+        'result' => 'Kein LoxBerry-Wurzelverzeichnis gefunden - nichts geprueft.')) . "\n";
+    exit(0);
+}
+ic_sprache_laden();
+$ic_z = ic_selbsttest(false, true);
+$ic_b = ic_selbsttest_bilanz($ic_z);
+$ic_fehl = array();
+foreach ($ic_z as $ic_zeile) {
+    if ($ic_zeile['lage'] === 'fehl' || $ic_zeile['lage'] === 'unklar') {
+        $ic_f = (strpos($ic_zeile['frage'], 'TEST.') === 0)
+              ? ic_uebersetzt($ic_zeile['frage'], $ic_zeile['fargs'], $ic_zeile['frage']) : $ic_zeile['frage'];
+        $ic_fehl[] = ($ic_zeile['lage'] === 'fehl' ? 'FEHL: ' : 'UNKLAR: ') . $ic_f;
+    }
+}
+$ic_status = $ic_b['fehl'] > 0 ? 3 : ($ic_b['unklar'] > 0 ? 4 : 5);
+$ic_text = sprintf('%d von %d Pruefungen in Ordnung', $ic_b['ok'], $ic_b['gewertet'])
+         . ($ic_fehl ? ' - ' . implode('; ', array_slice($ic_fehl, 0, 6)) . (count($ic_fehl) > 6 ? '; ...' : '') : '')
+         . '. Einzelheiten im Plugin, Reiter Test.';
+echo json_encode(array('desc' => 'Intercom', 'status' => $ic_status, 'result' => $ic_text,
+    'logfile' => ic_logdatei()), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+exit(0);

@@ -1,53 +1,133 @@
 #!/bin/sh
 
-# To use important variables from command line use the following code:
-COMMAND=$0    # Zero argument is shell command
-PTEMPDIR=$1   # First argument is temp folder during install
-PSHNAME=$2    # Second argument is Plugin-Name for scipts etc.
-PDIR=$3       # Third argument is Plugin installation folder
-PVERSION=$4   # Forth argument is Plugin version
-#LBHOMEDIR=$5 # Comes from /etc/environment now. Fifth argument is
-              # Base folder of LoxBerry
+# Intercom - Deinstallation
+#   $1 temporaerer Ordner, $2 Plugin-NAME, $3 Plugin-Ordner, $4 Fassung, $5 LoxBerry-Wurzel
 
-# ==== Pfade aus den Argumenten, mit Wurzelpruefung (BERICHTIGT 2.2.13, I5) ====
+# ==== Praefixschutz (NEU 2.2.23, Entwurf 3.6, E16; Gedaechtnis "Uninstall-Praefix") ====
 #
-# Bis 2.2.12 kamen alle Pfade aus $LBPCONFIG, $LBPDATA und $LBHOMEDIR, $3 und
-# $5 wurden nicht benutzt, und fehlte LBHOMEDIR, galt ein fester Systempfad.
-# Gemessen ohne LBP*-Umgebung (Installer-Pruefer, D2): "<OK> Zweitschriften
-# ... entfernt", waehrend intercom.backup.json (Token, Kennwort) liegen blieb;
-# die Nachpruefung sah auf dieselben falschen Pfade. Jetzt wie in
-# preupgrade.sh: Ordner aus $3, Wurzel aus $5 (sonst LBHOMEDIR), und ohne
-# erkennbare Wurzel wird nichts geloescht, sondern gewarnt.
-BASE="${5:-$LBHOMEDIR}"
-PDIR="${3:-intercom}"
-case "$PDIR" in
-    ''|*/*|*..*) echo "<WARNING> Unzulaessiger Ordnername '$PDIR' - es wurde nichts entfernt."; exit 0 ;;
-esac
-if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ] \
-   || [ ! -f "$BASE/config/system/general.json" ]; then
-    echo "<WARNING> Kein LoxBerry-Wurzelverzeichnis erkannt ('$BASE') - Zweitschriften, Marke"
-    echo "<WARNING> und Bildlinks wurden NICHT entfernt. Von Hand entfernen unter"
-    echo "<WARNING> config/plugins/: $PDIR.backup.json, $PDIR.backup.data.json;"
-    echo "<WARNING> unter data/plugins/: $PDIR.upgrade_laeuft, $PDIR.bildlinks.json, $PDIR.bildlinks/."
+# Am Geraet gemessen 08.10.2026 (plugininstall.pl :1570/:1603): beim Deinstallieren ruft der Installer JEDES
+# data/system/uninstall/<name>* - auch dieses Skript, wenn ein Plugin deinstalliert wird, dessen NAME mit
+# "intercom" beginnt (das Original hiess intercom22lox; ein Paar ist moeglich). $2 ist dann DESSEN Name und $3 DESSEN
+# Ordner. Dann gehoert der Lauf nicht uns: nichts tun - keine Bruecke anhalten, nichts ueberschreiben, nichts loeschen.
+if [ -n "$2" ] && [ "$2" != "intercom" ]; then
+    echo "<INFO> Deinstallation von '$2' - dieses Skript gehoert zu 'intercom' und tut nichts."
+    exit 0
+fi
+
+# ---- Wurzelblock (I1, seit 2.2.23; in allen Hakenskripten und uninstall woertlich gleich) ----
+# Ordner aus $3 mit Schranke ('' . .. und alles mit / oder ..); Wurzel aus $5, sonst LBHOMEDIR, sonst vom Ablageort
+# aufwaerts gesucht (Regeln/06 "Ein Systempfad wird nicht fest verdrahtet"). Eine Wurzel gilt nur mit
+# config/plugins, data/plugins UND config/system/general.json - ein Rest alter Prueflaeufe hat die dritte nie.
+# ic_wurzel setzt PDIR und BASE; Rueckgabe 0 = erkannt, 1 = Ordnername unzulaessig, 2 = keine LoxBerry-Wurzel.
+# Bis 2.2.22 prueften preupgrade/postupgrade nur -z/-d, postinstall gar nicht (ohne $5 entstanden Ordner unter /,
+# Pruefbericht I1), und keines suchte die Wurzel.
+lb_wurzel_suchen() {
+    v=$(cd "$(dirname "$(readlink -f "$0")")" 2>/dev/null && pwd)
+    i=0
+    while [ -n "$v" ] && [ "$v" != "/" ] && [ $i -lt 8 ]; do
+        if [ -d "$v/config/plugins" ] && [ -d "$v/data/plugins" ] \
+           && [ -f "$v/config/system/general.json" ]; then
+            echo "$v"; return 0
+        fi
+        v=$(dirname "$v"); i=$((i + 1))
+    done
+    return 1
+}
+ic_wurzel() {
+    PDIR="${1:-intercom}"
+    case "$PDIR" in
+        ''|.|..|*/*|*..*) return 1 ;;
+    esac
+    BASE="${2:-$LBHOMEDIR}"
+    [ -n "$BASE" ] && [ -d "$BASE" ] || BASE=$(lb_wurzel_suchen)
+    if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ] \
+       || [ ! -f "$BASE/config/system/general.json" ]; then
+        return 2
+    fi
+    return 0
+}
+# ---- Ende Wurzelblock ----
+# ==== Pfade aus den Argumenten, mit Wurzelpruefung (seit 2.2.13, Wurzelblock seit 2.2.23) ====
+# Ohne erkennbare Wurzel wird nichts geloescht, sondern gewarnt (fail closed, Regeln/06).
+ic_wurzel "$3" "$5"
+IC_W=$?
+if [ "$IC_W" = 1 ]; then
+    echo "<WARNING> Unzulaessiger Ordnername '$3' - es wurde nichts entfernt."
+    exit 0
+fi
+if [ "$IC_W" != 0 ]; then
+    echo "<WARNING> Kein LoxBerry-Wurzelverzeichnis erkannt ('${5:-$LBHOMEDIR}') - Zweitschriften, Marke,"
+    echo "<WARNING> Bild- und Videolinks und die Befehlsbruecke wurden NICHT angefasst. Von Hand entfernen unter"
+    echo "<WARNING> config/plugins/: <ordner>.backup.json, <ordner>.backup.data.json;"
+    echo "<WARNING> unter data/plugins/: <ordner>.upgrade_laeuft, <ordner>.bildlinks.json, <ordner>.bildlinks/,"
+    echo "<WARNING> <ordner>.videolinks.json, <ordner>/befehle/."
     exit 0
 fi
 PCONFIG="$BASE/config/plugins/$PDIR"
 PDATA="$BASE/data/plugins/$PDIR"
 LBWURZEL="$BASE"
 
-# ==== Behaltene MQTT-Themen abraeumen (NEU 2.2.13, M2, Entscheidung 3) ====
+# ==== Befehlsbruecke anhalten (NEU 2.2.23, Entwurf 3.6; Muster Chromecast 4 Lox NG 1.3.24) ====
+# stop beendet Dienst und mosquitto_sub (auch ein verwaistes); danach argumentweise nachzaehlen, die Optionsdateien
+# mit dem Broker-Kennwort ueberschreiben und den Ordner befehle/ entfernen. Laufende Auftragsprozesse enden von selbst
+# (hoechstens eine Aufnahme von 300 s). Im Broker bleibt nichts: Quittungen und status/befehle sind nie retained.
+BBSH="$BASE/bin/plugins/$PDIR/befehlsbruecke.sh"
+BBPHP="$BASE/bin/plugins/$PDIR/befehlsbruecke.php"
+BBDIR="$PDATA/befehle"
+if [ -f "$BBSH" ] && command -v bash >/dev/null 2>&1; then
+    echo "<INFO> Befehlsbruecke: $(timeout 40 bash "$BBSH" stop 2>&1 9>&- | head -n 1)"
+fi
+BB_REST=0
+for bb_d in /proc/[0-9]*; do
+    grep -qaF "befehlsbruecke.php" "$bb_d/cmdline" 2>/dev/null || continue
+    bb_a0=$(tr '\0' '\n' < "$bb_d/cmdline" 2>/dev/null | sed -n 1p)
+    bb_a1=$(tr '\0' '\n' < "$bb_d/cmdline" 2>/dev/null | sed -n 2p)
+    bb_n=$(tr '\0' '\n' < "$bb_d/cmdline" 2>/dev/null | grep -c '')
+    case "${bb_a0##*/}" in php|php[0-9]*) ;; *) continue ;; esac
+    if [ "$bb_n" = 2 ] && [ "$bb_a1" = "$BBPHP" ]; then
+        kill -9 "${bb_d#/proc/}" 2>/dev/null && BB_REST=$((BB_REST + 1))
+    fi
+done
+BB_ABOS=0
+for bb_d in /proc/[0-9]*; do
+    [ "$(cat "$bb_d/comm" 2>/dev/null)" = "mosquitto_sub" ] || continue
+    if tr '\0' '\n' < "$bb_d/environ" 2>/dev/null | grep -qxF "XDG_CONFIG_HOME=$BBDIR/mosquitto"; then
+        kill -9 "${bb_d#/proc/}" 2>/dev/null && BB_ABOS=$((BB_ABOS + 1))
+    fi
+done
+[ "$BB_REST" -gt 0 ] && echo "<WARNING> Befehlsbruecke: $BB_REST Dienst(e) erst mit kill -9 beendet."
+[ "$BB_ABOS" -gt 0 ] && echo "<WARNING> Befehlsbruecke: $BB_ABOS mosquitto_sub erst mit kill -9 beendet."
+if [ -d "$BBDIR" ]; then
+    for bb_f in "$BBDIR/mosquitto/mosquitto_sub" "$BBDIR/mosquitto/mosquitto_pub"; do
+        if [ -f "$bb_f" ] && [ ! -L "$bb_f" ]; then
+            bb_n=$(stat -c %s "$bb_f" 2>/dev/null || echo 64)
+            [ "$bb_n" -gt 0 ] 2>/dev/null && dd if=/dev/zero of="$bb_f" bs=1 count="$bb_n" conv=notrunc >/dev/null 2>&1
+        fi
+    done
+    case "$BBDIR" in
+        */data/plugins/?*/befehle) rm -rf "${BBDIR:?}" ;;
+    esac
+fi
+if [ -e "$BBDIR/mosquitto/mosquitto_sub" ] || [ -e "$BBDIR/mosquitto/mosquitto_pub" ]; then
+    echo "<WARNING> Befehlsbruecke: Optionsdateien liegen noch unter $BBDIR/mosquitto - von Hand entfernen."
+elif [ -f "$BBSH" ]; then
+    echo "<OK> Befehlsbruecke angehalten, ihre Zugangsdaten entfernt."
+fi
+
+# ==== Behaltene MQTT-Themen abraeumen (seit 2.2.13, M2, Entscheidung 3) ====
 #
 # Nur bei eingeschaltetem MQTT und nur die eigenen: <praefix>/bilder und
-# <praefix>/ai_count, die heute retained hinausgehen. Leeres retain ueber den
-# UDP-Eingang des Gateways, dreimal (UDP verliert), mit timeout. Bis 2.2.12
-# standen sie nach der Deinstallation fuer immer im Broker (mqtt-Pruefer, F9).
-# Ehrlich gemeldet: UDP sagt nur, dass das Paket hinausging.
+# <praefix>/ai_count, die retained hinausgehen. Leeres retain ueber den
+# UDP-Eingang des Gateways, dreimal (UDP verliert), mit timeout. Seit 2.2.23
+# mit stream_socket_client statt socket_create (Eigener Fund 8): ohne die
+# PHP-Erweiterung sockets ging hier bis 2.2.22 nichts hinaus. Wie in ic_mqtt_an()
+# gilt ein fehlender Schluessel mqtt_enable seit 2.2.23 als an (Vorgabe).
 CF="$PCONFIG/data.json"
 if [ -f "$CF" ] && command -v php >/dev/null 2>&1; then
     MQ=$(timeout 15 php -r '
         $c = json_decode((string) @file_get_contents($argv[1]), true);
         if (!is_array($c)) { echo "unlesbar"; exit(0); }
-        $an = isset($c["mqtt_enable"]) ? (string) $c["mqtt_enable"] : "0";
+        $an = isset($c["mqtt_enable"]) ? (string) $c["mqtt_enable"] : "1";
         if (!in_array($an, array("1", "on", "true"), true)) { echo "aus"; exit(0); }
         $p = (isset($c["mqtt_praefix"]) && is_string($c["mqtt_praefix"]) && trim($c["mqtt_praefix"]) !== "")
            ? trim($c["mqtt_praefix"]) : $argv[3];
@@ -60,19 +140,19 @@ if [ -f "$CF" ] && command -v php >/dev/null 2>&1; then
                 if ($port) { break; }
             }
         }
-        if ($p === "" || $port < 1 || $port > 65535 || !function_exists("socket_create")) {
-            echo "kein UDP-Eingangsport des Gateways oder keine PHP-Erweiterung sockets"; exit(0);
+        if ($p === "" || $port < 1 || $port > 65535) {
+            echo "kein UDP-Eingangsport des Gateways"; exit(0);
         }
         $t = array($p . "/bilder", $p . "/ai_count");
         $ok = 0; $n = 0;
         for ($i = 0; $i < 3; $i++) {
             foreach ($t as $x) {
                 $n++;
-                $s = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
-                if (!$s) { continue; }
                 $m = "retain " . $x;
-                if (@socket_sendto($s, $m, strlen($m), 0, "127.0.0.1", $port) !== false) { $ok++; }
-                socket_close($s);
+                $s = @stream_socket_client("udp://127.0.0.1:" . $port, $en, $es, 1);
+                if (!is_resource($s)) { continue; }
+                if (@fwrite($s, $m) === strlen($m)) { $ok++; }
+                fclose($s);
             }
         }
         echo ($ok === $n ? "ok " : "teil " . $ok . " von " . $n . ": ") . implode(", ", $t);
@@ -84,59 +164,63 @@ if [ -f "$CF" ] && command -v php >/dev/null 2>&1; then
     esac
 fi
 
-# Die Deinstallation von LoxBerry entfernt nur das VERZEICHNIS
-# config/plugins/<ordner>/. Die Zweitschrift liegt DANEBEN und bliebe
-# liegen - mit dem Zugriffstoken, den Adressen der Tuerstationen und den
-# Zugangsdaten der Webhooks darin.
+# ==== Zweitschriften, Marke, Bild- und Videolinks ====
 #
-# ES SIND ZWEI NAMEN, NICHT EINER. Bis 2.1.13 wurde hier nur der erste
-# geloescht; die zweite Datei schrieb preupgrade.sh, und sie blieb nach der
-# Deinstallation mit demselben Inhalt liegen. Seit 2.2.0 schreiben beide
-# Stellen denselben Namen - der zweite wird trotzdem weiter entfernt, weil
-# er auf jeder Anlage liegt, die von einer aelteren Fassung kommt.
-rm -f "$PCONFIG.backup.json" 2>/dev/null
-rm -f "$PCONFIG.backup.data.json" 2>/dev/null
-# Seit 2.2.13 dazu: die halbe Zweitschrift aus preupgrade.sh (I2), die
-# beiseitegelegten .alt einer Neuinstallation (I1) und die gesicherte
-# unlesbare Konfiguration (I6) - alle tragen Token und Zugangsdaten.
-rm -f "$PCONFIG.backup.json.neu" "$PCONFIG.backup.json.alt" "$PCONFIG.backup.data.json.alt" 2>/dev/null
-rm -f "$PCONFIG.data.json.kaputt" "$PCONFIG.data.json.kaputt.alt" 2>/dev/null
+# Die Deinstallation von LoxBerry entfernt nur die VERZEICHNISSE config/plugins/<ordner>/ und data/plugins/<ordner>/.
+# Was DANEBEN liegt, bliebe liegen - mit Zugriffstoken, Adressen und Kennwoertern der Tuerstationen, Zugangsdaten der
+# Webhooks und den Token von SignalBot und Sprachsteuerung.
+#
+# BERICHTIGT 2.2.23 (I9, Regeln/06 "Das Deinstallationsskript ist fail-closed, ueberschreibt vor dem Loeschen und
+# zaehlt nach"): reguelaere Dateien werden vor dem rm mit Nullen ueberschrieben (Block wie Alexa NG 1.0.5 uninstall
+# :126-135; kein Verweis, auf Flash kein sicheres Loeschen). Bis 2.2.22 nur rm -f.
+IC_WEG=0
+for datei in "$PCONFIG.backup.json" "$PCONFIG.backup.data.json" \
+             "$PCONFIG.backup.json.neu" "$PCONFIG.backup.json.alt" "$PCONFIG.backup.data.json.alt" \
+             "$PCONFIG.data.json.kaputt" "$PCONFIG.data.json.kaputt.alt" \
+             "$BASE/data/plugins/$PDIR.upgrade_laeuft" "$PDATA.bildlinks.json" "$PDATA.bildlinks.json.alt" \
+             "$PDATA.mqtt_altlast.json" "$PDATA.videolinks.json" "$PDATA.videolinks.json.alt" \
+             "$PDATA.videolinks.json.sperre"; do
+    [ -e "$datei" ] || [ -L "$datei" ] || continue
+    if [ -f "$datei" ] && [ ! -L "$datei" ]; then
+        IC_N=$(stat -c %s "$datei" 2>/dev/null || echo 0)
+        [ "$IC_N" -gt 0 ] 2>/dev/null && dd if=/dev/zero of="$datei" bs=1 count="$IC_N" conv=notrunc >/dev/null 2>&1
+    fi
+    rm -f "$datei" 2>/dev/null
+    [ -e "$datei" ] || IC_WEG=$((IC_WEG + 1))
+done
+# Die Bildkopien je Link (seit 2.2.13, C11): erst jede Datei ueberschreiben, dann den Ordner.
+for ordner in "$PDATA.bildlinks" "$PDATA.bildlinks.alt"; do
+    case "$ordner" in
+        "$BASE"/data/plugins/"$PDIR".bildlinks|"$BASE"/data/plugins/"$PDIR".bildlinks.alt) ;;
+        *) continue ;;
+    esac
+    [ -d "$ordner" ] && [ ! -L "$ordner" ] || continue
+    for f in "$ordner"/* "$ordner"/.sperre; do
+        if [ -f "$f" ] && [ ! -L "$f" ]; then
+            IC_N=$(stat -c %s "$f" 2>/dev/null || echo 0)
+            [ "$IC_N" -gt 0 ] 2>/dev/null && dd if=/dev/zero of="$f" bs=1 count="$IC_N" conv=notrunc >/dev/null 2>&1
+        fi
+    done
+    rm -rf "${ordner:?}" 2>/dev/null
+    [ -e "$ordner" ] || IC_WEG=$((IC_WEG + 1))
+done
 
 # Ebenso ein Rest aus Fassungen bis 2.1.13: dort legte preupgrade.sh eine
-# Sicherung im Datenordner an. Seit 2.2.0 tut es das nicht mehr (die Kette
-# war konstruktionsbedingt tot, siehe preupgrade.sh) - der Befehl bleibt als
-# Altlastenraeumung, die Begruendung ist seit 2.2.6 berichtigt.
+# Sicherung im Datenordner an.
 rm -rf "$PDATA/upgrade_sicherung"
 
-# Die Marke "Aktualisierung laeuft" aus preupgrade.sh liegt NEBEN dem
-# Datenordner und uebersteht deshalb auch das Deinstallieren. Bliebe sie nach
-# einer abgebrochenen Aktualisierung liegen, spielte eine Neuinstallation
-# die Zweitschrift ein, und Zeitraffer und Bereinigung setzten aus - seit
-# 2.2.13 gilt die Marke ohne Altersgrenze (Entscheidung 1, Nr. 8 Frage 17).
-rm -f "$BASE/data/plugins/$PDIR.upgrade_laeuft" 2>/dev/null
-
-# Seit 2.2.13 liegen neben dem Datenordner auch die befristeten Bildlinks
-# samt Bildkopien (I4, C11) und der Merker der MQTT-Altlast (M1).
-rm -f "${PDATA:?}.bildlinks.json" "${PDATA:?}.bildlinks.json.alt" "${PDATA:?}.mqtt_altlast.json" 2>/dev/null
-rm -rf "${PDATA:?}.bildlinks" "${PDATA:?}.bildlinks.alt" 2>/dev/null
-
-# BERICHTIGT 04.09.2026 (2.2.6): die Meldung haengt am Ergebnis.
-# Bis 2.2.5 stand hier unbedingt "<OK> Zweitschriften und Upgrade-Sicherung
-# entfernt." - auch wenn nichts da war oder rm scheiterte. Der Anwender las,
-# seine Zugangsdaten seien weg, und konnte es nicht nachpruefen; in genau
-# diesen Dateien stehen Zugriffstoken, Adressen der Tuerstationen und die
-# Zugangsdaten der Webhooks.
-uebrig=""
 # Nachgezaehlt wird VOR der Schlusszeile, auf denselben Pfaden (I5).
+uebrig=""
 for datei in "$PCONFIG.backup.json" "$PCONFIG.backup.data.json" "$PDATA/upgrade_sicherung" \
              "$PCONFIG.backup.json.neu" "$PCONFIG.backup.json.alt" "$PCONFIG.backup.data.json.alt" \
              "$PCONFIG.data.json.kaputt" "$PCONFIG.data.json.kaputt.alt" \
              "$BASE/data/plugins/$PDIR.upgrade_laeuft" "$PDATA.bildlinks.json" "$PDATA.bildlinks.json.alt" \
-             "$PDATA.bildlinks" "$PDATA.bildlinks.alt" "$PDATA.mqtt_altlast.json"; do
+             "$PDATA.bildlinks" "$PDATA.bildlinks.alt" "$PDATA.mqtt_altlast.json" \
+             "$PDATA.videolinks.json" "$PDATA.videolinks.json.alt" "$BBDIR"; do
     if [ -e "$datei" ]; then uebrig="$uebrig $datei"; fi
 done
 if [ -z "$uebrig" ]; then
-    echo "<OK> Zweitschriften, Upgrade-Marke und Bildlinks entfernt (nachgezaehlt: 0 Reste)."
+    echo "<OK> Zweitschriften, Upgrade-Marke, Bild- und Videolinks entfernt ($IC_WEG ueberschrieben und geloescht; nachgezaehlt: 0 Reste)."
 else
     echo "<WARNING> Diese Dateien liessen sich NICHT entfernen:"
     for datei in $uebrig; do
@@ -153,8 +237,7 @@ fi
 #
 # Das sind die Aufnahmen des Anwenders. Sie zu loeschen waere eine
 # Entscheidung, die dem Plugin nicht zusteht - eine Deinstallation kann auch
-# ein Umzug sein. Der Befehl zum Entfernen gehoert deshalb in die Ausgabe,
-# ausgefuehrt wird er von Hand.
+# ein Umzug sein.
 echo "<INFO> Das Bild- und Videoarchiv bleibt erhalten:"
 echo "<INFO>   $LBWURZEL/webfrontend/legacy/${PDIR}_data"
 echo "<INFO> Diese Aufnahmen zeigen Personen vor der Tuer. Wer sie nicht mehr"

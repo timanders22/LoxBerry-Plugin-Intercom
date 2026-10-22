@@ -153,6 +153,7 @@ function ic_eingaben_sammeln($form, array $falsch)
     if ($form === 'mqtt') {
         $e['werte']['mqtt_praefix'] = $str(isset($_POST['mqtt_praefix']) ? $_POST['mqtt_praefix'] : '');
         $e['haken']['mqtt_enable'] = isset($_POST['mqtt_enable']);
+        foreach (ic_befehle_haken() as $k) { $e['haken'][$k] = isset($_POST[$k]); }   // 2.2.23
         return $e;
     }
     foreach (array('storage_path', 'timelapse_time', 'tv_ip', 'tv_port', 'ai_url', 'ai_minconf',
@@ -164,7 +165,7 @@ function ic_eingaben_sammeln($form, array $falsch)
     }
     foreach (array('timestamp_image', 'timestamp_video', 'timelapse_enable', 'timelapse_video',
                    'tv_enable', 'ai_enable', 'bild_schuetzen', 'archiv_schutz',
-                   'klingel_signal', 'klingel_sprache') as $k) {
+                   'klingel_signal', 'klingel_sprache', 'klingel_nur_erkannt') as $k) {
         $e['haken'][$k] = isset($_POST[$k]);
     }
     /* Nr. 36 b: die Felder der Sprachausgabe - nie die Sprechtoken (ansage_x2_felder()). */
@@ -340,9 +341,15 @@ if ($ic_wollte && $ic_darf && isset($_POST['vorlage'])) {
                               ic_vorlage_ausgang($ic_host, $ic_token));
         exit;
     }
-    if ($_POST['vorlage'] === 'eingang') {
-        ic_vorlage_ausliefern('VI_Intercom_LoxBerry.xml', ic_vorlage_eingang($ic_host));
-        exit;
+    /* 2.2.23 (E10): die Vorlage der Rueckmeldungen (VirtualInHttp) ist entfallen; neu die Vorlage der
+     * MQTT-Befehle (eigener Ausgang an den UDP-Eingang des Gateways, Entwurf 3.7). */
+    if ($_POST['vorlage'] === 'bruecke') {
+        $ic_vb = ic_vorlage_bruecke($ic_host);
+        if ($ic_vb !== '') {
+            ic_vorlage_ausliefern('VQ_Intercom_MQTT_Befehle.xml', $ic_vb);
+            exit;
+        }
+        $ic_fehler[] = ic_txt('BEFEHL.M_VORLAGE_NICHT');
     }
 }
 
@@ -392,6 +399,9 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
     );
     /* Nr. 36 b: die Sprechtoken der Sprachausgabe gehen nie in eine Sicherung. */
     $ic_sich = ic_config();
+    /* 2.2.23 (E6): MQTT ist ab Werk an - die Sicherung traegt den geltenden Wert ausdruecklich, damit das
+     * Zurueckspielen ihn nicht fuer eine alte Sicherung (ohne Schluessel = aus) haelt. */
+    if (!array_key_exists('mqtt_enable', $ic_sich)) { $ic_sich['mqtt_enable'] = ic_mqtt_an() ? '1' : '0'; }
     if (isset($ic_sich['tts']) && is_array($ic_sich['tts'])) {
         $ic_sich['tts'] = ansage_sicherung_bereinigen($ic_sich['tts']);
     }
@@ -661,6 +671,8 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     foreach (array('klingel_signal', 'klingel_sprache') as $ic_k) {
         $ic_neu[$ic_k] = isset($_POST[$ic_k]) ? 'on' : '';
     }
+    /* V1 (seit 2.2.23, E13): nur melden, wenn die Objekterkennung etwas fand - ab Werk aus, nie fuer "klingel". */
+    $ic_neu['klingel_nur_erkannt'] = isset($_POST['klingel_nur_erkannt']) ? 'on' : '';
     foreach (array('klingel_ausloeser', 'klingel_signal_ordner', 'klingel_signal_an', 'klingel_sprache_ordner',
                    'klingel_signal_token', 'klingel_sprache_token') as $ic_k) {
         $ic_w = isset($_POST[$ic_k]) ? ic_feld_text($_POST[$ic_k]) : '';
@@ -815,6 +827,10 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
 if ($ic_wollte && $ic_darf && isset($_POST['mqtt_speichern'])) {
     $ic_neu = $ic_cfg;
     $ic_neu['mqtt_enable'] = isset($_POST['mqtt_enable']) ? '1' : '0';
+    /* 2.2.23 (Entwurf 3.5, E2): die beiden Haken der Befehle ueber MQTT, ab Werk aus. */
+    foreach (ic_befehle_haken() as $ic_k) {
+        $ic_neu[$ic_k] = isset($_POST[$ic_k]) ? '1' : '0';
+    }
     /* Nr. 19: eine Liste statt eines Textes wird abgewiesen, nicht still zum
      * leeren Praefix (= Ordnername). */
     $ic_p = isset($_POST['mqtt_praefix'])
@@ -834,6 +850,16 @@ if ($ic_wollte && $ic_darf && isset($_POST['mqtt_speichern'])) {
             $ic_cfg = $ic_neu;
             ic_log('MQTT-Einstellungen gespeichert (Praefix ' . ic_mqtt_praefix() . ').');
             $ic_meldungen[] = ic_txt('UI.M_GESPEICHERT');
+            /* 2.2.23 (Entwurf 2.4, 3.5): die Abo-Datei des Gateways V1 beim Praefixwechsel nachfuehren und die
+             * Befehlsbruecke direkt starten bzw. anhalten (der Waechter in cron.01min tut es sonst binnen einer
+             * Minute). */
+            $ic_pw = (ic_mqtt_praefix() !== $ic_alt_p);
+            if ($ic_pw) { ic_abo_datei(ic_mqtt_praefix(), true); }
+            $ic_bsr = ic_bruecke_schalten($ic_pw);
+            $ic_bss = ic_bruecke_satz($ic_bsr);
+            if ($ic_bss !== '') {
+                if (substr($ic_bsr[0], -5) === '_fehl') { $ic_fehler[] = $ic_bss; } else { $ic_meldungen[] = $ic_bss; }
+            }
             /* NEU 2.2.13 (M2, Entscheidung 3): beim Praefixwechsel und beim
              * Abschalten die behaltenen Themen unter dem ALTEN Praefix abraeumen.
              * Bis 2.2.12 standen danach intercom/bilder und haus/tuer/bilder
@@ -1125,6 +1151,16 @@ function ic_pz_zeile(array $z)
     return $o;
 }
 
+/** Nur die Antwort einer Pruefzeile, maskiert (Reiter MQTT, Zustand der Befehlsbruecke; seit 2.2.23). */
+function ic_pz_text(array $z)
+{
+    global $L;
+    $t = (strpos($z['antwort'], 'TEST.') === 0) ? (isset($L[$z['antwort']]) ? $L[$z['antwort']] : $z['antwort'])
+                                                : $z['antwort'];
+    $s = ic_e($t);
+    return $z['aargs'] ? vsprintf($s, array_map('ic_e', $z['aargs'])) : $s;
+}
+
 
 LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
 
@@ -1154,7 +1190,7 @@ require_once __DIR__ . "/ic_stil.php";
    und die Bilanz der Selbstpruefung (ohne Netz) stehen oben schon fest. */ ?>
 <table class="sm-tbl" style="max-width:620px">
 <tr><th><?= ic_txt('UI.KOPF_EIGENSCHAFT') ?></th><th><?= ic_txt('UI.KOPF_WERT') ?></th></tr>
-<tr><td><?= ic_txt('UI.KOPF_DIENST') ?></td><td><?= ic_txt('UI.KOPF_OHNE_DIENST') ?></td></tr>
+<tr><td><?= ic_txt('UI.KOPF_DIENST') ?></td><td><?= (string) $ic_cfg['befehle_mqtt_ein'] === '1' ? ic_txt('UI.KOPF_BRUECKE') : ic_txt('UI.KOPF_OHNE_DIENST') ?></td></tr>
 <tr><td><?= ic_txt('UI.H_STATIONEN') ?></td>
     <td><?= $ic_st ? ic_txtf('UI.KOPF_STATIONEN_N', count($ic_st)) : '<span class="sm-fehl">' . ic_txt('UI.KOPF_STATIONEN_KEINE') . '</span>' ?></td></tr>
 <tr><td><?= ic_txt('UI.KOPF_TOKEN') ?></td>
@@ -1357,6 +1393,9 @@ $ic_schutz_ist = ic_archiv_geschuetzt();
 <label><?= ic_txt('UI.L_KLINGEL_AUSLOESER') ?></label>
 <input type="text" data-role="none" name="klingel_ausloeser" value="<?= ic_e(ic_fw('settings', 'klingel_ausloeser', $ic_cfg['klingel_ausloeser'])) ?>"<?= ic_fk('settings', 'klingel_ausloeser') ?> placeholder="klingel">
 <p class="sm-klein"><?= ic_txtf('UI.KLINGEL_AUSLOESER_TEXT', ic_mono('&trigger=klingel'), ic_fett(ic_roh('UI.REITER_LOXONE'))) ?></p>
+<label><input type="checkbox" data-role="none" name="klingel_nur_erkannt"<?= ic_fh('settings', 'klingel_nur_erkannt', $ic_cfg['klingel_nur_erkannt'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_KLINGEL_NUR_ERKANNT') ?></label>
+<p class="sm-klein"><?= ic_txt('UI.KLINGEL_NUR_ERKANNT_TEXT') ?></p>
+<p class="sm-klein"><?= ic_txt('UI.KLINGEL_KI_TEXT') ?></p>
 <p class="sm-klein"><?= ic_txtf('UI.KLINGEL_TEST', ic_fett(ic_roh('UI.REITER_TEST'))) ?></p>
 
 <h2><?= ic_txt('UI.H_ANSAGE') ?></h2>
@@ -1452,10 +1491,28 @@ if ($ic_sich_mangel) { ?>
 <h2><?= ic_txt('UI.H_MQTT') ?></h2>
 <label><input type="checkbox" data-role="none" name="mqtt_enable"<?= ic_fh('mqtt', 'mqtt_enable', ic_mqtt_an()) ? ' checked' : '' ?>> <?= ic_txt('UI.L_MQTT') ?></label>
 <p class="sm-klein"><?= ic_txt('UI.MQTT_GATEWAY_TEXT') ?></p>
+<p class="sm-klein"><?= ic_txt('UI.MQTT_AB_WERK') ?></p>
 
 <label><?= ic_txt('UI.L_MQTT_PRAEFIX') ?></label>
 <input type="text" data-role="none" name="mqtt_praefix" value="<?= ic_e(ic_fw('mqtt', 'mqtt_praefix', $ic_cfg['mqtt_praefix'])) ?>"<?= ic_fk('mqtt', 'mqtt_praefix') ?> placeholder="<?= ic_e($ic_plugin) ?>">
 <p class="sm-klein"><?= ic_txt('UI.MQTT_PRAEFIX_TEXT') ?></p>
+<?php /* Gruppe 7 (2.2.23, Entwurf 3.6): die Befehlsbruecke erlaubt je Ebene des Praefixes hoechstens 40 Zeichen
+   (bb_praefix_gueltig) - Intercom erlaubt laengere Stufen; dann laufen nur die Befehle nicht. */
+if (function_exists('bb_praefix_gueltig') || ic_bruecke_laden()) {
+    if (!bb_praefix_gueltig(ic_mqtt_praefix())) { ?>
+<div class="sm-hinweis sm-warn"><?= ic_txtf('BEFEHL.PRAEFIX_ZU_LANG', ic_mono(ic_mqtt_praefix())) ?></div>
+<?php }
+} ?>
+
+<h2><?= ic_txt('BEFEHL.H_BEFEHLE') ?></h2>
+<?php /* Gruppe 7 (2.2.23, Entwurf 3.5, E2): zwei Haken, beide ab Werk aus. Foto MIT Meldung ist eingreifend (ein
+   untergeschobenes UDP-Paket taeuschte ein Klingeln mit Ansage und Signal vor) und braucht den zweiten. */ ?>
+<label><input type="checkbox" data-role="none" name="befehle_mqtt_ein"<?= ic_fh('mqtt', 'befehle_mqtt_ein', (string) $ic_cfg['befehle_mqtt_ein'] === '1') ? ' checked' : '' ?>> <?= ic_txt('BEFEHL.L_EIN') ?></label>
+<label><input type="checkbox" data-role="none" name="befehle_mqtt_melden"<?= ic_fh('mqtt', 'befehle_mqtt_melden', (string) $ic_cfg['befehle_mqtt_melden'] === '1') ? ' checked' : '' ?>> <?= ic_txt('BEFEHL.L_MELDEN') ?></label>
+<p class="sm-klein"><?= ic_txtf('BEFEHL.TEXT_THEMEN', ic_mono(ic_mqtt_praefix() . '/befehl/<nr>/foto'), ic_mono(ic_mqtt_praefix() . '/befehl/<nr>/foto_ohne_meldung'), ic_mono(ic_mqtt_praefix() . '/befehl/<nr>/video')) ?></p>
+<div class="sm-hinweis sm-warn"><?= ic_txt('BEFEHL.TEXT_HEIMNETZ') ?></div>
+<p class="sm-klein"><?= ic_txt('BEFEHL.TEXT_MELDEN') ?></p>
+<p class="sm-klein"><?= ic_txt('BEFEHL.TEXT_FLUT') ?></p>
 
 <h2><?= ic_txt('UI.H_MQTT_ABO') ?></h2>
 <div class="sm-hinweis"><?= ic_txtf('UI.MQTT_ABO_TEXT', ic_mono(ic_mqtt_praefix() . '/#')) ?> <?= ic_abo_text() ?></div>
@@ -1464,10 +1521,8 @@ if ($ic_sich_mangel) { ?>
 <div class="sm-tabrahmen">
 <table>
 <!-- Dritte Spalte seit 2.2.6: der Hausstandard verlangt, dass je Thema
-     dasteht, ob es retained gesendet wird - wer einen virtuellen Eingang
-     baut, muss wissen, ob nach einem Neustart ein Wert da ist. Die Angabe
-     kommt aus derselben Liste wie der Sender (ic_mqtt_themen()), sie kann
-     also nicht auseinanderlaufen. -->
+     dasteht, ob es retained gesendet wird. Die Angabe kommt aus derselben
+     Liste wie der Sender (ic_mqtt_themen()). -->
 <tr><th><?= ic_txt('UI.SP_THEMA') ?></th><th><?= ic_txt('UI.SP_WANN') ?></th><th><?= ic_txt('UI.SP_RETAIN') ?></th></tr>
 <?php foreach (ic_mqtt_themen() as $ic_t) { ?>
 <tr><td><span class="sm-mono"><?= ic_e($ic_t[0]) ?></span></td><td><?= ic_txt($ic_t[1]) ?></td><td><?= ic_txt($ic_t[2] ? 'UI.JA' : 'UI.NEIN') ?></td></tr>
@@ -1484,7 +1539,10 @@ echo $ic_port ? ic_e($ic_port) : ic_txt('UI.MQTT_PORT_KEINER'); ?></td></tr>
 <tr><td><?= ic_txt('UI.MQTT_AUTOSTART') ?></td><td><?php
 $ic_auto = ic_mqtt_autostart();
 echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN') : ic_txt('UI.UNBEKANNT')); ?></td></tr>
-<tr><td><?= ic_txt('UI.MQTT_SOCKETS') ?></td><td><?= function_exists('socket_create') ? ic_txt('UI.JA') : ic_txt('UI.NEIN') ?></td></tr>
+<?php /* 2.2.23: die Zeile "PHP-Erweiterung sockets" entfaellt (stream_socket_client gehoert zum Kern, E7); dafuer
+   der Zustand der Befehlsbruecke aus derselben Pruefzeile wie im Reiter Test. */
+$ic_bz = ic_pruefe_bruecke(); ?>
+<tr><td><?= ic_txt('BEFEHL.ZUSTAND') ?></td><td><?= ic_pz_text($ic_bz) ?></td></tr>
 </table>
 </div>
 <?php if ($ic_auto === false) { ?>
@@ -1502,8 +1560,132 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
 
 <!-- ===================== Einbindung in Loxone ===================== -->
 <div class="sm-seite<?= $ic_offen === 'loxone' ? ' sm-active' : '' ?>" id="tab-loxone">
+<?php /* Gruppe 7 / MQTT (2.2.23; Entwurf 2.5, Bauvorschrift Gruppe 1 Nachtrag 2): MQTT ist der Weg des LoxBerry-Plugins
+   Musterprojekts, fuer Werte UND Befehle. A die Werte am Gateway nach seiner Fassung (V1: Abo, die Datei liegt bei;
+   V2: Hakenliste aus ic_mqtt_hakenliste(), status/ok mit "Noncached"), B die Namenstabelle (KEINE Importvorlage fuer
+   Werte mehr - die Vorlage mit Virtuellem HTTP-Eingang und http://localhost entfaellt, Pruefbericht eigener Fund 7),
+   C die Befehle aus der Befehlsbruecke mit der Vorlage "Intercom MQTT-Befehle". Danach die HTTP-Adressen (Schritte
+   1-7): sie bleiben fuer bestehende Anlagen, den Baustein Tuersteuerung und Fremdsysteme (Tuerstation,
+   Bewegungsmelder); die HTTP-Ausgangsvorlage steht zugeklappt in Schritt 8. */
+$ic_ln = ic_mqtt_namen();
+$ic_lh = ic_mqtt_hakenliste();
+$ic_lb = ic_befehle_ausgerollt();
+$ic_lgw = ic_gateway_fassung();
+$ic_praefix = ic_mqtt_praefix();
+list(, $ic_labo_da) = ic_abo_datei($ic_praefix);
+$ic_jn = function ($w) { return ic_txt($w ? 'UI.JA' : 'UI.NEIN'); };
+?>
 <h2><?= ic_txt('LOX.H_WEG') ?></h2>
 <p><?= ic_txt('LOX.WEG_TEXT') ?></p>
+<?php if (!ic_mqtt_an()) { ?>
+<div class="sm-hinweis sm-warn"><?= ic_txtf('LOX.MQ_AUS', ic_fett(ic_roh('UI.REITER_MQTT')), ic_fett(ic_roh('UI.L_MQTT'))) ?></div>
+<?php } ?>
+
+<div class="sm-step"><b><?= ic_txt('LOX.MQ_A') ?></b><br>
+<?php if ($ic_lgw !== 2 && $ic_lgw < 3) { /* V1 oder nicht feststellbar */ ?>
+<?php if ($ic_labo_da || ic_paths()['home'] === '') { ?>
+<div class="sm-hinweis"><?= ic_txtf('LOX.MQ_A_V1', ic_mono(ic_abo_zeile($ic_praefix))) ?></div>
+<?php } else { ?>
+<div class="sm-hinweis sm-warn"><?= ic_txtf('LOX.MQ_A_V1_FEHLT', ic_mono(ic_abo_zeile($ic_praefix))) ?></div>
+<?php } ?>
+<?php } ?>
+<?php if ($ic_lgw !== 1) { /* V2 oder nicht feststellbar: die Hakenliste */ ?>
+<div class="sm-hinweis"><?= ic_txtf('LOX.MQ_A_V2', ic_mono($ic_praefix), count($ic_lh)) ?></div>
+<div class="sm-tabrahmen">
+<table class="sm-tbl" id="ic_hakenliste">
+<tr><th>#</th><th><?= ic_txt('UI.SP_THEMA') ?></th><th><?= ic_txt('LOX.SP_GATEWAY') ?></th><th><?= ic_txt('LOX.SP_NONCACHED') ?></th></tr>
+<?php foreach ($ic_lh as $ic_hi => $ic_hz) { ?>
+<tr><td><?= (int) $ic_hi + 1 ?></td><td><span class="sm-mono"><?= ic_e($ic_hz['voll']) ?></span></td><td><span class="sm-mono"><?= ic_e($ic_hz['name']) ?></span></td><td><?= $ic_jn($ic_hz['noncached']) ?></td></tr>
+<?php } ?>
+</table>
+</div>
+<p class="sm-klein"><?= ic_txt('LOX.MQ_A_NONCACHED') ?></p>
+<?php } ?>
+<p class="sm-klein"><?= ic_txt('LOX.MQ_A_RECONNECT') ?></p>
+</div>
+
+<div class="sm-step"><b><?= ic_txt('LOX.MQ_B') ?></b><br>
+<div class="sm-tabrahmen">
+<table class="sm-tbl" id="ic_namenstabelle">
+<tr><th>#</th><th><?= ic_txt('LOX.SP_GATEWAY') ?></th><th><?= ic_txt('LOX.SP_BEREICH') ?></th><th><?= ic_txt('LOX.SP_ART') ?></th><th><?= ic_txt('LOX.SP_BEDEUTUNG') ?></th></tr>
+<?php $ic_ni = 0;
+foreach ($ic_ln as $ic_nz) {
+    if (!$ic_nz['haken']) { continue; }
+    $ic_ni++; ?>
+<tr><td><?= (int) $ic_ni ?></td><td><span class="sm-mono"><?= ic_e($ic_nz['name']) ?></span> <button data-role="none" type="button" class="sm-kopie" data-kopie="<?= ic_e($ic_nz['name']) ?>"><?= ic_txt('LOX.KOPIEREN') ?></button></td><td><?= ic_e($ic_nz['bereich']) ?></td><td><?= ic_txt($ic_nz['art'] === 'text' ? 'LOX.ART_TEXT' : 'LOX.ART_ZAHL') ?></td><td><?= ic_txt($ic_nz['bedeutung']) ?></td></tr>
+<?php } ?>
+</table>
+</div>
+<p class="sm-klein"><?= ic_txt('LOX.MQ_B_DIGITAL') ?></p>
+<p class="sm-klein"><?= ic_txt('LOX.MQ_B_TEXT') ?></p>
+<p class="sm-klein"><?= ic_txt('LOX.MQ_B_FEHLWERT') ?></p>
+<p class="sm-klein"><?= ic_txt('LOX.MQ_B_RECHTE') ?></p>
+<p class="sm-klein"><?= ic_txt('LOX.MQ_B_PRAEFIX') ?></p>
+<details><summary><?= ic_txt('LOX.MQ_B_WEITERE') ?></summary>
+<div class="sm-tabrahmen">
+<table class="sm-tbl">
+<tr><th><?= ic_txt('UI.SP_THEMA') ?></th><th><?= ic_txt('LOX.SP_GATEWAY') ?></th><th><?= ic_txt('LOX.SP_BEDEUTUNG') ?></th></tr>
+<?php foreach ($ic_ln as $ic_nz) { if ($ic_nz['haken']) { continue; } ?>
+<tr><td><span class="sm-mono"><?= ic_e($ic_nz['voll']) ?></span></td><td><span class="sm-mono"><?= ic_e($ic_nz['name']) ?></span></td><td><?= ic_txt($ic_nz['bedeutung']) ?></td></tr>
+<?php } ?>
+</table>
+</div>
+</details>
+<script>
+(function () {
+    var k = document.querySelectorAll('.smw .sm-kopie');
+    for (var i = 0; i < k.length; i++) {
+        k[i].addEventListener('click', function () {
+            var b = this, n = b.getAttribute('data-kopie');
+            var fertig = function () { b.textContent = <?= json_encode(ic_roh('LOX.KOPIERT')) ?>; };
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(n).then(fertig);
+            } else {
+                var f = document.createElement('textarea');
+                f.value = n; document.body.appendChild(f); f.select();
+                try { document.execCommand('copy'); fertig(); } catch (e) {}
+                document.body.removeChild(f);
+            }
+        });
+    }
+})();
+</script>
+</div>
+
+<div class="sm-step" id="befehle_loxone"><b><?= ic_txt('LOX.MQ_C') ?></b><br>
+<?= ic_txtf('LOX.MQ_C_TEXT', ic_mono($ic_praefix . '/befehl/#')) ?>
+<?php if ((string) $ic_cfg['befehle_mqtt_ein'] !== '1') { ?>
+<div class="sm-hinweis sm-warn"><?= ic_txtf('LOX.MQ_C_HAKEN', ic_fett(ic_roh('UI.REITER_MQTT')), ic_fett(ic_roh('BEFEHL.L_EIN'))) ?></div>
+<?php } ?>
+<?php if ($ic_lb === null) { ?>
+<div class="sm-hinweis sm-warn"><?= ic_txt('LOX.MQ_C_KEINE') ?></div>
+<?php } else { ?>
+<div class="sm-tabrahmen">
+<table class="sm-tbl" id="ic_befehle">
+<tr><th><?= ic_txt('BEFEHL.T_TITEL') ?></th><th><?= ic_txt('BEFEHL.T_BEFEHL') ?></th><th><?= ic_txt('BEFEHL.T_WERT') ?></th><th><?= ic_txt('BEFEHL.T_EINGREIFEND') ?></th><th><?= ic_txt('BEFEHL.T_QUITTUNG') ?></th></tr>
+<?php foreach ($ic_lb as $ic_bz) { ?>
+<tr><td><?= ic_e($ic_bz['titel']) ?></td><td><span class="sm-mono"><?= ic_e($ic_bz['loxone']) ?></span></td><td><?= ic_e($ic_bz['wert']) ?></td><td><?= $ic_bz['eingreifend'] ? ic_txt('BEFEHL.T_JA_ZWEITER') : ic_txt('UI.NEIN') ?></td><td><?= ic_txt($ic_bz['quittung'] === 'ausgefuehrt' ? 'BEFEHL.Q_AUSGEFUEHRT' : 'BEFEHL.Q_UEBERGEBEN') ?></td></tr>
+<?php } ?>
+</table>
+</div>
+<?php } ?>
+<p class="sm-klein"><?= ic_txt('LOX.MQ_C_NICHTS') ?></p>
+<p class="sm-klein"><?= ic_txt('LOX.MQ_C_AUSGANG') ?></p>
+<p class="sm-klein"><?= ic_txt('BEFEHL.QUITTUNG') ?></p>
+<div class="sm-legende">
+<span><i class="sm-punkt sm-b-technik"></i> <?= ic_txt('UI.LEG_TECHNIK') ?></span>
+</div>
+<div class="sm-knopfreihe">
+<form method="post" action="index.php">
+<?= ic_formularfelder('loxone') ?>
+<button type="submit" data-role="none" class="sm-btn sm-b-technik" name="vorlage" value="bruecke"><?= ic_txt('BEFEHL.K_VORLAGE') ?></button>
+</form>
+</div>
+<p class="sm-klein"><?= ic_txtf('LOX.MQ_C_VORLAGE', ic_mono('/dev/udp/' . $ic_host . '/' . (ic_mqtt_udpport() ? ic_mqtt_udpport() : 11884))) ?></p>
+</div>
+
+<h2><?= ic_txt('LOX.H_HTTP') ?></h2>
+<p><?= ic_txt('LOX.HTTP_TEXT') ?></p>
 
 <div class="sm-step"><b><?= ic_txt('LOX.S1') ?></b><br>
 <?= ic_txt('LOX.S1_TEXT') ?>
@@ -1564,11 +1746,7 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
 <div class="sm-step"><b><?= ic_txt('LOX.S7') ?></b><br>
 <?= ic_txt('LOX.S7_TEXT') ?><br>
 <span class="sm-mono"><?= ic_e($ic_adr['selftest']) ?></span>
-<!-- NEU 2.2.6: die drei auswertbaren Felder stehen namentlich da.
-     Bis 2.2.5 versprach der Satz, die Antwort sei "auch fuer den Miniserver
-     auswertbar" - und liess offen, WORAUF man auswerten soll. Zwei der drei
-     Felder gab es damals ueberhaupt nicht; sie sind mit dieser Fassung
-     dazugekommen (ic_start.php). Die Feldnamen sind JSON, kein uebersetzbarer
+<!-- Die drei auswertbaren Felder stehen namentlich da (seit 2.2.6). Die Feldnamen sind JSON, kein uebersetzbarer
      Text, und stehen deshalb hier und nicht in der Sprachdatei. -->
 <p class="sm-klein"><?= ic_txt('LOX.S7_FELDER') ?><br>
 <span class="sm-mono">bestanden</span> - <?= ic_txt('LOX.S7_E1') ?><br>
@@ -1578,7 +1756,7 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
 
 <div class="sm-step"><b><?= ic_txt('LOX.S8') ?></b><br>
 <?= ic_txt('LOX.S8_TEXT') ?>
-<p class="sm-klein"><?= ic_txt('LOX.S8_MQTT') ?></p>
+<details><summary><?= ic_txt('LOX.S8_ZU') ?></summary>
 <div class="sm-hinweis sm-warn"><?= ic_txt('LOX.IMPORT_WARN') ?></div>
 <div class="sm-legende">
 <span><i class="sm-punkt sm-b-technik"></i> <?= ic_txt('UI.LEG_TECHNIK') ?></span>
@@ -1588,21 +1766,18 @@ echo $ic_auto === true ? ic_txt('UI.JA') : ($ic_auto === false ? ic_txt('UI.NEIN
 <?= ic_formularfelder('loxone') ?>
 <button type="submit" data-role="none" class="sm-btn sm-b-technik" name="vorlage" value="ausgang"><?= ic_txt('LOX.VORLAGE_AUSGANG') ?></button>
 </form>
-<form method="post" action="index.php">
-<?= ic_formularfelder('loxone') ?>
-<button type="submit" data-role="none" class="sm-btn sm-b-technik" name="vorlage" value="eingang"><?= ic_txt('LOX.VORLAGE_EINGANG') ?></button>
-</form>
 </div>
+</details>
 </div>
 
 <div class="sm-step"><b><?= ic_txt('LOX.S9') ?></b><br>
 <?= ic_txt('LOX.S9_TEXT') ?>
 <?php
-/* Welle Bild 18 (2.2.22): die Seite "Intercom" aus dem LoxBerry-Plugins Musterprojekt - Ueberschrift (=
- * Seitenname in Config), Kasten "So uebernehmen Sie diese Seite", Tabelle, Hinweise, Bild und Link. Bis 2.2.21
- * stand hier eine feste Tabelle mit sieben Zeilen (LOX.B1_* - B7_*) und vier Erlaeuterungen. Zellen, Schritte und
- * Hinweise kommen als Klartext aus ic_bausteinliste() (ic_lib.php) und werden hier maskiert; Gateway-Namen und
- * Befehlstitel rechnet die Funktion aus Praefix und erster Station. Nur der Link-Satz ist freigegebenes HTML. */
+/* Welle Bild 18 (2.2.22), seit 2.2.23 auf MQTT: die Seite "Intercom" aus dem LoxBerry-Plugins Musterprojekt -
+ * Ueberschrift (= Seitenname in Config), Kasten "So uebernehmen Sie diese Seite", Tabelle, Hinweise, Bild und Link.
+ * Zellen, Schritte und Hinweise kommen als Klartext aus ic_bausteinliste() (ic_lib.php) und werden hier maskiert;
+ * Gateway-Namen, Befehlsthemen und Befehlstitel rechnet die Funktion aus Praefix und Stationen. Nur der Link-Satz ist
+ * freigegebenes HTML. */
 $ic_bs = ic_bausteinliste();
 ?>
 <h4 class="sm-h4"><?= ic_e($ic_bs['seite']) ?></h4>

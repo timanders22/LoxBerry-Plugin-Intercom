@@ -80,8 +80,23 @@ if ($ic_rc !== null && $ic_rc !== 0) {
 $arr = ic_config();
 $groesse = (int) @filesize($o['video'] . $file);
 
+/* H1 (seit 2.2.23, Entwurf 3.10, E12): der Rechner aus ic_host_aussen(). Diese Datei wird seit 2.2.13 nur noch
+ * intern ueber http://127.0.0.1/... gerufen - bis 2.2.22 zeigte die Adresse in <praefix>/video und in den
+ * Video-Webhooks deshalb auf 127.0.0.1 und war fuer jeden Abnehmer ausserhalb des LoxBerry unbrauchbar.
+ * I10 (seit 2.2.23, E11): bei eingeschaltetem Archivschutz verlangt /legacy/ die Anmeldung - dann geht statt
+ * der /legacy/-Adresse ein befristeter Link video.php?link= hinaus (diese eine Datei, 24 h, 5 Abrufe). Ohne
+ * Schutz bleibt die /legacy/-Adresse. Laesst sich kein Link anlegen, bleibt das Feld leer - eine Adresse, die
+ * nicht traegt, ist schlechter als keine. */
 $www_folder = str_replace(ic_paths()['home'] . '/webfrontend', '', $o['video']);
-$dateiurl = 'http://' . ic_host() . $www_folder . rawurlencode($file);
+$dateiurl = 'http://' . ic_host_aussen() . $www_folder . rawurlencode($file);
+if (ic_archiv_geschuetzt()) {
+    $ic_vcode = ic_videolink_erzeugen($file);
+    $dateiurl = $ic_vcode === '' ? '' : ic_basis_aussen() . 'video.php?link=' . rawurlencode($ic_vcode);
+    if ($ic_vcode === '') {
+        ic_log_gebremst('videolink', 'Es liess sich kein befristeter Videolink anlegen - die Meldung geht ohne '
+            . 'Videoadresse hinaus.');
+    }
+}
 
 $json = json_encode(array(
     'success'   => true,

@@ -34,7 +34,12 @@ php-curl
 # an allen fuenf Endpunkten. Seit 2.2.6 ist der Aufruf zusaetzlich
 # abgesichert.
 php-xml
-# php-sockets steht bewusst NICHT hier.
+# mosquitto-clients (NEU 2.2.23, Gruppe 7): die Befehlsbruecke (bin/befehlsbruecke.php) liest die Befehle
+# ueber mosquitto_sub und sendet Quittung und Lebenszeichen ueber mosquitto_pub. Auf einem LoxBerry mit
+# MQTT-Gateway ist es meist schon da.
+mosquitto-clients
+# php-sockets steht bewusst NICHT hier - und wird seit 2.2.23 auch nicht mehr gebraucht: gesendet wird mit
+# stream_socket_client() aus dem PHP-Kern (Pruefbericht, eigener Fund 8). Der Absatz darunter ist Geschichte.
 #
 # MQTT ist ab Werk aus (ic_vorgaben: mqtt_enable => '0'), und der Ausfall
 # ist sauber abgefangen: ic_mqtt_senden() prueft function_exists und meldet
