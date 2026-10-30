@@ -14,7 +14,8 @@
  */
 
 /* Gemeinsame Sprachausgabe (Abschrift von Werkzeuge/gemeinsam/sprachausgabe.php, Nr. 36 b; seit 2.2.23
- * Fassung 1.1.3 - Intercom traegt sie zuerst, Entscheidung Gruppe 7 Punkt 3).
+ * Fassung 1.1.3 - Intercom traegt sie zuerst, Entscheidung Gruppe 7 Punkt 3; seit 2.2.24 Stamm 1.2.1 mit weiteren
+ * Ausgabezielen, ic_mit_zielen(), Welle Mehrfach-Ziele).
  * Liegt neben dieser Datei; die Datei schuetzt sich selbst gegen doppeltes Laden. */
 require_once __DIR__ . '/sprachausgabe.php';
 
@@ -2731,6 +2732,11 @@ function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
     $z[] = ic_pruefe_bruecke_einrichtung();
     $z[] = ic_pruefe_auftraege();
     $z[] = ic_pruefe_namen();
+    /* Nachtwelle N8 (2.2.24): stehen unter MQTT-Gateway V2 die Haken der Hakenliste mit dem richtigen Noncached?
+     * Liest config/system/subscriptions.json; unter V1, bei ausgeschaltetem MQTT und wenn nicht feststellbar ein
+     * Hinweis (zaehlt nicht in die Bilanz - am Endpunkt und ohne Anlage gibt es nichts zu messen). */
+    list($ic_v2s, $ic_v2t) = ic_v2_haken_lage();
+    $z[] = ic_pz($ic_v2s === 1 ? 'ok' : ($ic_v2s === 0 ? 'fehl' : 'hinweis'), 'TEST.F_V2_HAKEN', $ic_v2t);
     $z[] = ic_pruefe_nur_erkannt();
 
     /* -------- Archiv -------- */
@@ -3876,6 +3882,7 @@ function ic_sicherung_lesen($roh)
     $neu = ic_config();
     $bekannt = ic_sicherungsschluessel();
     $anzahl = 0;
+    $ic_tsspaet = array();     // Welle Mehrfach-Ziele (2.2.24): tts.ziele, wenn die Sicherung die Liste nicht kannte
     foreach ($daten as $k => $w) {
         /* Der lesbare Kopf wird UEBERGANGEN, nicht beanstandet. Seit 2.2.6
          * schreibt die Sicherung einen: _plugin, _fassung, _erzeugt. Wer
@@ -3926,7 +3933,21 @@ function ic_sicherung_lesen($roh)
                 continue;
             }
             $tj = (isset($neu['tts']) && is_array($neu['tts'])) ? $neu['tts'] : array();
-            list($tv) = ansage_vervollstaendigen($tp + $tj);
+            /* Welle Mehrfach-Ziele (2.2.24): "$tp + $tj" behielt die geltenden weiteren Ziele einer Sicherung ohne
+             * Liste schon bisher - still. Jetzt geht der Block vorher durch die Spaetliste, und die Liste der
+             * uebergangenen Schluessel (UI.SICH_UEBERGANGEN) nennt sie. */
+            $ic_tsneu = array('tts' => $tp);
+            $ic_tsjetzt = array('tts' => $tj);
+            /* Welle Mehrfach-Ziele (Sprachmodul 1.2.1, Spaetliste): fehlt die Liste der weiteren Ziele in der Sicherung (Datei einer
+             * aelteren Fassung), gelten die jetzigen weiteren Ziele weiter - genannt im Hinweis. Eine Sicherung MIT leerer Liste
+             * heisst "keine weiteren Ziele" und wird so uebernommen. */
+            $ic_spaete = array();
+            if (is_array($ic_tsneu['tts']) && function_exists('ansage_sicherung_spaet')) {
+                list($ic_tsneu['tts'], $ic_spaete) = ansage_sicherung_spaet($ic_tsneu['tts'],
+                    (isset($ic_tsjetzt['tts']) && is_array($ic_tsjetzt['tts'])) ? $ic_tsjetzt['tts'] : null);
+            }
+            foreach ($ic_spaete as $ic_sn) { $ic_tsspaet[] = $ic_sn; }     // Welle Mehrfach-Ziele: tts.ziele (Spaetliste)
+            list($tv) = ansage_vervollstaendigen($ic_tsneu['tts'] + $tj);
             $neu['tts'] = ansage_sicherung_tokens_behalten($tv, $tj);
             $anzahl++;
             continue;
@@ -3973,6 +3994,7 @@ function ic_sicherung_lesen($roh)
             $uebergangen[] = $bk;
         }
     }
+    foreach ($ic_tsspaet as $ic_sn2) { $uebergangen[] = $ic_sn2; }     // Welle Mehrfach-Ziele (2.2.24): tts.ziele
     return array($mangel ? null : $neu, $mangel, $anzahl, $uebergangen, $leertoken);
 }
 
@@ -4902,12 +4924,38 @@ function ic_pruefe_klingel($art, $mit_netz = false)
  * beide an, kommen zwei Ansagen - die Oberflaeche und der Reiter Test sagen es.
  */
 
-/** Erlaubte Ausgabearten: alle des Moduls ausser 'audioserver' (kein Antwortweg zu Loxone) und 'sonos4lox'
- *  (erst, wenn Sonos im Haus ist; README 2.2.19). BERICHTIGT 2.2.23 (Pruefbericht S1): der Kommentar nannte
- *  sonos4lox nicht. */
+/** Erlaubte Ausgabearten: alle des Moduls ausser 'audioserver' (kein Antwortweg zu Loxone). Bis 2.2.23 auch ohne
+ *  'sonos4lox' (README 2.2.19: erst, wenn Sonos im Haus ist); seit 2.2.24 (Nachtwelle N8, Entscheidung
+ *  Pflegewelle 22) Sonos4Lox und, ab Modul 1.1.4, SonoX - ab Werk nicht gewaehlt, ungemessen (kein Sonos im
+ *  Haus); das Modul prueft Installation und Zone bzw. Raum. Weitere Ausgabeziele (Tabelle, 'ziele') seit 2.2.24
+ *  mit Stamm 1.2.1 - ic_mit_zielen() unten; ohne Tabelle wie 1.1.4. Die Fassungspruefung schuetzt vor einer zuerst
+ *  geladenen aelteren Abschrift (Modul 1.1.4, Kopf "Wer 'sonox' anbietet"). */
 function ic_ansage_modi()
 {
-    return array('aus', 'musicserver', 'ms4h', 'custom', 'alexang', 'cc4lox');
+    $m = array('aus', 'musicserver', 'ms4h', 'custom', 'alexang', 'cc4lox', 'sonos4lox');
+    if (version_compare(ANSAGE_FASSUNG, '1.1.4', '>=')) { $m[] = 'sonox'; }
+    return $m;
+}
+
+/** Welle Mehrfach-Ziele (Sprachmodul 1.2.1): bietet diese Linie die Tabelle der weiteren Ausgabeziele an? Nur, wenn die
+ *  geladene Abschrift sie kann - laden zwei Abschriften im selben Prozess, gilt die zuerst geladene. */
+function ic_mit_zielen() {
+    return version_compare(ANSAGE_FASSUNG, '1.2.0', '>=') && function_exists('ansage_ziele_html')
+        && function_exists('ansage_ziele_pruefen') && function_exists('ansage_testknoepfe_html');
+}
+
+/** Welle Mehrfach-Ziele (Sprachmodul 1.2.1), X-2 mit flachen Schluesseln (name.N): die Felder der Tabelle heissen im
+ *  Formular name[N] (N = 2..6, ansage_ziel_feldnamen()). ic_ziele_x2_name() macht daraus name.N (Beanstandung und
+ *  Markierung), ic_ziele_x2_post() aus den gesammelten Eingaben wieder das POST der Tabelle (ziele_post). */
+function ic_ziele_x2_name($n) {
+    return is_string($n) ? (string) preg_replace('/^(tts_ziel_[a-z]+)\[([2-9])\]\z/', '$1.$2', $n) : $n;
+}
+function ic_ziele_x2_post(array $werte) {
+    $p = array();
+    foreach ($werte as $k => $v) {
+        if (is_string($v) && preg_match('/^(tts_ziel_[a-z]+)\.([2-9])\z/', (string) $k, $m)) { $p[$m[1]][(int) $m[2]] = $v; }
+    }
+    return isset($p['tts_ziel_art']) ? $p : null;
 }
 
 /** Optionen fuer Formular-Baustein und Formular-Lesen. */
@@ -5100,6 +5148,157 @@ function ic_mqtt_retain_voll($voll, $p)
 function ic_mqtt_hakenliste($p = null)
 {
     return array_values(array_filter(ic_mqtt_namen($p), function ($z) { return $z['haken']; }));
+}
+
+/* ---------------- Gateway V2: Selbsttest der Haken (Nachtwelle N8, 2.2.24) ---------------- */
+
+/**
+ * Ein Text der Pruefzeile Gateway V2 aus [TEST] - in der Oberflaeche aus $L, ohne $L (Cron, Endpunkt) der deutsche
+ * Ersatz (wie ic_uebersetzt()).
+ */
+function ic_v2_t($s)
+{
+    static $ersatz = array(
+        'TEST.F_V2_HAKEN' => 'Gateway V2: sind alle Datenpunkte der Hakenliste angehakt?',
+        'TEST.V2_AUS' => 'trifft nicht zu – die MQTT-Veröffentlichung dieses Plugins ist aus.',
+        'TEST.V2_V1' => 'trifft nicht zu (MQTT-Gateway V1).',
+        'TEST.V2_UNKLAR' => 'nicht feststellbar (Gateway-Fassung oder config/system/subscriptions.json nicht lesbar).',
+        'TEST.V2_LEER' => 'nicht feststellbar – die Hakenliste ist leer (Themenliste des Plugins nicht lesbar).',
+        'TEST.V2_ZAHL' => '%d von %d Datenpunkten angehakt.',
+        'TEST.V2_FEHLT' => 'Es fehlen: %s.',
+        'TEST.V2_NC_FEHLT' => 'Noncached fehlt: %s.',
+        'TEST.V2_NC_ZUVIEL' => 'Noncached zu viel: %s.',
+    );
+    return ic_uebersetzt($s, array(), isset($ersatz[$s]) ? $ersatz[$s] : $s);
+}
+
+/**
+ * Die Abos des MQTT-Gateways V2 aus config/system/subscriptions.json (Subscriptions[].Id je Thema, Noncached):
+ * array(Thema => Noncached ja/nein), null = nicht lesbar. Form wie MGiSmart 1.1.28 mg_v2_abos() und Govee 0.9.30
+ * gv_mqtt_v2_haken_lage(); die Datei liest ic_v2_haken_lage().
+ */
+function ic_v2_abos($daten)
+{
+    if (!is_array($daten)) {
+        return null;
+    }
+    $liste = array();
+    foreach (array('Subscriptions', 'subscriptions') as $s) {
+        if (isset($daten[$s]) && is_array($daten[$s])) {
+            $liste = $daten[$s];
+            break;
+        }
+    }
+    $abo = array();
+    foreach ($liste as $e) {
+        if (!is_array($e)) {
+            continue;
+        }
+        $id = '';
+        foreach (array('Id', 'id', 'Topic', 'topic') as $k) {
+            if (isset($e[$k]) && is_string($e[$k])) {
+                $id = $e[$k];
+                break;
+            }
+        }
+        if ($id === '') {
+            continue;
+        }
+        $nc = false;
+        foreach (array('Noncached', 'noncached') as $k) {
+            if (isset($e[$k])) {
+                $nc = ($e[$k] === true || in_array(strtolower(trim((string) $e[$k])), array('1', 'true', 'yes', 'on'), true));
+            }
+        }
+        $abo[$id] = $nc;
+    }
+    return $abo;
+}
+
+/**
+ * Soll gegen Ist, rein (liest nichts): array(1|0, fehlt[], noncached_fehlt[], noncached_zu_viel[], angehakt, soll).
+ * Soll je Zeile array('thema' => volles Thema, 'name' => Gateway-Name, 'noncached' => bool). Noncached wird in
+ * beide Richtungen verglichen: fehlt es, reicht das Gateway einen gleichen Wert nicht weiter (nach einem Neustart
+ * des Miniservers bliebe der Eingang stehen); steht es zu viel, geht jeder Wert erneut an den Miniserver.
+ */
+function ic_v2_haken_abgleich(array $soll, array $abo)
+{
+    $fehlt = array();
+    $nc_fehlt = array();
+    $nc_zuviel = array();
+    $da = 0;
+    foreach ($soll as $e) {
+        if (!array_key_exists($e['thema'], $abo)) {
+            $fehlt[] = $e['name'];
+            continue;
+        }
+        $da++;
+        if ($e['noncached'] && !$abo[$e['thema']]) {
+            $nc_fehlt[] = $e['name'];
+        } elseif (!$e['noncached'] && $abo[$e['thema']]) {
+            $nc_zuviel[] = $e['name'];
+        }
+    }
+    return array(($fehlt || $nc_fehlt || $nc_zuviel) ? 0 : 1, $fehlt, $nc_fehlt, $nc_zuviel, $da, count($soll));
+}
+
+/**
+ * Das Soll fuer den Selbsttest: ic_mqtt_hakenliste() - DIESELBE Funktion wie die V2-Hakenliste im Reiter Einbindung
+ * (Regeln/07; 5 Haken). Das Textthema fehler bleibt drin: es hat im Musterprojekt einen Texteingang (Nachtrag zur
+ * Vorschrift 29.10.). Noncached wie in der Liste: status/ok.
+ */
+function ic_v2_haken_soll()
+{
+    $aus = array();
+    foreach (ic_mqtt_hakenliste() as $z) {
+        $aus[] = array('thema' => $z['voll'], 'name' => $z['name'], 'noncached' => (bool) $z['noncached']);
+    }
+    return $aus;
+}
+
+/**
+ * Selbsttestzeile "Gateway V2: sind alle Datenpunkte der Hakenliste angehakt?" (Nachtwelle N8, Vorschrift Punkt 4):
+ * array(1|0|2, Text ohne Markup). 1 alle Haken da und Noncached wie in der Hakenliste; 0 es fehlt ein Haken oder
+ * Noncached stimmt nicht (mit Namen); 2 trifft nicht zu (MQTT dieses Plugins aus, Gateway V1) oder nicht
+ * feststellbar (Fassung 0, keine Wurzel, subscriptions.json nicht lesbar). Liest nur.
+ */
+function ic_v2_haken_lage($an = null)
+{
+    if ($an === null) {
+        $an = ic_mqtt_an();
+    }
+    if (!$an) {
+        return array(2, ic_v2_t('TEST.V2_AUS'));
+    }
+    $fassung = (int) ic_gateway_fassung();
+    $home = (string) ic_paths()['home'];
+    if ($fassung === 0 || $home === '') {
+        return array(2, ic_v2_t('TEST.V2_UNKLAR'));
+    }
+    if ($fassung < 2) {
+        return array(2, ic_v2_t('TEST.V2_V1'));
+    }
+    $abo = ic_v2_abos(@json_decode((string) @file_get_contents($home . '/config/system/subscriptions.json'), true));
+    if ($abo === null) {
+        return array(2, ic_v2_t('TEST.V2_UNKLAR'));
+    }
+    $liste = ic_v2_haken_soll();
+    if (!$liste) {
+        return array(2, ic_v2_t('TEST.V2_LEER'));   // leere Hakenliste: kein Urteil (Hausform wie N7)
+    }
+    list($ok, $fehlt, $nc_fehlt, $nc_zuviel, $da, $soll) = ic_v2_haken_abgleich($liste, $abo);
+    $txt = sprintf(ic_v2_t('TEST.V2_ZAHL'), $da, $soll);
+    if ($fehlt) {
+        $txt .= ' ' . sprintf(ic_v2_t('TEST.V2_FEHLT'), implode(', ', array_slice($fehlt, 0, 12))
+            . (count($fehlt) > 12 ? ' …' : ''));
+    }
+    if ($nc_fehlt) {
+        $txt .= ' ' . sprintf(ic_v2_t('TEST.V2_NC_FEHLT'), implode(', ', $nc_fehlt));
+    }
+    if ($nc_zuviel) {
+        $txt .= ' ' . sprintf(ic_v2_t('TEST.V2_NC_ZUVIEL'), implode(', ', $nc_zuviel));
+    }
+    return array($ok, $txt);
 }
 
 /** Die Abo-Zeile fuer Gateway V1: <praefix>/#. */

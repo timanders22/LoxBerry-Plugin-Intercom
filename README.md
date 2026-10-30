@@ -2,9 +2,40 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.23 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.24 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.24
+
+Pflegefassung der Nachtwelle (29.10.2026), ohne Änderung an Werten, Themen und Befehlen; neu sind mehrere
+Lautsprecher gleichzeitig für die eigene Ansage:
+
+* **Befehlsbrücke 1.0.2** (gemeinsame Stammfassung, bisher 1.0.0): `stop` legt als root nichts mehr an,
+  `befehle_start.log` wird gekappt, eine leere Uhr startet den Dienst nicht, der Befehlsordner ist nur für
+  das Plugin lesbar (0700). Die Vorlage der MQTT-Befehle baut das Plugin selbst; sie hatte schon
+  Windows-Zeilenenden (CRLF). Ein Neuimport ist nicht nötig.
+* **Reiter Test, neue Zeile „Gateway V2: sind alle Datenpunkte der Hakenliste angehakt?“** Unter MQTT-Gateway V2
+  liest das Plugin `config/system/subscriptions.json` und nennt jeden Datenpunkt der Hakenliste, der dort nicht
+  angehakt ist, und jeden, bei dem „Noncached“ nicht stimmt (`status/ok` braucht es, die übrigen nicht; das Textthema `fehler` gehört dazu, weil es im Musterprojekt
+  einen Texteingang hat).
+  Unter Gateway V1 und bei ausgeschalteter MQTT-Veröffentlichung heißt die Zeile „trifft nicht zu“.
+* **Gemeinsame Sprachausgabe 1.2.1** (bisher 1.1.3).
+* **Mehrere Lautsprecher gleichzeitig (Sprachmodul 1.2.1):** Unter der Ausgabeart (jetzt „Ziel 1“) nimmt die Tabelle
+  *Weitere Ausgabeziele (gleichzeitig)* bis zu fünf weitere Ziele auf – etwa Google-Lautsprecher (Chromecast 4 Lox NG)
+  in einem Raum und Amazon Echo (Alexa-NG) in einem anderen neben dem Loxone Music Server. Die Ansage geht an alle
+  eingeschalteten Ziele zugleich (eine Ansage dauert so lange wie das langsamste Ziel, höchstens 10 s, mit Sonos 30 s);
+  scheitert eines, sprechen die anderen. Protokoll und Reiter Test nennen jedes Ziel, im Reiter Test gibt es je Ziel
+  eine Testansage. Die bestehende Einstellung ist unverändert Ziel 1; ohne weitere Ziele verhält sich alles wie in
+  2.2.23. Antwort an Loxone, MQTT-Themen und Brückenbefehl `ansage` bleiben, wie sie sind.
+* **Vor einem Zurückgehen** auf 2.2.23 oder älter die weiteren Ziele entfernen: ältere Fassungen kennen die Liste nicht
+  und fielen beim Laden auf die Werkseinstellung der Sprachausgabe zurück.
+* **Reiter Test:** *Testansage* spricht wie bisher an alle Ziele; die Knöpfe *Testansage an Ziel n* daneben sprechen
+  den Testsatz nur an diesem Ziel.
+* **Sonos4Lox und SonoX** als Ausgabeart der eigenen Ansage (ab Werk nicht gewählt, ungemessen – kein Sonos
+  im Haus). Das Formular zeigt Zone bzw. Raum, Lautstärke und (SonoX) Sprache; der Reiter Test prüft, ob das
+  Plugin installiert ist und die Zone bzw. den Raum kennt. **SonoX schickt den Ansagetext an Google**
+  (Sprachausgabe dort) und antwortet erst nach der Wiedergabe (bis 30 s).
 
 ## Neu in 2.2.23
 

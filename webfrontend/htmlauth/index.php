@@ -176,6 +176,17 @@ function ic_eingaben_sammeln($form, array $falsch)
             $e['werte'][$k] = $str(isset($_POST[$k]) ? $_POST[$k] : '');
         }
     }
+    if (ic_mit_zielen()) {
+        /* Welle Mehrfach-Ziele (2.2.24): die Tabelle kommt als name[N] (N = 2..6) und reist flach als name.N in
+         * 'werte' - nur, was gesendet wurde (ein fehlender Haken bleibt aus). */
+        foreach (array('tts_ziel_art', 'tts_ziel_wo', 'tts_ziel_laut', 'tts_ziel_sprache', 'tts_ziel_ein',
+                       'tts_ziel_loeschen') as $k) {
+            if (!isset($_POST[$k]) || !is_array($_POST[$k])) { continue; }
+            foreach ($_POST[$k] as $i => $v) {
+                if (is_string($v) && preg_match('/^[2-6]\z/', (string) $i)) { $e['werte'][$k . '.' . $i] = $str($v); }
+            }
+        }
+    }
     $namen = (isset($_POST['st_name']) && is_array($_POST['st_name'])) ? $_POST['st_name'] : array();
     foreach (array_keys($namen) as $i) {
         if (count($e['stationen']) >= 51) { break; }
@@ -706,10 +717,12 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
      * "behalten", der Haken loescht, beides zugleich ist ein Widerspruch. */
     $ic_tmangel = array();
     $ic_tbean = array();
-    $ic_neu['tts'] = ansage_formular_lesen($_POST, ic_tts(), $ic_tmangel, $ic_tbean, ic_ansage_opt(),
-                                           ic_ansage_k());
+    $ic_thl = array();     // Welle Mehrfach-Ziele (2.2.24): Hinweise des Moduls, nach dem Speichern (escaped) in die Meldungen
+    $ic_thinw = array();     // Welle Mehrfach-Ziele (Sprachmodul 1.2.1): Hinweise des Moduls, die das Speichern nicht verhindern
+    $ic_neu['tts'] = ansage_formular_lesen($_POST, ic_tts(), $ic_tmangel, $ic_tbean,
+                                           ic_ansage_opt() + array('ziele' => ic_mit_zielen()), ic_ansage_k(), $ic_thinw);
     foreach ($ic_tmangel as $ic_tm) { $ic_abweisung[] = ic_e($ic_tm['text']); }
-    foreach ($ic_tbean as $ic_tb) { $ic_falsch[] = $ic_tb; }
+    foreach ($ic_tbean as $ic_tb) { $ic_falsch[] = ic_ziele_x2_name($ic_tb); }     // 2.2.24: name[N] -> name.N
 
     /* Haken */
     foreach (array('timestamp_image', 'timestamp_video', 'timelapse_enable',
@@ -817,6 +830,8 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
             $ic_fehler[] = ic_txtf('UI.M_SCHUTZ_NICHT', ic_e(ic_archiv_schutzdatei()));
         }
         $ic_meldungen[] = ic_txt('UI.M_GESPEICHERT');
+        foreach ($ic_thinw as $ic_th) { $ic_thl[] = $ic_th['text']; }     // Welle Mehrfach-Ziele: erst nach dem Speichern
+        foreach ($ic_thl as $ic_th1) { $ic_meldungen[] = ic_e($ic_th1); }
     } elseif ($ic_ok === false) {
         ic_log('Die Einstellungen liessen sich NICHT schreiben: ' . $ic_was);
         $ic_fehler[] = ic_txtf('UI.M_NICHT_GESPEICHERT', ic_e($ic_was));
@@ -933,6 +948,29 @@ if ($ic_wollte && $ic_darf && isset($_POST['tat'])) {
         } else {
             $ic_ausgabe[] = ic_txt('UI.M_LINK_NICHT');
         }
+    }
+    $ic_offen = 'test';
+}
+
+/* Welle Mehrfach-Ziele (Sprachmodul 1.2.1): die Knoepfe "Testansage an Ziel n" schicken ansage_test_ziel=n - es spricht
+ * nur dieses Ziel; der bisherige Knopf spricht an alle Ziele gleichzeitig. Eine unbrauchbare Nummer spricht nichts. */
+if ($ic_wollte && $ic_darf && (isset($_POST['ansage_test']) || isset($_POST['ansage_test_ziel']))) {
+    $ic_tk = ic_ansage_k();
+    $ic_tnur = (isset($_POST['ansage_test_ziel']) && ic_mit_zielen()) ? ansage_test_ziel($_POST) : 0;
+    if (isset($_POST['ansage_test_ziel']) && $ic_tnur === 0) {
+        $ic_tr = array('stand' => 0, 'kennung' => 'ZIEL_UNBEKANNT|-', 'art' => '-', 'http' => 0, 'zeile' => '', 'zeichen' => 0);
+    } elseif ($ic_tnur >= 1) {
+        $ic_tr = ansage_testansage(ic_tts(), $ic_tk, $ic_tnur);
+    } else {
+        $ic_tr = ansage_testansage(ic_tts(), $ic_tk);
+    }
+    ic_log('Testansage' . ($ic_tnur >= 1 ? ' an Ziel ' . $ic_tnur : '') . ': ' . ansage_kurz($ic_tr));
+    if ($ic_tr['stand'] === 1) {
+        $ic_ausgabe[] = ic_txt('UI.M_ANSAGE_TEST_OK');
+    } elseif ($ic_tr['stand'] === -1) {
+        $ic_ausgabe[] = ic_txtf('UI.M_ANSAGE_TEST_NICHTS', ic_e(ansage_kennung_text($ic_tr['kennung'], $ic_tk)));
+    } else {
+        $ic_fehler[] = ic_txtf('UI.M_ANSAGE_TEST_FEHL', ic_e(ansage_kennung_text($ic_tr['kennung'], $ic_tk)));
     }
     $ic_offen = 'test';
 }
@@ -1405,9 +1443,12 @@ $ic_schutz_ist = ic_archiv_geschuetzt();
 <?php } ?>
 <?= ansage_formular_html(ic_tts(), array(
     'w' => function ($n, $g) { return ic_fw('settings', $n, $g); },
-    'm' => function ($n) { return ic_fk('settings', $n); },
+    'm' => function ($n) { return ic_fk('settings', ic_ziele_x2_name($n)); },     // 2.2.24: Tabelle name[N] -> name.N
     'c' => function ($n, $g) { return ic_fh('settings', $n, $g); },
-    'modi' => ic_ansage_modi()), ic_ansage_k()) ?>
+    'modi' => ic_ansage_modi(),
+    /* Welle Mehrfach-Ziele (Sprachmodul 1.2.1): Tabelle der weiteren Ausgabeziele; nach einer Beanstandung traegt sie das Eingetippte. */
+    'ziele' => ic_mit_zielen(),
+    'ziele_post' => ic_eingabe('settings') !== null ? ic_ziele_x2_post(ic_eingabe('settings')['werte']) : null), ic_ansage_k()); ?>
 <p class="sm-klein"><?= ic_txtf('UI.ANSAGE_TEST_HINWEIS', ic_fett(ic_roh('UI.REITER_TEST'))) ?></p>
 
 <div class="sm-knopfreihe">
@@ -1939,6 +1980,9 @@ if ($ic_neueste) { ?>
 <form method="post" action="index.php">
 <?= ic_formularfelder('test') ?>
 <button type="submit" data-role="none" class="sm-btn sm-b-aktion" name="tat" value="ansage_test"><?= ic_txt('UI.K_ANSAGE_TEST') ?></button>
+<?php /* Welle Mehrfach-Ziele (Sprachmodul 1.2.1): je weiteres Ziel ein Knopf "Testansage an Ziel n (Geraet (Plugin))";
+   ohne weitere Ziele nichts. */
+if (ic_mit_zielen()) { echo ansage_testknoepfe_html(ic_tts(), ic_ansage_k(), array('klasse' => 'sm-btn sm-b-aktion')); } ?>
 </form>
 <form method="post" action="index.php">
 <?= ic_formularfelder('test') ?>
