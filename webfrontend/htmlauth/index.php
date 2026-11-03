@@ -169,6 +169,10 @@ function ic_eingaben_sammeln($form, array $falsch)
         $e['haken'][$k] = isset($_POST[$k]);
     }
     /* Nr. 36 b: die Felder der Sprachausgabe - nie die Sprechtoken (ansage_x2_felder()). */
+        foreach (ansage_regeln_x2_felder() as $s2_k) {     // S2: Wann gesprochen wird
+            if ($s2_k === 'ansage_ruhe_ein') { $e['haken'][$s2_k] = isset($_POST[$s2_k]); }
+            elseif (isset($_POST[$s2_k])) { $e['werte'][$s2_k] = $str($_POST[$s2_k]); }
+        }
     foreach (ansage_x2_felder(ic_ansage_opt()) as $k) {
         if (substr($k, -9) === '_loeschen') {
             $e['haken'][$k] = isset($_POST[$k]);
@@ -720,7 +724,8 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     $ic_thl = array();     // Welle Mehrfach-Ziele (2.2.24): Hinweise des Moduls, nach dem Speichern (escaped) in die Meldungen
     $ic_thinw = array();     // Welle Mehrfach-Ziele (Sprachmodul 1.2.1): Hinweise des Moduls, die das Speichern nicht verhindern
     $ic_neu['tts'] = ansage_formular_lesen($_POST, ic_tts(), $ic_tmangel, $ic_tbean,
-                                           ic_ansage_opt() + array('ziele' => ic_mit_zielen()), ic_ansage_k(), $ic_thinw);
+                                           ic_ansage_opt() + array('ziele' => ic_mit_zielen(), 'token_vor_ort' => true, 'aus_gewinnt' => true), ic_ansage_k(), $ic_thinw);
+    list($ic_neu['ansage_regeln']) = ansage_regeln_formular($_POST, ic_ansage_regeln(ic_config()), array(), $ic_tmangel, $ic_tbean, ic_ansage_k());     // S2: Wann gesprochen wird (Stamm)
     foreach ($ic_tmangel as $ic_tm) { $ic_abweisung[] = ic_e($ic_tm['text']); }
     foreach ($ic_tbean as $ic_tb) { $ic_falsch[] = ic_ziele_x2_name($ic_tb); }     // 2.2.24: name[N] -> name.N
 
@@ -925,7 +930,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['tat'])) {
     } elseif ($ic_tat === 'ansage_test') {
         /* Nr. 36 b: die Testansage. Ins Protokoll nur die Kurzform ohne Text und Token. */
         $ic_ak = ic_ansage_k();
-        $ic_ar = ansage_testansage(ic_tts(), $ic_ak);
+        $ic_ar = ansage_testansage(ic_ansage_vor_ort(), $ic_ak);
         ic_log('Testansage: ' . ansage_kurz($ic_ar));
         if ($ic_ar['stand'] === 1) {
             $ic_ausgabe[] = ic_txt('UI.M_ANSAGE_TEST_OK');
@@ -960,9 +965,9 @@ if ($ic_wollte && $ic_darf && (isset($_POST['ansage_test']) || isset($_POST['ans
     if (isset($_POST['ansage_test_ziel']) && $ic_tnur === 0) {
         $ic_tr = array('stand' => 0, 'kennung' => 'ZIEL_UNBEKANNT|-', 'art' => '-', 'http' => 0, 'zeile' => '', 'zeichen' => 0);
     } elseif ($ic_tnur >= 1) {
-        $ic_tr = ansage_testansage(ic_tts(), $ic_tk, $ic_tnur);
+        $ic_tr = ansage_testansage(ic_ansage_vor_ort(), $ic_tk, $ic_tnur);
     } else {
-        $ic_tr = ansage_testansage(ic_tts(), $ic_tk);
+        $ic_tr = ansage_testansage(ic_ansage_vor_ort(), $ic_tk);
     }
     ic_log('Testansage' . ($ic_tnur >= 1 ? ' an Ziel ' . $ic_tnur : '') . ': ' . ansage_kurz($ic_tr));
     if ($ic_tr['stand'] === 1) {
@@ -1449,6 +1454,11 @@ $ic_schutz_ist = ic_archiv_geschuetzt();
     /* Welle Mehrfach-Ziele (Sprachmodul 1.2.1): Tabelle der weiteren Ausgabeziele; nach einer Beanstandung traegt sie das Eingetippte. */
     'ziele' => ic_mit_zielen(),
     'ziele_post' => ic_eingabe('settings') !== null ? ic_ziele_x2_post(ic_eingabe('settings')['werte']) : null), ic_ansage_k()); ?>
+<?= ansage_regeln_html(ic_ansage_regeln(), array(), array(), array(
+    'w' => function ($n, $g) { return ic_fw('settings', $n, $g); },
+    'm' => function ($n) { return ic_fk('settings', $n); },
+    'c' => function ($n, $g) { return ic_fh('settings', $n, $g); },
+    'token_vor_ort' => true), ic_ansage_k()) ?>
 <p class="sm-klein"><?= ic_txtf('UI.ANSAGE_TEST_HINWEIS', ic_fett(ic_roh('UI.REITER_TEST'))) ?></p>
 
 <div class="sm-knopfreihe">
@@ -1984,6 +1994,7 @@ if ($ic_neueste) { ?>
    ohne weitere Ziele nichts. */
 if (ic_mit_zielen()) { echo ansage_testknoepfe_html(ic_tts(), ic_ansage_k(), array('klasse' => 'sm-btn sm-b-aktion')); } ?>
 </form>
+<?= ic_ansage_lage_html() ?>
 <form method="post" action="index.php">
 <?= ic_formularfelder('test') ?>
 <button type="submit" data-role="none" class="sm-btn sm-b-technik" name="tat" value="aufraeumen_probe"><?= ic_txt('UI.K_CU_PROBE') ?></button>

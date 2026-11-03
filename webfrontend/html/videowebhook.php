@@ -17,7 +17,9 @@ $ic_datei_arg = (isset($_GET['file']) && is_string($_GET['file'])) ? basename($_
 $ic_intern = isset($_GET['intern']) && ic_intern_erlaubt('hook', $ic_datei_arg);
 if (!$ic_intern) {
     ic_token_pruefen();
-    if (isset($_GET['selftest'])) {
+    /* 2.2.25 (Nachzug 01.11.2026, wie Renault NG 2.1.23): !empty statt isset - bis 2.2.24 galt auch ?selftest=0 und ?selftest= als Selbsttest,
+     * und eine Adresse mit diesem Anhang tat nie etwas anderes. */
+    if (!empty($_GET['selftest'])) {
         ic_selftest_antwort('videowebhook.php');
     }
 }

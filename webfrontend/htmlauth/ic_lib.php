@@ -3798,8 +3798,8 @@ function ic_vorgaben()
         'klingel_ausloeser' => 'klingel',
         // 2.2.23 (V1, E13): nur melden, wenn die Objekterkennung etwas fand - ab Werk AUS, nie fuer "klingel".
         'klingel_nur_erkannt' => '',
-        // Nr. 36 b (Stufe 2, F10): eigene Ansage ueber die gemeinsame Sprachausgabe, ab Werk aus.
-        'tts' => ansage_vorgaben('aus'),
+        // Nr. 36 b (Stufe 2, F10): eigene Ansage ueber die gemeinsame Sprachausgabe; seit 2.2.25 ab Werk EIN (gilt nur fuer einen nie gespeicherten Block).
+        'tts' => ansage_werk_block(),
     );
 }
 
@@ -3889,6 +3889,15 @@ function ic_sicherung_lesen($roh)
          * eine alte Datei von Hand um eine Zeile ergaenzt, soll sie nicht
          * zurueckgewiesen bekommen. */
         if ((string) $k !== '' && substr((string) $k, 0, 1) === '_') {
+            continue;
+        }
+        if ($k === 'ansage_token_herkunft') { continue; }     // S2: nie aus einer Datei
+        if ($k === 'ansage_regeln') {     // S2: ungueltig = abgewiesen, gueltig = uebernommen
+            $s2_g = '';
+            $s2_r = ansage_regeln_wert($w, $s2_g);
+            if ($s2_r === null) { $mangel[] = ic_txt('UI.ANSAGE_NAME'); continue; }
+            $neu['ansage_regeln'] = $s2_r;
+            $anzahl++;
             continue;
         }
         if (!in_array($k, $bekannt, true)) {
@@ -4867,11 +4876,11 @@ function ic_klingel_melden($station, $trigger, $mehrere, $bildquelle, $basis, $a
     }
     if (ic_ansage_an()) {
         /* Nr. 36 b (Stufe 2, F10): Intercom spricht selbst ueber die gemeinsame Sprachausgabe - derselbe Satz,
-         * dieselben Ausloeser und dieselbe 60-s-Bremse. Ins Protokoll kommt nur das Ergebnis, nie der Text. */
-        $ak = ic_ansage_k();
-        $ar = ansage_sprechen($text, ic_tts(), $ak);
+         * dieselben Ausloeser und dieselbe 60-s-Bremse. Ins Protokoll kommt nur das Ergebnis, nie der Text.
+         * 2.2.25: dringend ohne Sperre (Entscheidung 01.11.2026), Nachtruhe gilt nicht, der Schalter "Ansagen aus" schon. Das Klingeln wartet nicht auf Lautsprecher. */
+        $ar = ic_ansage_legen(array(array('schluessel' => 'klingel', 'text' => $text, 'dringend' => true, 'sperre_min' => 0)));
         $aus['ansage'] = ic_klingel_ergebnis('ansage', ic_uebersetzt('UI.ANSAGE_NAME', array(), 'Sprachausgabe'),
-            $ar['stand'] === 1, $ar['stand'] === 1 ? '' : ansage_kennung_text($ar['kennung'], $ak));
+            $ar === 'gestartet', $ar === 'gestartet' ? '' : (string) $ar);
     }
     return $aus;
 }
@@ -4964,10 +4973,181 @@ function ic_ansage_opt()
     return array('modi' => ic_ansage_modi());
 }
 
-/** Der Block tts, vervollstaendigt (ab Werk 'aus'). */
-function ic_tts()
+/* ---------------- Sprachansagen: Regeln aus dem Stamm (2.2.25, Welle S2, Stamm sprachausgabe.php 1.3.2) ----------------
+ *
+ * Nachtruhe, Sperre und Schalter "Ansagen aus" stehen im Stamm. Ab Werk EIN: ansage_werk_block() in den Vorgaben, also nur fuer einen
+ * nie gespeicherten Block; ein gespeicherter bleibt, auch 'aus'. Ein Minutenlauf und ein Dienst sprechen nie selbst: Sie legen den Anlass
+ * in <Daten>/ansage_warte.json, ein abgekoppelter Sender (php -r, eigene Sperre) spricht und wartet auf die Lautsprecher.
+ */
+
+/** So alt darf ein wartender Anlass werden (nach einem Update oder Hang wird nichts Aufgestautes angesagt). */
+if (!defined('IC_ANSAGE_HOECHSTALTER')) { define('IC_ANSAGE_HOECHSTALTER', 600); }
+
+/** Die Regeln: gespeichert und gueltig, sonst aus einer alten Einstellung dieser Linie, sonst die Vorgabe (mit Nachtruhe). */
+function ic_ansage_regeln($cfg = null)
 {
-    $c = ic_config();
+    if ($cfg === null) { $cfg = ic_config(); }
+    $g = '';
+    if (isset($cfg['ansage_regeln'])) {
+        $r = ansage_regeln_wert($cfg['ansage_regeln'], $g);
+        return $r === null ? ansage_regeln_vorgaben() : $r;
+    }
+    $r = ansage_regeln_vorgaben();
+    $p = ansage_regeln_wert($r, $g);
+    return $p === null ? ansage_regeln_vorgaben() : $p;
+}
+
+/** Die Warteliste unter einer Dateisperre aendern: $fn(Liste) -> array(neue Liste, Ergebnis). */
+function ic_ansage_warte($fn)
+{
+    $d = ic_paths()['datadir'];
+    if (!is_dir($d)) { @mkdir($d, 0775, true); }
+    $f = $d . '/ansage_warte.json';
+    $h = @fopen($f, 'c+');
+    if ($h === false) { return null; }
+    if (!flock($h, LOCK_EX)) { fclose($h); return null; }
+    $alt = json_decode((string) stream_get_contents($h), true);
+    list($neu, $erg) = call_user_func($fn, is_array($alt) ? $alt : array());
+    rewind($h);
+    ftruncate($h, 0);
+    fwrite($h, (string) json_encode($neu));
+    fflush($h);
+    flock($h, LOCK_UN);
+    fclose($h);
+    @chmod($f, 0600);
+    return $erg;
+}
+
+/**
+ * Anlaesse hinlegen und den Sender starten; wartet auf nichts. $l: Eintraege fuer ansage_regel_sprechen() (schluessel, text, dringend,
+ * sperre_min, nur_nach). Die Schale schliesst vor dem exec jede Deskriptor-Nummer ueber 2, sonst erbte der Sender die Sperren des Rufers.
+ */
+function ic_ansage_legen(array $l, $jetzt = null)
+{
+    if (!$l) { return 'nichts'; }
+    $jetzt = $jetzt === null ? time() : (int) $jetzt;
+    ic_ansage_warte(function ($alt) use ($l, $jetzt) {
+        foreach ($l as $e) { $alt[] = $e + array('zeit' => $jetzt); }
+        return array(array_slice($alt, -50), null);
+    });
+    $php = (defined('PHP_BINARY') && PHP_BINARY !== '' && is_executable(PHP_BINARY) && stripos(basename(PHP_BINARY), 'php') === 0 && stripos(basename(PHP_BINARY), 'fpm') === false) ? PHP_BINARY : 'php';
+    $befehl = 'for f in /proc/$$/fd/*; do n=${f##*/}; [ "$n" -gt 2 ] 2>/dev/null && eval "exec $n>&-"; done; '
+            . 'exec ' . escapeshellarg($php) . ' -r ' . escapeshellarg('chdir(dirname($argv[1])); $_SERVER["SCRIPT_FILENAME"] = $_SERVER["PHP_SELF"] = $argv[1]; require $argv[1]; ic_ansage_senden();') . ' -- ' . escapeshellarg(__FILE__);
+    $aus = array();
+    $rc = 1;
+    @exec('bash -c ' . escapeshellarg($befehl) . ' </dev/null >/dev/null 2>&1 &', $aus, $rc);
+    return $rc === 0 ? 'gestartet' : 'kein_start';
+}
+
+/** Das Sprechtoken aus Alexa-NG und Chromecast4lox uebernehmen (Stamm 1.3.1). Schreibt NUR bei einer Aenderung, nennt nie das Token. */
+function ic_ansage_token_pflegen($cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    list($neu, $her2, $g) = ansage_token_abgleich(ic_tts($cfg), isset($cfg['ansage_token_herkunft']) ? $cfg['ansage_token_herkunft'] : array(), ic_ansage_k());
+    if (!$g) { return false; }
+    $cfg = ic_config();
+    $cfg['tts'] = $neu;
+    $cfg['ansage_token_herkunft'] = $her2;
+    if (!ic_config_speichern($cfg)[0]) { return false; }
+    ic_log('Ansage: Sprechtoken uebernommen (' . implode(', ', $g) . ').');
+    return true;
+}
+
+/** Der Block fuer Testansage und Pruefzeile: uebernommene Token aufgeloest. Nur im Speicher. */
+function ic_ansage_vor_ort($cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    return ansage_token_fuer_lauf(ic_tts($cfg), isset($cfg['ansage_token_herkunft']) ? $cfg['ansage_token_herkunft'] : array(), ic_ansage_k());
+}
+
+/** Der Block fuer die Pruefzeile: nur die eingerichteten Ziele; ist keines eingerichtet, sagt die Zeile "aus" statt eines Kreuzes. */
+function ic_ansage_pruefblock($cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    $t = ic_tts($cfg);
+    if ($t['mode'] === 'aus') { return $t; }
+    list($b) = ansage_ziele_bereit(ic_ansage_vor_ort($cfg), ic_ansage_k());
+    if ($b === null) { $t['mode'] = 'aus'; return $t; }
+    return $b;
+}
+
+/** Die Lage im Reiter Test: Ziele, Nachtruhe, Schalter. Nur im geoeffneten Reiter (der Schalter fragt den Broker). */
+function ic_ansage_lage_html($cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    $k = ic_ansage_k();
+    $o = array();
+    foreach (ansage_regel_lage(ic_tts($cfg), ic_ansage_regeln($cfg), $k, true) as $z) {
+        $o[] = '<div class="sm-hilfe">' . htmlspecialchars((string) $z[1], ENT_QUOTES, 'UTF-8') . '</div>';
+    }
+    return implode("\n", $o) . "\n";
+}
+
+/** Die Felder der Regeln fuer die Einmalmeldung (X-2). */
+function ic_ansage_regel_felder(array $anlaesse = array())
+{
+    return ansage_regeln_x2_felder($anlaesse);
+}
+
+/**
+ * Im Vorgang sprechen, wo der Rufer das Ergebnis braucht (Antwort an Loxone, Befehl): Regeln aus dem Stamm mit "dringend, ohne Sperre" - es zaehlt nur der Schalter.
+ * Schalter gesetzt: stand -1, Kennung SCHALTER. Nichts bereit oder Original-Audioserver: wie bisher ansage_sprechen(), damit die Antwort sagt, was fehlt.
+ */
+function ic_ansage_direkt($text, array $e = array(), $tts = null)
+{
+    $conf = ic_config();
+    $k = ic_ansage_k();
+    $t = $tts === null ? ic_tts($conf) : $tts;
+    $a = ansage_regel_sprechen(array($e + array('schluessel' => 'direkt', 'text' => (string) $text, 'dringend' => true, 'sperre_min' => 0)), $t, ic_ansage_regeln($conf), $k);
+    if ($a['r'] !== null) { return $a['r']; }
+    if ($a['regel'] === 'SCHALTER') {
+        return array('stand' => -1, 'kennung' => 'SCHALTER', 'art' => isset($t['mode']) ? (string) $t['mode'] : '-', 'http' => 0, 'zeile' => '', 'zeichen' => 0);
+    }
+    return ansage_sprechen((string) $text, $t, $k);
+}
+
+/**
+ * Der Sender: eigene Sperre, nimmt die Warteliste und spricht nach den Regeln. "aus" und "kein Ziel eingerichtet" hinterlassen keine Zeile;
+ * ein gescheitertes Ziel genau eine je Aenderung (ab Werk EIN darf kein Protokoll vollaufen). Text und Token stehen nie im Protokoll.
+ */
+function ic_ansage_senden($jetzt = null)
+{
+    $d = ic_paths()['datadir'];
+    if (!is_dir($d)) { @mkdir($d, 0775, true); }
+    $fh = @fopen($d . '/ansage_senden.lock', 'c');
+    if ($fh === false || !flock($fh, LOCK_EX | LOCK_NB)) { return 'laeuft'; }
+    $erg = 'nichts';
+    $l = ic_ansage_warte(function ($alt) { return array(array(), $alt); });
+    $jetzt = $jetzt === null ? time() : (int) $jetzt;
+    $frisch = array();
+    foreach (is_array($l) ? $l : array() as $e) {
+        if (is_array($e) && isset($e['zeit']) && $jetzt - (int) $e['zeit'] <= IC_ANSAGE_HOECHSTALTER) { $frisch[] = $e; }
+    }
+    if ($frisch) {
+        $conf = ic_config();
+        ic_ansage_token_pflegen($conf);
+        $conf = ic_config();
+        $a = ansage_regel_sprechen($frisch, ic_tts($conf), ic_ansage_regeln($conf), ic_ansage_k());
+        $erg = $a['regel'] !== '' ? $a['regel'] : 'gesprochen';
+        if ($a['r'] !== null) {
+            $merk = $d . '/ansage_lage.txt';
+            $lage = $a['r']['stand'] === 1 ? 'gesprochen' : ansage_kurz($a['r']);
+            if ($a['r']['stand'] === 1 || (string) @file_get_contents($merk) !== $lage) { ic_log('Ansage: ' . ansage_regel_kurz($a)); }
+            @file_put_contents($merk, $lage);
+        } elseif ($a['regel'] !== 'AUS' && $a['regel'] !== 'KEIN_ZIEL') {
+            ic_log('Ansage entfaellt: ' . ansage_regel_kurz($a));
+        }
+    }
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    return $erg;
+}
+
+/** Der Block tts, vervollstaendigt (ein nie gespeicherter kommt aus den Vorgaben: ab Werk EIN). */
+function ic_tts($c = null)
+{
+    if ($c === null) { $c = ic_config(); }
+    if (!isset($c['tts'])) { $c['tts'] = ansage_werk_block(); }     // 2.2.25: nie gespeichert
     list($t) = ansage_vervollstaendigen(isset($c['tts']) && is_array($c['tts']) ? $c['tts'] : array(), 'aus');
     return $t;
 }
@@ -4985,6 +5165,7 @@ function ic_ansage_k()
     ic_sprache_laden();
     $p = ic_paths();
     return array(
+        'werk' => ansage_werk_modus(),
         'port'   => ansage_webport($p['home'] . '/config/system/general.json'),
         /* S2 (seit 2.2.23, Pruefbericht): https-Port und Wurzel an das Modul - wie ic_paths(). sslport wirkt nur,
          * wenn der LoxBerry auf https umleitet, ohne Port in Location und mit anderem SSL-Port als 443. */
@@ -5036,6 +5217,7 @@ function ic_sicherung_selbstpruefung()
 {
     $c = ic_config();
     if (isset($c['tts']) && is_array($c['tts'])) { $c['tts'] = ansage_sicherung_bereinigen($c['tts']); }
+    unset($c['ansage_token_herkunft']);     // 2.2.25
     $js = json_encode($c, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($js === false) { return array(ic_txt('UI.SICH_KEIN_JSON')); }
     $erg = ic_sicherung_lesen($js);
@@ -6057,6 +6239,40 @@ function ic_bb_tun($art, $nr, $wert = '1')
 }
 
 /**
+ * Auf ein Kind warten, ohne dass proc_close() haengen kann; Rueckgabe sein Rueckgabewert, 124 nach Ablauf der Frist.
+ * Hoechstens $warten Sekunden ungestoert, dann SIGTERM, hoechstens $frist Sekunden, dann SIGKILL, erst dann proc_close(). Bis 2.2.24 stand hier proc_close()
+ * ohne Frist: am Geraet hing mosquitto_sub am 01.11.2026 nach SIGTERM 5 Stunden fest, und der Aufrufer stand mit. proc_get_status() liefert den Rueckgabewert
+ * nur beim ersten Aufruf nach dem Ende, proc_close() danach -1 (PHP unter 8.3), darum kommt er von hier und nicht von proc_close().
+ */
+function ic_proc_abwarten($pr, $warten, $frist = 2.0)
+{
+    $stufe = 0;
+    $bis = microtime(true) + max(0.0, (float) $warten);
+    $schlaf = 2000;
+    while (true) {
+        $s = @proc_get_status($pr);
+        if (!is_array($s) || empty($s['running'])) {
+            $rc = is_array($s) && isset($s['exitcode']) ? (int) $s['exitcode'] : -1;
+            if (is_array($s) && !empty($s['signaled'])) { $rc = 128 + (int) $s['termsig']; }
+            @proc_close($pr);
+            return $stufe > 0 ? 124 : $rc;
+        }
+        if (microtime(true) >= $bis) {
+            if ($stufe === 1) {
+                @proc_terminate($pr, 9);
+                @proc_close($pr);
+                return 124;
+            }
+            @proc_terminate($pr, 15);
+            $stufe = 1;
+            $bis = microtime(true) + (float) $frist;
+        }
+        usleep($schlaf);
+        $schlaf = min(50000, $schlaf * 2);
+    }
+}
+
+/**
  * Den Auftragsprozess starten: /bin/bash bin/ic_auftrag.sh <art> <nr> <wert> mit /dev/null als Ein- und Ausgabe,
  * Fehler an log/plugins/<ordner>/intercom_auftrag.log. ic_auftrag.sh schliesst zuerst alle geerbten Deskriptoren
  * ueber 2 (das Rohr zu mosquitto_sub der Bruecke) und endet nach dem Start - proc_close() kommt in Millisekunden.
@@ -6073,7 +6289,7 @@ function ic_auftrag_starten($art, $nr, $wert)
                     array(0 => array('file', '/dev/null', 'r'), 1 => array('file', '/dev/null', 'w'),
                           2 => array('file', $log . '/intercom_auftrag.log', 'a')), $rohre);
     if (!is_resource($p)) { return array(false, 'AUFTRAG_START'); }
-    $rc = proc_close($p);
+    $rc = ic_proc_abwarten($p, 10.0);
     return $rc === 0 ? array(true, '') : array(false, 'AUFTRAG_START_' . (int) $rc);
 }
 

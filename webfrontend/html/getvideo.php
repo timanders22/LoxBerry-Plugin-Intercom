@@ -28,7 +28,9 @@ ini_set('max_execution_time', 120);
 
 ic_token_pruefen();
 
-if (isset($_GET['selftest'])) {
+/* 2.2.25 (Nachzug 01.11.2026, wie Renault NG 2.1.23): !empty statt isset - bis 2.2.24 galt auch ?selftest=0 und ?selftest= als Selbsttest,
+ * und eine Adresse mit diesem Anhang tat nie etwas anderes. */
+if (!empty($_GET['selftest'])) {
     ic_selftest_antwort('getvideo.php');
 }
 
