@@ -1074,7 +1074,7 @@ function ic_standbild_holen(array $station, $zeitgrenze = 8)
     $aus = array('ok' => false, 'bild' => '', 'weg' => 'standbild ' . $pfad,
                  'fehler' => '', 'fehler_ui' => '', 'code' => $code, 'dauer' => 0.0);
     if ($inhalt === false || $inhalt === '') {
-        $aus['fehler'] = $fehler !== '' ? $fehler : 'keine Antwort';
+        $aus['fehler'] = $fehler !== '' ? $fehler : ic_uebersetzt('TEST.E_KEINE_ANTWORT', array(), 'keine Antwort');
         $aus['fehler_ui'] = $fehler === 'Abruf gescheitert'
             ? ic_uebersetzt('TEST.E_ABRUF', array(), $fehler)
             : ($fehler !== '' ? $fehler : ic_uebersetzt('TEST.E_KEINE_ANTWORT', array(), 'keine Antwort'));
@@ -3537,7 +3537,7 @@ function ic_ki_erkennen($bilddatei, $frist = IC_KI_FRIST)
     if (PHP_VERSION_ID < 80000) { curl_close($ch); }
     if ($antwort === false || $antwort === '') {
         ic_log_gebremst('ki', 'Die Objekterkennung war nicht erreichbar: '
-            . ($fehler !== '' ? $fehler : 'keine Antwort'));
+            . ($fehler !== '' ? $fehler : ic_uebersetzt('TEST.E_KEINE_ANTWORT', array(), 'keine Antwort')));
         return array();
     }
     $daten = @json_decode((string) $antwort, true);
@@ -4312,11 +4312,11 @@ function ic_webhook_pruefen($name, $angekommen, $code, $fehler)
     }
     $f = preg_replace('#[a-z][a-z0-9+.\-]*://\S+#i', '<Adresse>', (string) $fehler);
     $f = preg_replace('#[^\s/@]+:[^\s/@]*@#', '', $f);
-    $ic_grund = ($code > 0 ? 'HTTP ' . $code : 'keine Antwort')
+    $ic_grund = ($code > 0 ? 'HTTP ' . $code : ic_uebersetzt('TEST.E_KEINE_ANTWORT', array(), 'keine Antwort'))
               . ($f !== '' ? ' (' . substr(str_replace("\t", ' ', $f), 0, 120) . ')' : '');
     ic_merker_setzen('webhookfehler', $name . "\t" . $ic_grund);
     ic_log_gebremst('webhook_' . preg_replace('/[^a-z0-9]/i', '', $name), $name . ' kam nicht an: '
-        . ($code > 0 ? 'HTTP ' . $code : 'keine Antwort') . ($f !== '' ? ' (' . $f . ')' : '')
+        . ($code > 0 ? 'HTTP ' . $code : ic_uebersetzt('TEST.E_KEINE_ANTWORT', array(), 'keine Antwort')) . ($f !== '' ? ' (' . $f . ')' : '')
         . '. Es wird nicht wiederholt.');
     return false;
 }
@@ -4689,7 +4689,7 @@ function ic_nachbar_rufen($ordner, array $parameter, $zeitgrenze = 5)
 function ic_klingel_grund($code, $rumpf, $fehler)
 {
     if ((int) $code === 0) {
-        return 'keine Antwort' . ($fehler !== '' ? ' (' . substr($fehler, 0, 120) . ')' : '');
+        return ic_uebersetzt('TEST.E_KEINE_ANTWORT', array(), 'keine Antwort') . ($fehler !== '' ? ' (' . substr($fehler, 0, 120) . ')' : '');
     }
     $g = preg_match('/(?:GRUND|ERR)=([A-Z_]{1,40})/', (string) $rumpf, $m) ? $m[1] : '';
     return 'HTTP ' . (int) $code . ($g !== '' ? ' ' . $g : '')
@@ -5057,7 +5057,7 @@ function ic_ansage_token_pflegen($cfg = null)
 function ic_ansage_vor_ort($cfg = null)
 {
     if ($cfg === null) { $cfg = ic_config(); }
-    return ansage_token_fuer_lauf(ic_tts($cfg), isset($cfg['ansage_token_herkunft']) ? $cfg['ansage_token_herkunft'] : array(), ic_ansage_k());
+    return ansage_tafel_einreihen(ansage_token_fuer_lauf(ic_tts($cfg), isset($cfg['ansage_token_herkunft']) ? $cfg['ansage_token_herkunft'] : array(), ic_ansage_k()), ic_ansage_regeln($cfg), ic_ansage_k(), true);     // Stamm 1.4.0: die Tafel, wenn sie bereitsteht
 }
 
 /** Der Block fuer die Pruefzeile: nur die eingerichteten Ziele; ist keines eingerichtet, sagt die Zeile "aus" statt eines Kreuzes. */
