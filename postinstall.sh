@@ -203,6 +203,7 @@ elif verloren; then
         echo "<WARNING> Neuinstallation: diese Zweitschriften einer frueheren Installation werden NICHT eingespielt:$REST"
     fi
     echo "<INFO> Neuinstallation - die Einstellungen entstehen beim ersten Oeffnen der Plugin-Seite."
+    echo "<INFO> Das letzte Bild und das Archiv verlangen ab Werk Token bzw. Anmeldung; in Loxone die Adresse aus dem Reiter Einbindung nehmen."
 elif mit_inhalt "$CF"; then
     echo "<OK> Die Einstellungen sind vorhanden."
 else

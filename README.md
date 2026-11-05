@@ -2,9 +2,16 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.27 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.28 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.28
+
+- **Türbild und Archiv bei Neuinstallation geschützt.** Auf einer neuen Anlage liefert nur noch `bild.php` mit Token das letzte Bild, und das Archiv verlangt die LoxBerry-Anmeldung. **Eine bestehende Anlage behält nach dem Update, was sie hat**, auch wenn sie die Haken nie gespeichert hat: `lastpicture.jpg` bleibt offen, das Bild in Loxone bleibt stehen. Umstellen: in Loxone die Adresse aus dem Reiter *Einbindung in Loxone* eintragen, dann im Reiter *Einstellungen* die beiden Haken setzen. Nicht gemessen: ob der Browser die Anmeldung der Plugin-Seite zu den Bildern der Galerie mitnimmt; im Zweifel fragt er einmal nach dem LoxBerry-Kennwort.
+- **Update:** Scheitert die Sicherung oder die Marke, bricht das Update ab und die bisherige Fassung bleibt.
+- **Sprechtoken:** Ein von Hand eingetragenes Alexa- oder Google-Token wird nicht mehr vom Token des Nachbar-Plugins überschrieben.
+- **Formular:** Tafel- und HomePod-Felder gehören jetzt zu den Feldern, die eine Beanstandung im Formular mitführt und markiert. Ein beanstandeter Tafel- oder HomePod-Name bleibt zur Korrektur im Feld stehen.
 
 ## Neu in 2.2.27
 
@@ -605,8 +612,9 @@ Bibliothek, und Cron wie Knopf rufen dieselbe Funktion auf.
   Adresse, eigene Zugangsdaten und der Miniserver, von dem die Zugangsdaten
   kommen. Am Endpunkt wählt `&station=2` oder `&station=Haustuer` aus.
 - **`bild.php`** liefert das letzte Bild aus und verlangt dafür das Token. Das
-  offene `lastpicture.jpg` bleibt vorerst bestehen, damit bestehende Anlagen
-  nicht stehenbleiben — im Reiter *Einstellungen* lässt es sich abschalten.
+  offene `lastpicture.jpg` bleibt bei bestehenden Anlagen bestehen, damit sie
+  nicht stehenbleiben — im Reiter *Einstellungen* lässt es sich abschalten; seit
+  2.2.28 ist es bei einer Neuinstallation ab Werk abgeschaltet.
 - **Befristete Bildlinks** für Mails und Meldungen: gültig für eine bestimmte
   Zeit und für wenige Abrufe, ohne Zugriffstoken und ohne Auslösewirkung.
 - **Standbild statt Videostrom.** Viele Türstationen liefern unter
@@ -634,13 +642,14 @@ Bibliothek, und Cron wie Knopf rufen dieselbe Funktion auf.
 
 ### Was bei der Deinstallation liegen bleibt
 
-> **Das Archiv liegt ohne Anmeldung im Netz.** Der Webserver des LoxBerry
+> **Ohne den Haken liegt das Archiv ohne Anmeldung im Netz.** Der Webserver des LoxBerry
 > liefert `/legacy/` ohne Anmeldung und mit Verzeichnisauflistung aus —
 > am ausgelieferten LoxBerry gemessen (Vhost `000-default.conf`, keine
 > `.htaccess` unter `webfrontend/legacy/`). Der Haken *Das letzte Bild nur
 > mit Token* schützt nur das letzte Bild. Seit 2.2.6 gibt es daneben den
-> Haken *Das Archiv nur mit Anmeldung herausgeben*; er ist **ab Werk aus**,
-> weil sich ohne Gerät nicht messen lässt, ob die Galerien danach noch
+> Haken *Das Archiv nur mit Anmeldung herausgeben*. Seit 2.2.28 ist er bei
+> einer Neuinstallation **ab Werk an**; eine bestehende Anlage bleibt, wie sie
+> ist, weil sich ohne Gerät nicht messen lässt, ob die Galerien danach noch
 > Bilder zeigen. Der Reiter *Test* nennt den Zustand in einer Zeile.
 
 Das Bild- und Videoarchiv unter `webfrontend/legacy/<ordner>_data` (und, falls

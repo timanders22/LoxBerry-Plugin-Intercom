@@ -169,8 +169,8 @@ function ic_eingaben_sammeln($form, array $falsch)
         $e['haken'][$k] = isset($_POST[$k]);
     }
     /* Nr. 36 b: die Felder der Sprachausgabe - nie die Sprechtoken (ansage_x2_felder()). */
-        foreach (ansage_regeln_x2_felder() as $s2_k) {     // S2: Wann gesprochen wird
-            if ($s2_k === 'ansage_ruhe_ein') { $e['haken'][$s2_k] = isset($_POST[$s2_k]); }
+        foreach (array_merge(ansage_regeln_x2_felder(), array('ansage_tafel_ein', 'ansage_tafel_namen', 'ansage_homepod_ein', 'ansage_homepod_geraet')) as $s2_k) {     // S2: Wann gesprochen wird; 2.2.28: Tafel und HomePod dazu
+            if (in_array($s2_k, array('ansage_ruhe_ein', 'ansage_tafel_ein', 'ansage_homepod_ein'), true)) { $e['haken'][$s2_k] = isset($_POST[$s2_k]); }
             elseif (isset($_POST[$s2_k])) { $e['werte'][$s2_k] = $str($_POST[$s2_k]); }
         }
     foreach (ansage_x2_felder(ic_ansage_opt()) as $k) {
@@ -493,8 +493,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
                 $ic_meldungen[] = ic_txt('UI.M_SPEICHER_UMGEZOGEN');
             }
             // O5: der Rueckgabewert wird gelesen, nicht verworfen.
-            $ic_schutz_soll2 = isset($ic_neu_s['archiv_schutz'])
-                && in_array((string) $ic_neu_s['archiv_schutz'], array('1', 'on', 'true'), true);
+            $ic_schutz_soll2 = ic_archivschutz_soll($ic_neu_s); // 2.2.28 (IC-1)
             if (!ic_archiv_schutz_anwenden() && $ic_schutz_soll2) {
                 $ic_fehler[] = ic_txtf('UI.M_SCHUTZ_NICHT', ic_e(ic_archiv_schutzdatei()));
             }
@@ -727,6 +726,8 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     $ic_neu['tts'] = ansage_formular_lesen($_POST, ic_tts(), $ic_tmangel, $ic_tbean,
                                            ic_ansage_opt() + array('ziele' => ic_mit_zielen(), 'token_vor_ort' => true, 'aus_gewinnt' => true), ic_ansage_k(), $ic_thinw);
     list($ic_neu['ansage_regeln']) = ansage_regeln_formular($_POST, ic_ansage_regeln(ic_config()), array(), $ic_tmangel, $ic_tbean, ic_ansage_k());     // S2: Wann gesprochen wird (Stamm)
+    // 2.2.28: ein eingetipptes oder geloeschtes Sprechtoken ist nicht mehr vom Nachbarn; bis 2.2.27 ueberschrieb es der naechste Abgleich.
+    $ic_neu['ansage_token_herkunft'] = ansage_token_herkunft_formular($_POST, isset($ic_neu['ansage_token_herkunft']) ? $ic_neu['ansage_token_herkunft'] : array());
     foreach ($ic_tmangel as $ic_tm) { $ic_abweisung[] = ic_e($ic_tm['text']); }
     foreach ($ic_tbean as $ic_tb) { $ic_falsch[] = ic_ziele_x2_name($ic_tb); }     // 2.2.24: name[N] -> name.N
 
@@ -735,18 +736,17 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
                    'timelapse_video', 'tv_enable', 'ai_enable') as $ic_k) {
         $ic_neu[$ic_k] = isset($_POST[$ic_k]) ? 'on' : '';
     }
-    // Der Haken ist umgekehrt beschriftet ("nicht oeffentlich"), damit der
-    // Vorgabewert das bisherige Verhalten bleibt: eine fehlende Angabe in
-    // einer bestehenden data.json bedeutet dann "wie bisher".
+    // Der Haken ist umgekehrt beschriftet ("nicht oeffentlich"). Eine fehlende Angabe in einer bestehenden
+    // data.json bedeutet "wie bisher", bei einer neuen Anlage gilt seit 2.2.28 der Schutz (ic_schutz_wert(), IC-1).
     $ic_neu['bild_oeffentlich'] = isset($_POST['bild_schuetzen']) ? '0' : '1';
-    /* NEU 2.2.6, ab Werk AUS: Schutz vor das Bild- und Videoarchiv.
+    /* NEU 2.2.6: Schutz vor das Bild- und Videoarchiv; seit 2.2.28 (IC-1) nur noch fuer bestehende Anlagen aus.
      * Gemessen am LoxBerry-Quelltext: /legacy/ wird ohne Anmeldung und mit
      * Verzeichnisauflistung ausgeliefert. Der Haken legt neben dem Archiv
      * eine .htaccess an, wortgleich mit der des angemeldeten Bereichs.
-     * Warum nicht ab Werk an: ob der Browser die Anmeldung der Plugin-Seite
-     * zu den Bildern der Galerie mitnimmt, ist an einem Geraet zu messen
-     * und hier nicht messbar - eine Aenderung, die eine bestehende Anlage
-     * still zerbrechen koennte, wird nicht ungefragt eingeschaltet. */
+     * Warum bestehende Anlagen nicht umgestellt werden: ob der Browser die
+     * Anmeldung der Plugin-Seite zu den Bildern der Galerie mitnimmt, ist an
+     * einem Geraet zu messen und hier nicht messbar - eine Aenderung, die eine
+     * laufende Anlage still zerbrechen koennte, wird nicht ungefragt eingeschaltet. */
     $ic_neu['archiv_schutz'] = isset($_POST['archiv_schutz']) ? '1' : '0';
 
     /* Bildweg */
@@ -1019,10 +1019,15 @@ if ($ic_wollte && $ic_darf && isset($_POST['loeschen'])) {
  * melden ist richtig, stillschweigend ersetzen nicht. */
 if ($ic_heilung[0] !== 'fehler' && !array_key_exists('aktionstoken', $ic_cfg)) {
     try {
+        /* 2.2.28 (IC-1): eine neue Anlage bekommt die Werkswerte der Schutzschalter VOR dem ersten Token ausdruecklich,
+         * denn mit dem Token gilt sie als Anlage mit Inhalt, und dort heisst ein fehlender Schluessel "wie bisher". */
+        $ic_cfg = ic_schutz_erstanlage($ic_cfg);
         $ic_cfg['aktionstoken'] = ic_token_neu();
         list($ic_ok, $ic_was) = ic_config_speichern($ic_cfg);
         if (!$ic_ok) {
             $ic_fehler[] = ic_txtf('UI.M_TOKEN_NICHT', ic_e($ic_was));
+        } else {
+            ic_archiv_schutz_anwenden();
         }
     } catch (RuntimeException $ic_e) {
         $ic_fehler[] = ic_txt('UI.M_ZUFALL');
@@ -1091,6 +1096,10 @@ if ($ic_wollte) {
  * seit 2.2.6 steht diese Stelle in der Bibliothek, damit auch
  * ic_aufbewahrung() daraus schoepft. Bis 2.2.5 zeigte das Formular hier
  * 90 Tage, waehrend ic_aufbewahrung() mit 0 rechnete. */
+/* 2.2.28 (IC-1): die beiden Schutzschalter nicht aus der Vorgabe, sonst zeigt das Formular einer bestehenden
+ * Anlage einen Schutz, den sie nicht hat, und das naechste Speichern nimmt Loxone das offene Bild. */
+$ic_cfg['bild_oeffentlich'] = ic_schutz_wert($ic_cfg, 'bild_oeffentlich');
+$ic_cfg['archiv_schutz'] = ic_schutz_wert($ic_cfg, 'archiv_schutz');
 $ic_cfg += ic_vorgaben();
 
 $ic_token   = (string) $ic_cfg['aktionstoken'];
@@ -1784,9 +1793,11 @@ foreach ($ic_ln as $ic_nz) {
 <div class="sm-step"><b><?= ic_txt('LOX.S5') ?></b><br>
 <?= ic_txt('LOX.S5_TEXT') ?><br>
 <span class="sm-mono"><?= ic_e($ic_adr['letztes']) ?></span><br>
-<?php if ($ic_cfg['bild_oeffentlich'] === '1') { ?>
+<?php if (ic_bild_offen($ic_cfg)) { ?>
 <span class="sm-mono">http://<?= ic_e($ic_host) ?>/plugins/<?= ic_e($ic_plugin) ?>/lastpicture.jpg</span>
 <p class="sm-klein"><?= ic_txt('LOX.S5_OFFEN') ?></p>
+<?php } else { ?>
+<p class="sm-klein"><?= ic_txt('LOX.S5_GESCHUETZT') ?></p>
 <?php } ?>
 </div>
 

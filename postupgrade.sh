@@ -89,6 +89,35 @@ else
     echo "<WARNING>   $BASE/config/plugins/$PDIR.backup.json"
 fi
 
+# ---------- 2.2.28 (IC-1): Bild und Archiv bleiben bei bestehenden Anlagen, wie sie waren ----------
+# Neuinstallation: beide ab Werk geschuetzt. Traegt data.json Inhalt (Token oder Station) und fehlt der Schluessel, wird der
+# bisherige Wert ausdruecklich eingetragen; die Bibliothek rechnet ohnehin so (ic_schutz_wert), falls dieser Schritt scheitert.
+if mit_inhalt "$CF" && command -v php >/dev/null 2>&1; then
+    UEB2=$(php -r '
+        $f = $argv[1];
+        $d = json_decode((string) @file_get_contents($f), true);
+        if (!is_array($d)) { echo "unlesbar"; exit(0); }
+        $neu = array();
+        foreach (array("bild_oeffentlich" => "1", "archiv_schutz" => "0") as $k => $w) {
+            if (!array_key_exists($k, $d)) { $d[$k] = $w; $neu[] = $k; }
+        }
+        if (!$neu) { echo "nichts"; exit(0); }
+        $js = json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($js === false) { echo "json"; exit(0); }
+        $tmp = $f . ".neu." . getmypid();
+        $alt = umask(077);
+        $n = @file_put_contents($tmp, $js);
+        umask($alt);
+        @chmod($tmp, 0600);
+        if ($n !== strlen($js) || !@rename($tmp, $f)) { @unlink($tmp); echo "schreiben"; exit(0); }
+        echo "ok " . implode(",", $neu);' "$CF" 2>/dev/null)
+    case "$UEB2" in
+        "ok "*) echo "<INFO> Bild und Archiv bleiben wie bisher (${UEB2#ok }): die Schutz-Haken ab Werk gelten nur fuer Neuinstallationen; einschalten im Reiter Einstellungen." ;;
+        nichts|unlesbar) ;;
+        *) echo "<WARNING> Bildschutz und Archivschutz liessen sich nicht eintragen ($UEB2) - das Plugin rechnet trotzdem wie bisher; im Reiter Einstellungen pruefen und speichern." ;;
+    esac
+fi
+
 # ---------- E6: MQTT bleibt bei bestehenden Anlagen, wie es war ----------
 if [ -f "$CF" ] && command -v php >/dev/null 2>&1; then
     UEB=$(php -r '

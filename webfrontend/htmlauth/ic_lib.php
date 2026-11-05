@@ -315,6 +315,51 @@ function ic_config_hat_inhalt(array $c)
 }
 
 /* ------------------------------------------------------------------
+ * 2.2.28 (IC-1, Entscheidung Hausherr 05.11.2026): Bildschutz und Archivschutz
+ * ------------------------------------------------------------------
+ *
+ * Neuinstallation: beide Schutzschalter ab Werk an (Regeln/03: eine Ablage im html-Baum ist veroeffentlicht).
+ * Ein gespeicherter Wert bleibt, auch nach einem Update. Fehlt der Schluessel bei einer Konfiguration MIT Inhalt
+ * (Token oder Station), ist das eine bestehende Anlage, die den Schalter nie gespeichert hat: sie behaelt das
+ * bisherige Verhalten (Bild offen, Archiv offen), sonst verloere Loxone still sein Bild unter lastpicture.jpg.
+ * Das erste Oeffnen einer neuen Anlage traegt die Werkswerte deshalb ausdruecklich ein (ic_schutz_erstanlage()),
+ * bevor das neue Token den Inhalt herstellt.
+ */
+function ic_schutz_bisher()
+{
+    return array('bild_oeffentlich' => '1', 'archiv_schutz' => '0');
+}
+
+function ic_schutz_wert(array $c, $schluessel)
+{
+    if (array_key_exists($schluessel, $c)) { return (string) $c[$schluessel]; }
+    $bisher = ic_schutz_bisher();
+    return ic_config_hat_inhalt($c) ? $bisher[$schluessel] : (string) ic_vorgabe($schluessel, $bisher[$schluessel]);
+}
+
+/** Liegt das letzte Bild offen im html-Baum? Nur "0" schuetzt (so schreibt es das Formular seit jeher). */
+function ic_bild_offen(array $c)
+{
+    return ic_schutz_wert($c, 'bild_oeffentlich') !== '0';
+}
+
+/** Soll das Archiv hinter die Anmeldung? */
+function ic_archivschutz_soll(array $c)
+{
+    return in_array(ic_schutz_wert($c, 'archiv_schutz'), array('1', 'on', 'true'), true);
+}
+
+/** Beide Schalter fuer eine Anlage ohne Inhalt eintragen, solange sie fehlen. Nur vor dem ersten Token aufrufen. */
+function ic_schutz_erstanlage(array $c)
+{
+    if (ic_config_hat_inhalt($c)) { return $c; }
+    foreach (array_keys(ic_schutz_bisher()) as $k) {
+        if (!array_key_exists($k, $c)) { $c[$k] = (string) ic_vorgabe($k, ''); }
+    }
+    return $c;
+}
+
+/* ------------------------------------------------------------------
  * Die Marke "Aktualisierung laeuft"
  * ------------------------------------------------------------------
  *
@@ -2674,8 +2719,7 @@ function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
     /* BERICHTIGT 2.2.13 (O5): ist der Schutz eingeschaltet und fehlt die
      * Schutzdatei, ist das ein Kreuz. Bis 2.2.12 stand dann nur der graue
      * Hinweis "nein", und die Oberflaeche zeigte den Haken als gesetzt. */
-    $ic_schutz_soll = isset($cfg['archiv_schutz'])
-        && in_array((string) $cfg['archiv_schutz'], array('1', 'on', 'true'), true);
+    $ic_schutz_soll = ic_archivschutz_soll($cfg); // 2.2.28 (IC-1): eine Quelle
     if (ic_archiv_geschuetzt()) {
         $z[] = ic_pz('ok', 'TEST.F_ARCHIVSCHUTZ', 'TEST.A_ARCHIVSCHUTZ_AN');
     } elseif ($ic_schutz_soll) {
@@ -3044,19 +3088,15 @@ function ic_archiv_geschuetzt()
 /**
  * Den Archivschutz herstellen oder wegnehmen - nach der Einstellung.
  *
- * AB WERK AUS. Eine Anmeldung vor dem Archiv aendert das Verhalten jeder
- * bestehenden Anlage: die Galerien holen ihre Bilder ueber /legacy/, und
- * ob der Browser die Anmeldung der Plugin-Seite dorthin mitnimmt, ist an
- * einem Geraet zu messen und hier nicht messbar. Deshalb ein Schalter,
- * ab Werk aus, mit einer Zeile im Reiter Test, die den Zustand nennt -
- * melden ist richtig, blockieren nicht.
+ * SEIT 2.2.28 (IC-1) bei einer Neuinstallation ab Werk AN, bei einer bestehenden Anlage wie bisher (ic_schutz_wert()):
+ * eine Anmeldung vor dem Archiv aendert das Verhalten einer laufenden Anlage: die Galerien holen ihre Bilder ueber
+ * /legacy/, und ob der Browser die Anmeldung der Plugin-Seite dorthin mitnimmt, ist an einem Geraet zu messen und
+ * hier nicht messbar. Eine Zeile im Reiter Test nennt den Zustand - melden ist richtig, blockieren nicht.
  */
 function ic_archiv_schutz_anwenden()
 {
     $cfg = ic_config();
-    $an = isset($cfg['archiv_schutz'])
-        ? in_array((string) $cfg['archiv_schutz'], array('1', 'on', 'true'), true)
-        : false;
+    $an = ic_archivschutz_soll($cfg); // 2.2.28 (IC-1)
     $datei = ic_archiv_schutzdatei();
     if (!$an) {
         if (@is_file($datei)) { @unlink($datei); }
@@ -3778,7 +3818,8 @@ function ic_vorgaben()
         'tv_ip' => '', 'tv_port' => '7676', 'ai_url' => '', 'ai_minconf' => '50',
         'cleanup_days' => '90', 'cleanup_count' => '', 'cleanup_mb' => '',
         'intervall_min' => '', 'standbild_pfad' => '/jpg/image.jpg',
-        'bildweg' => 'strom', 'bild_oeffentlich' => '1',
+        // 2.2.28 (IC-1): Neuinstallation ab Werk mit Token; was fuer eine bestehende Anlage gilt, sagt ic_schutz_wert().
+        'bildweg' => 'strom', 'bild_oeffentlich' => '0',
         // 2.2.23 (E6): MQTT ab Werk AN - nur fuer Neuinstallationen; ein Update traegt "0" ein, wo der Schluessel fehlt.
         'mqtt_enable' => '1', 'mqtt_praefix' => '',
         // 2.2.23 (E2, Entscheidung 1): Befehle ueber MQTT und der zweite Haken (Foto MIT Meldung), ab Werk AUS.
@@ -3787,7 +3828,7 @@ function ic_vorgaben()
         'videowebhook1' => '', 'videowebhook2' => '',
         'timestamp_image' => '', 'timestamp_video' => '', 'timelapse_enable' => '',
         'timelapse_video' => '', 'tv_enable' => '', 'ai_enable' => '',
-        'archiv_schutz' => '0',
+        'archiv_schutz' => '1',
         'aktionstoken' => '',
         // Klingel-1 (seit 2.2.15, D): ab Werk AUS - eine eingerichtete
         // Anlage verhaelt sich nach dem Update wie vorher.
@@ -5710,7 +5751,7 @@ function ic_foto_ausloesen(array $station, $trigger, $nur_vorschau = false, $ant
     $mit_stempel = isset($arr['timestamp_image']) && $arr['timestamp_image'] === 'on';
     $bild = $mit_stempel ? ic_zeitstempel_daten($frame) : $frame;
     $ic_intern = ic_paths()['datadir'] . '/lastpicture.jpg';
-    $ic_offen = !isset($arr['bild_oeffentlich']) || $arr['bild_oeffentlich'] !== '0';
+    $ic_offen = ic_bild_offen($arr); // 2.2.28 (IC-1)
     $lastpicture = ic_paths()['html'] . '/lastpicture.jpg';
     $ziele = array($ic_intern => 0640);
     if ($ic_offen) { $ziele[$lastpicture] = 0644; }
