@@ -2,9 +2,13 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.26 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.27 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.27
+
+- Vor einem Download wird jeder offene Ausgabepuffer geleert: PHP-Warnungen oder Reste landen nicht mehr in der heruntergeladenen Datei.
 
 ## Neu in 2.2.26
 

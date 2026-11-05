@@ -423,6 +423,7 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
     $ic_js = json_encode($ic_kopf + $ic_sich,
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($ic_js !== false) {
+        while (ob_get_level() > 0) { @ob_end_clean(); }
         header('Content-Type: application/json; charset=utf-8');
         header('Content-Disposition: attachment; filename="intercom_einstellungen_'
                . date('Ymd_His') . '.json"');

@@ -2262,6 +2262,7 @@ function ic_xml_virtual_out(array $kopf, array $cmds)
  */
 function ic_vorlage_ausliefern($name, $inhalt)
 {
+    while (ob_get_level() > 0) { @ob_end_clean(); }
     header('Content-Type: application/x-download');
     header('Content-Disposition: attachment; filename="' . $name . '"');
     header('Content-Length: ' . strlen($inhalt));
