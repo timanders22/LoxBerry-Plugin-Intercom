@@ -414,6 +414,9 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
     );
     /* Nr. 36 b: die Sprechtoken der Sprachausgabe gehen nie in eine Sicherung. */
     $ic_sich = ic_config();
+    /* 2.2.30: der Vermerk, welches Sprechtoken vom Nachbarn uebernommen ist, geht nie in eine Sicherung (Stamm;
+     * ic_sicherung_lesen() uebergeht ihn ohnehin). Bis 2.2.29 stand er darin (gemessen 07.11.2026). */
+    unset($ic_sich['ansage_token_herkunft']);
     /* 2.2.23 (E6): MQTT ist ab Werk an - die Sicherung traegt den geltenden Wert ausdruecklich, damit das
      * Zurueckspielen ihn nicht fuer eine alte Sicherung (ohne Schluessel = aus) haelt. */
     if (!array_key_exists('mqtt_enable', $ic_sich)) { $ic_sich['mqtt_enable'] = ic_mqtt_an() ? '1' : '0'; }
