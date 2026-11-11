@@ -568,6 +568,106 @@ function ic_config_speichern(array $neu)
     return array(true, '');
 }
 
+/** Leere Objekte des Rohtextes ($o, json_decode ohne true) im Feld $a wieder als Objekt fuehren (11.11.2026, Muster
+ *  bw_json_leere_objekte() aus Bewaesserung 0.9.56), damit json_encode() sie als {} und nicht als [] schreibt - oben,
+ *  verschachtelt und unter fremden Schluesseln. Nur fuer ic_config_vervollstaendigen(); das Speichern im Formular
+ *  bleibt, wie es ist. */
+function ic_json_leere_objekte($a, $o)
+{
+    if (!is_array($a)) { return $a; }
+    if (is_object($o)) {
+        if (!get_object_vars($o) && $a === array()) { return new stdClass(); }
+        foreach ($a as $k => $v) {
+            $ks = (string) $k;
+            if (is_array($v) && property_exists($o, $ks)) { $a[$k] = ic_json_leere_objekte($v, $o->$ks); }
+        }
+    } elseif (is_array($o)) {
+        foreach ($a as $k => $v) {
+            if (is_array($v) && array_key_exists($k, $o)) { $a[$k] = ic_json_leere_objekte($v, $o[$k]); }
+        }
+    }
+    return $a;
+}
+
+/**
+ * Konfiguration vervollstaendigen (seit 2.2.32, Regeln/05 "Die Konfiguration
+ * wird vervollstaendigt, nicht nur ergaenzt"; Bauform Docker NG 1.3.7).
+ *
+ * Bis 2.2.31 standen neue Schluessel erst nach dem naechsten Speichern im
+ * Formular in data.json; gelesen wurden sie an jeder Stelle mit eigenem
+ * Ersatzwert. Am Geraet gemessen (Rundgang 11.11.2026): neun Schluessel
+ * klingel_* fehlten. Aufgerufen vom Minutentakt (webfrontend/html/
+ * timelapse.php) nach der Marke und der Sperre, vor dem ersten Lesen der
+ * Konfiguration; weil nur bei FEHLENDEN Schluesseln geschrieben wird, bleibt
+ * es bei einem Schreibvorgang.
+ *
+ * - Nur mit LoxBerry-Wurzel und nicht, solange die Marke der Aktualisierung
+ *   liegt (ic_upgrade_marke_liegt(), ohne Altersgrenze wie Zeitraffer und
+ *   Bereinigung).
+ * - Nur, wenn data.json lesbar ist, ein Objekt ist und ein nicht leeres
+ *   Zugriffstoken traegt (ic_hat_token()). Eine Datei nur mit Station ist
+ *   Sache des Speicherns, eine ohne Inhalt Sache der Heilung.
+ * - Geschrieben werden die WERTE AUS DER DATEI plus die fehlenden; fremde
+ *   Schluessel bleiben. Fehlende bekommen den Wert, mit dem das Plugin sie
+ *   heute liest: bild_oeffentlich und archiv_schutz die Lese-Regel fuer eine
+ *   Anlage mit Inhalt (ic_schutz_wert(): "1" und "0", wie postupgrade.sh),
+ *   alle uebrigen die Vorgabe.
+ * - NICHT nachgetragen werden zwei Schluessel, deren Fehlen heute etwas
+ *   anderes heisst als ihre Vorgabe: mqtt_enable (Vorgabe "1", beim Update
+ *   traegt postupgrade.sh fuer den Bestand "0" ein - E6; ein Nachtrag in der
+ *   Luecke zwischen postinstall.sh und postupgrade.sh schaltete MQTT ein) und
+ *   timelapse_time (Vorgabe "12:00", der Zeitraffer liest ein Fehlen als
+ *   keine Uhrzeit und nimmt nichts auf). Sie bleiben, wie sie sind.
+ * - Geschrieben ueber ic_config_speichern() (0600, Zweitschrift wie beim
+ *   Speichern). Genau eine Protokollzeile mit den Namen, nie Werte.
+ *
+ * Rueckgabe: array('stand' => ohne_wurzel|ruht|ohne_datei|ohne_merkwort
+ *                  |vollstaendig|ergaenzt|fehler, 'schluessel' => array(...))
+ */
+function ic_config_vervollstaendigen()
+{
+    $p = ic_paths();
+    if ((string) $p['home'] === '' || !@is_dir($p['home'] . '/config/plugins') || !@is_dir(dirname($p['datadir']))) {
+        return array('stand' => 'ohne_wurzel', 'schluessel' => array());
+    }
+    if (ic_upgrade_marke_liegt()) {
+        return array('stand' => 'ruht', 'schluessel' => array());
+    }
+    $datei = $p['config'] . '/data.json';
+    clearstatcache(true, $datei);
+    if (!@is_file($datei)) {
+        return array('stand' => 'ohne_datei', 'schluessel' => array());
+    }
+    $roh = @file_get_contents($datei);
+    $cfg = is_string($roh) ? json_decode($roh, true) : null;
+    if (!is_array($cfg) || !ic_hat_token($cfg)) {
+        return array('stand' => 'ohne_merkwort', 'schluessel' => array());
+    }
+    // Ein leeres Objekt der Datei ({}) bliebe nach json_decode(..., true) ein leeres Feld und kaeme beim Schreiben
+    // als [] zurueck - die leeren Objekte des Rohtextes bleiben Objekte (11.11.2026).
+    $cfg = ic_json_leere_objekte($cfg, json_decode($roh));
+    $fehlend = array();
+    foreach (ic_vorgaben() as $k => $w) {
+        if (array_key_exists($k, $cfg) || $k === 'mqtt_enable' || $k === 'timelapse_time') {
+            continue;
+        }
+        $cfg[$k] = ($k === 'bild_oeffentlich' || $k === 'archiv_schutz') ? ic_schutz_wert($cfg, $k) : $w;
+        $fehlend[] = $k;
+    }
+    if (!$fehlend) {
+        return array('stand' => 'vollstaendig', 'schluessel' => array());
+    }
+    list($ok) = ic_config_speichern($cfg);
+    if (!$ok) {
+        ic_log('Konfiguration NICHT vervollstaendigt: data.json liess sich nicht schreiben ('
+            . count($fehlend) . ' fehlende Schluessel).');
+        return array('stand' => 'fehler', 'schluessel' => $fehlend);
+    }
+    ic_log('Konfiguration vervollstaendigt - ' . count($fehlend)
+        . ' fehlende Vorgaben in data.json geschrieben: ' . implode(', ', $fehlend));
+    return array('stand' => 'ergaenzt', 'schluessel' => $fehlend);
+}
+
 /* ==================================================================
  * Ausgabe maskieren
  * ================================================================== */

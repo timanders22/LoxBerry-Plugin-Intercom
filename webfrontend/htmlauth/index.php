@@ -1025,6 +1025,11 @@ if ($ic_heilung[0] !== 'fehler' && !array_key_exists('aktionstoken', $ic_cfg)) {
         /* 2.2.28 (IC-1): eine neue Anlage bekommt die Werkswerte der Schutzschalter VOR dem ersten Token ausdruecklich,
          * denn mit dem Token gilt sie als Anlage mit Inhalt, und dort heisst ein fehlender Schluessel "wie bisher". */
         $ic_cfg = ic_schutz_erstanlage($ic_cfg);
+        /* 2.2.32: ebenso die Uhrzeit des Zeitraffers - weiter unten zeigt das Formular einer Anlage mit Token ein
+         * fehlendes timelapse_time leer ("keine Uhrzeit"), eine neue Anlage behaelt so die Vorgabe. */
+        if (!ic_config_hat_inhalt($ic_cfg) && !array_key_exists('timelapse_time', $ic_cfg)) {
+            $ic_cfg['timelapse_time'] = (string) ic_vorgabe('timelapse_time', '12:00');
+        }
         $ic_cfg['aktionstoken'] = ic_token_neu();
         list($ic_ok, $ic_was) = ic_config_speichern($ic_cfg);
         if (!$ic_ok) {
@@ -1103,6 +1108,11 @@ if ($ic_wollte) {
  * Anlage einen Schutz, den sie nicht hat, und das naechste Speichern nimmt Loxone das offene Bild. */
 $ic_cfg['bild_oeffentlich'] = ic_schutz_wert($ic_cfg, 'bild_oeffentlich');
 $ic_cfg['archiv_schutz'] = ic_schutz_wert($ic_cfg, 'archiv_schutz');
+/* 2.2.32: ebenso die Uhrzeit des Zeitraffers. Fehlt sie in einer bestehenden Anlage, nimmt der Zeitraffer nichts
+ * auf; die Vorgabe 12:00 im Feld haette das naechste Speichern still zur Aufnahmezeit gemacht. Das Feld bleibt leer. */
+if (ic_hat_token($ic_cfg) && !array_key_exists('timelapse_time', $ic_cfg)) {
+    $ic_cfg['timelapse_time'] = '';
+}
 $ic_cfg += ic_vorgaben();
 
 $ic_token   = (string) $ic_cfg['aktionstoken'];
@@ -1384,7 +1394,7 @@ $ic_schutz_ist = ic_archiv_geschuetzt();
 <h2><?= ic_txt('UI.H_ZEITRAFFER') ?></h2>
 <label><input type="checkbox" data-role="none" name="timelapse_enable"<?= ic_fh('settings', 'timelapse_enable', $ic_cfg['timelapse_enable'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_ZEITRAFFER') ?></label>
 <label><?= ic_txt('UI.L_UHRZEIT') ?></label>
-<input type="text" data-role="none" name="timelapse_time" value="<?= ic_e(ic_fw('settings', 'timelapse_time', $ic_cfg['timelapse_time'])) ?>"<?= ic_fk('settings', 'timelapse_time') ?> placeholder="12:00">
+<input type="text" data-role="none" name="timelapse_time" value="<?= ic_e(ic_fw('settings', 'timelapse_time', $ic_cfg['timelapse_time'])) ?>"<?= ic_fk('settings', 'timelapse_time') ?> placeholder="HH:MM">
 <label><input type="checkbox" data-role="none" name="timelapse_video"<?= ic_fh('settings', 'timelapse_video', $ic_cfg['timelapse_video'] === 'on') ? ' checked' : '' ?>> <?= ic_txt('UI.L_ZEITRAFFER_VIDEO') ?></label>
 <p class="sm-klein"><?= ic_txtf('UI.ZEITRAFFER_TEXT', ic_mono('ffmpeg')) ?></p>
 

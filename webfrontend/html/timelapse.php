@@ -62,6 +62,14 @@ if ($ic_sperre === false) {
     exit(0);
 }
 
+/* Seit 2.2.32 (Regeln/05): fehlende Vorgaben einmal in data.json schreiben -
+ * nach Marke und Sperre, vor dem ersten Lesen der Konfiguration in diesem Lauf.
+ * Schreibt nur, wenn etwas fehlt, und nur in eine Datei mit Zugriffstoken
+ * (ic_config_vervollstaendigen() in ic_lib.php). */
+if (function_exists('ic_config_vervollstaendigen')) {
+    ic_config_vervollstaendigen();
+}
+
 $ic_etwas = false;
 
 /* ---------------- Zeitraffer ---------------- */

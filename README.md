@@ -2,9 +2,18 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.31 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.32 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.32
+
+- **Konfiguration wird vervollständigt.** Fehlen in `data.json` Einstellungen, die eine spätere Fassung eingeführt hat, trägt der Minutentakt sie jetzt einmal in die Datei ein. Bis 2.2.31 standen sie dort erst nach dem nächsten Speichern im Formular; am LoxBerry fehlten so neun Einstellungen der Klingel-Meldung (`klingel_*`). Eingetragen wird der Wert, mit dem das Plugin sie schon bisher gelesen hat: die Vorgabe, bei Bildschutz und Archivschutz einer bestehenden Anlage „wie bisher“ (Bild offen, Archiv offen). An der Arbeitsweise ändert sich dadurch nichts.
+- Nicht nachgetragen werden `mqtt_enable` und `timelapse_time`: ihr Fehlen bedeutet heute etwas anderes als ihre Vorgabe (MQTT bleibt bei einer bestehenden Anlage nach dem Update aus; der Zeitraffer nimmt ohne Uhrzeit nichts auf). Sie bleiben, wie sie sind.
+- **Berichtigt: Uhrzeit des Zeitraffers im Formular.** Fehlte `timelapse_time` in einer bestehenden Anlage, zeigte das Formular 12:00, obwohl der Zeitraffer ohne Uhrzeit nichts aufnimmt; das nächste Speichern hätte 12:00 still zur Aufnahmezeit gemacht. Das Feld bleibt in diesem Fall jetzt leer (Platzhalter „HH:MM“). Eine neue Anlage bekommt 12:00 beim ersten Öffnen ausdrücklich eingetragen und sieht weiter 12:00.
+- Geschrieben wird nur in eine Datei mit Zugriffstoken, nur wenn wirklich etwas fehlt, nicht während einer Aktualisierung und mit denselben Rechten (0600) und derselben Zweitschrift wie beim Speichern. Vorhandene Werte bleiben wörtlich stehen, auch unbekannte Schlüssel. Das Protokoll nennt die Namen der eingetragenen Einstellungen, nie ihre Werte.
+- Geprüft auf dem Arbeitsplatz unter PHP 7.4 und 8.4 mit einem Prüfstand in der am LoxBerry gemessenen Gestalt (neun fehlende Schlüssel); am LoxBerry selbst noch nicht gemessen.
+- Leere Objekte (`{}`) in der Datei bleiben beim Vervollständigen erhalten, auch verschachtelte und solche unter unbekannten Schlüsseln; sie werden dabei nicht zu leeren Listen (`[]`).
 
 ## Neu in 2.2.31
 
