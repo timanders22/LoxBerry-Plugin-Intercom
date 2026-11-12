@@ -1817,6 +1817,11 @@ foreach ($ic_ln as $ic_nz) {
 <div class="sm-step"><b><?= ic_txt('LOX.S6') ?></b><br>
 <span class="sm-mono"><?= ic_e($ic_adr['strom']) ?></span>
 <p class="sm-klein"><?= ic_txt('LOX.S6_TEXT') ?></p>
+<?php /* 2.2.34 (B16): Benutzername Kamera / Kennwort Kamera an der Intercom leer lassen, wenn der Strom
+   ueber dieses Plugin oder cam_stream.php des ACTi-Plugins kommt (beide werten keine Anmeldung des
+   Abrufers aus, gelesen am Quelltext 2.2.34 und ACTi Kamera 1.9.42). Pruefzeile: ic_pruefe_adressen_zugang(). */ ?>
+<div class="sm-hinweis"><?= ic_txtf('LOX.S6_ZUGANG', ic_mono('/plugins/actikamera/cam_stream.php'),
+                                       ic_mono('VideoUser'), ic_mono('VideoPwd')) ?></div>
 </div>
 
 <div class="sm-step"><b><?= ic_txt('LOX.S7') ?></b><br>

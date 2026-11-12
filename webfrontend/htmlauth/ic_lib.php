@@ -2740,6 +2740,10 @@ function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
                         array($s['name']), array($q));
         }
     }
+    /* 2.2.34 (B16): tragen die Adressen fuer Loxone Zugangsdaten? Der Reiter Einbindung sagt, dass
+     * Benutzername Kamera und Kennwort Kamera an der Intercom leer bleiben - das gilt nur, solange
+     * keine Adresse selbst welche traegt. */
+    $z[] = ic_pruefe_adressen_zugang();
 
     /* -------- Livebild: Leser jetzt (NEU, Intercom-a1) -------- */
     if ($st) {
@@ -3136,6 +3140,62 @@ function ic_selbsttest_bilanz(array $zeilen)
     return array('ok' => $n['ok'], 'fehl' => $n['fehl'], 'hinweis' => $n['hinweis'],
                  'unklar' => $n['unklar'], 'gewertet' => $gewertet,
                  'bestanden' => ($n['fehl'] === 0 && $n['unklar'] === 0));
+}
+
+/**
+ * Kommen die Adressen fuer Loxone ohne Zugangsdaten aus? (NEU 2.2.34, B16)
+ *
+ * Der Reiter "Einbindung in Loxone" (Schritt 6) und die Hilfe sagen: kommt das Bild ueber dieses Plugin,
+ * bleiben an der Intercom in Loxone Config "Benutzername Kamera" und "Kennwort Kamera" leer. Das stimmt nur,
+ * solange keine der Adressen selbst Benutzer oder Kennwort traegt. Gemessen wird an ic_adressen() - derselben
+ * Quelle wie der Reiter - ohne Station und je Station, dazu lastpicture.jpg: jede Adresse wird mit parse_url()
+ * zerlegt; ein Benutzerteil vor dem Rechnernamen oder ein Abfrageschluessel aus der Liste unten ist ein Kreuz.
+ * Die Adressen selbst stehen nie in der Antwort (sie tragen das Zugriffstoken), nur Zahl und Art des Fundes.
+ * Die leere Menge ist "unklar", kein Haken.
+ */
+function ic_pruefe_adressen_zugang()
+{
+    $cfg = ic_config();
+    $token = isset($cfg['aktionstoken']) ? (string) $cfg['aktionstoken'] : '';
+    $host = ic_host();
+    $nummern = array('');
+    foreach (ic_stationen() as $i => $s) { $nummern[] = (string) ((int) $i + 1); }
+    $liste = array();
+    foreach ($nummern as $nr) {
+        foreach (ic_adressen($host, $token, 'klingel', $nr) as $a) { $liste[] = (string) $a; }
+    }
+    $liste[] = 'http://' . $host . '/plugins/' . ic_plugin_ordner() . '/lastpicture.jpg';
+    if (!$liste) {
+        return ic_pz('unklar', 'TEST.F_ADR_ZUGANG', 'TEST.A_ADR_ZUGANG_LEER');
+    }
+    $funde = array();
+    foreach ($liste as $a) {
+        $teile = @parse_url($a);
+        if (!is_array($teile) || !isset($teile['host'])) {
+            $funde[] = 'unlesbar';
+            continue;
+        }
+        if (isset($teile['user']) || isset($teile['pass'])) {
+            $funde[] = 'Benutzerteil@';
+            continue;
+        }
+        if (isset($teile['query'])) {
+            $q = array();
+            parse_str((string) $teile['query'], $q);
+            foreach (array_keys($q) as $k) {
+                if (preg_match('/^(user|usr|username|benutzer|pwd|pw|pass|passwd|password|passwort|kennwort)$/i',
+                               (string) $k)) {
+                    $funde[] = (string) $k . '=';
+                    break;
+                }
+            }
+        }
+    }
+    if ($funde) {
+        return ic_pz('fehl', 'TEST.F_ADR_ZUGANG', 'TEST.A_ADR_ZUGANG_FEHL', 'TEST.R_ADR_ZUGANG', array(),
+                     array(count($funde), count($liste), implode(', ', array_unique($funde))));
+    }
+    return ic_pz('ok', 'TEST.F_ADR_ZUGANG', 'TEST.A_ADR_ZUGANG_OK', '', array(), array(count($liste)));
 }
 
 /* ==================================================================

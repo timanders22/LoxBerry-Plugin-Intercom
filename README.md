@@ -2,9 +2,16 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.33 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.34 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.34
+
+- **Hinweis zu Benutzername und Kennwort am Baustein:** Der Reiter *Einbindung in Loxone* (Schritt 6) und die Hilfe sagen jetzt: Zeigen *URL Videostream (intern)* und *Bild bei Klingeln* der Intercom in Loxone Config (Peripherieobjekt, bei der Türsteuerung unter *Zugeordnete Intercom*) auf eine Adresse dieses Plugins oder auf `/plugins/actikamera/cam_stream.php` des Plugins ACTi Kamera, bleiben dort *Benutzername Kamera* und *Kennwort Kamera* leer (in der Projektdatei `VideoUser` und `VideoPwd`). Beide Plugins melden sich selbst bei der Kamera an und werten keine Anmeldung des Abrufers aus; geschützt ist die Adresse über das Token in ihr, beim ACTi-Plugin nur, wenn dort ein Stromkennwort gesetzt ist. Die Zugangsdaten zur Kamera liegen dann im Plugin, nicht in der Projektdatei.
+- Belegt am Quelltext: In `webfrontend/html/` von Intercom 2.2.34 und ACTi Kamera 1.9.42 liest keine Datei eine Anmeldung des Abrufers (`PHP_AUTH_USER`, `HTTP_AUTHORIZATION`); `cam_stream.php` prüft nur das Stromkennwort `t=` und meldet sich mit Benutzer und Kennwort aus der eigenen Konfiguration bei der Kamera an. Die Namen der Felder stammen aus den Sprachdateien der installierten Loxone Config 17.3 (deutsch und englisch).
+- **Reiter *Test*:** neue Zeile *Kommen die Adressen für Loxone ohne Zugangsdaten aus?* Sie zerlegt jede Adresse, die der Reiter *Einbindung in Loxone* nennt (ohne Station und je Station, dazu `lastpicture.jpg`), und wird rot, sobald eine Benutzer oder Kennwort trägt. Die Adressen selbst erscheinen dort nicht.
+- Am Verhalten des Plugins ändert sich nichts. Geprüft auf dem Arbeitsplatz unter PHP 7.4 und 8.4; am LoxBerry ist diese Fassung nicht gemessen, und die Felder in Loxone Config sind nicht am Bildschirm nachgesehen.
 
 ## Neu in 2.2.33
 
