@@ -89,17 +89,21 @@ else
     echo "<WARNING>   $BASE/config/plugins/$PDIR.backup.json"
 fi
 
+# Beide Uebergaenge unten lesen data.json seit 2.2.33 als Objekt (json_decode ohne true) und tragen nur fehlende
+# Schluessel nach: so kommt jedes leere Objekt wieder als {} und jedes leere Feld als [] in die Datei (A5 der
+# Nachtpruefung 12.11.2026). Bis 2.2.32 wurde aus {} beim Nachtragen [].
+
 # ---------- 2.2.28 (IC-1): Bild und Archiv bleiben bei bestehenden Anlagen, wie sie waren ----------
 # Neuinstallation: beide ab Werk geschuetzt. Traegt data.json Inhalt (Token oder Station) und fehlt der Schluessel, wird der
 # bisherige Wert ausdruecklich eingetragen; die Bibliothek rechnet ohnehin so (ic_schutz_wert), falls dieser Schritt scheitert.
 if mit_inhalt "$CF" && command -v php >/dev/null 2>&1; then
     UEB2=$(php -r '
         $f = $argv[1];
-        $d = json_decode((string) @file_get_contents($f), true);
-        if (!is_array($d)) { echo "unlesbar"; exit(0); }
+        $d = json_decode((string) @file_get_contents($f));
+        if (!is_object($d)) { echo "unlesbar"; exit(0); }
         $neu = array();
         foreach (array("bild_oeffentlich" => "1", "archiv_schutz" => "0") as $k => $w) {
-            if (!array_key_exists($k, $d)) { $d[$k] = $w; $neu[] = $k; }
+            if (!property_exists($d, $k)) { $d->$k = $w; $neu[] = $k; }
         }
         if (!$neu) { echo "nichts"; exit(0); }
         $js = json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -123,11 +127,11 @@ if [ -f "$CF" ] && command -v php >/dev/null 2>&1; then
     UEB=$(php -r '
         $f = $argv[1];
         $roh = (string) @file_get_contents($f);
-        $d = json_decode($roh, true);
-        if (!is_array($d)) { echo "unlesbar"; exit(0); }
+        $d = json_decode($roh);
+        if (!is_object($d)) { echo "unlesbar"; exit(0); }
         $neu = array();
         foreach (array("mqtt_enable", "befehle_mqtt_ein", "befehle_mqtt_melden") as $k) {
-            if (!array_key_exists($k, $d)) { $d[$k] = "0"; $neu[] = $k; }
+            if (!property_exists($d, $k)) { $d->$k = "0"; $neu[] = $k; }
         }
         if (!$neu) { echo "nichts"; exit(0); }
         $js = json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

@@ -547,6 +547,14 @@ function ic_zweitschrift_geschont($fehlt = null)
  */
 function ic_config_speichern(array $neu)
 {
+    /* Leere Objekte bleiben leere Objekte, in JEDEM Speicherweg (seit 2.2.33, A5 der Nachtpruefung 12.11.2026, Bauart
+     * AudiConnect 0.9.42 au_config_speichern(); Entscheidung des Hausherrn 11.11.2026). ic_config() liest mit
+     * json_decode(..., true), dabei wird {} zu einem leeren Feld, und json_encode() schrieb es als [] zurueck. Die
+     * Gestalt kommt aus dem bisherigen Rohtext der Datei; was dort kein leeres Objekt war, bleibt, wie uebergeben. */
+    $ic_roh = @file_get_contents(ic_paths()['config'] . '/data.json');
+    if ($neu !== array() && is_string($ic_roh) && $ic_roh !== '') {
+        $neu = ic_json_leere_objekte($neu, json_decode($ic_roh));
+    }
     $js = json_encode($neu, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
                             | JSON_UNESCAPED_SLASHES);
     if ($js === false) {
@@ -570,8 +578,9 @@ function ic_config_speichern(array $neu)
 
 /** Leere Objekte des Rohtextes ($o, json_decode ohne true) im Feld $a wieder als Objekt fuehren (11.11.2026, Muster
  *  bw_json_leere_objekte() aus Bewaesserung 0.9.56), damit json_encode() sie als {} und nicht als [] schreibt - oben,
- *  verschachtelt und unter fremden Schluesseln. Nur fuer ic_config_vervollstaendigen(); das Speichern im Formular
- *  bleibt, wie es ist. */
+ *  verschachtelt und unter fremden Schluesseln. In 2.2.32 nur fuer ic_config_vervollstaendigen(); seit 2.2.33 ruft
+ *  ic_config_speichern() sie fuer jeden Speicherweg auf, der Aufruf in ic_config_vervollstaendigen() bleibt stehen
+ *  und aendert dort nichts mehr. */
 function ic_json_leere_objekte($a, $o)
 {
     if (!is_array($a)) { return $a; }
@@ -5048,6 +5057,21 @@ function ic_pruefe_klingel($art, $mit_netz = false)
     if ($mit_netz) {
         list($c, $r, $f) = ic_nachbar_rufen($ordner, array('token' => $tok, 'selftest' => '1'), 5);
         if ($c === 200 && strpos(ltrim($r), 'SELFTEST;OK=1') === 0) {
+            /* 2.2.33 (Nachtpruefung 12.11.2026, Bauart Pumpenwacht 1.0.23 pw_pruefe_signal()): bei SignalBot ab
+             * 0.9.30 bleibt ?selftest=1 auch dann offen, wenn dort "HTTP-Endpunkt fuer Loxone annehmen" aus ist (ab
+             * Werk aus, nach einem Update an) - dann weist SignalBot jedes "senden" mit HTTP 403 GRUND=ENDPUNKT_AUS
+             * ab, und bis 2.2.32 stand hier trotzdem "antwortet" (gemessen gegen den Endpunkt von SignalBot 0.9.38).
+             * Gefragt wird deshalb zusaetzlich die Statuszeile (aktion=status, abfragend, loest dort nichts aus);
+             * sie unterliegt demselben Schalter. Beurteilt wird nur die Abweisung ENDPUNKT_AUS - eine aeltere
+             * Fassung ohne den Schalter antwortet wie bisher. Die Sprachsteuerung weist schon den Selbsttest ab,
+             * wenn ihr Haken aus ist; dort braucht es die zweite Frage nicht. */
+            if ($art === 'signal') {
+                list($c2, $r2, ) = ic_nachbar_rufen($ordner, array('token' => $tok, 'aktion' => 'status'), 5);
+                if ($c2 === 403 && strpos((string) $r2, 'GRUND=ENDPUNKT_AUS') !== false) {
+                    return ic_pz('unklar', $frage, 'TEST.A_KLINGEL_ENDPUNKT_AUS', 'TEST.R_KLINGEL_ENDPUNKT', array(),
+                                 array($ordner));
+                }
+            }
             return ic_pz('ok', $frage, 'TEST.A_KLINGEL_ERREICHT', '', array(), array($ordner));
         }
         return ic_pz('unklar', $frage, 'TEST.A_KLINGEL_NICHT', 'TEST.R_KLINGEL', array(),

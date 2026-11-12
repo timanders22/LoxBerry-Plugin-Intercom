@@ -2,9 +2,15 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.32 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.33 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.33
+
+- **Leere Objekte bleiben erhalten, auch beim Speichern und beim Update.** Seit 2.2.32 blieb ein leeres Objekt (`{}`) in `data.json` nur beim Vervollständigen erhalten. Beim Speichern im Formular, beim Zurückspielen einer Sicherung, beim Übernehmen des Sprechtokens und in den beiden Übergängen von `postupgrade.sh` (Bild- und Archivschutz, MQTT) wurde es weiter zu einer leeren Liste (`[]`). Jetzt bleibt es in jedem Speicherweg ein Objekt, oben wie verschachtelt und auch unter unbekannten Schlüsseln; die Zweitschrift trägt dieselbe Gestalt. Maßgeblich ist die Datei, die vor dem Speichern dalag; was dort kein leeres Objekt war, wird so geschrieben wie bisher (beim Zurückspielen also auch ein leeres Objekt, das nur in der Sicherungsdatei steht). Das Plugin selbst liest beide Formen gleich; an der Arbeitsweise ändert sich nichts.
+- **Reiter Test, Klingel über SignalBot:** Die Zeile fragte nur den Selbsttest von SignalBot. Der bleibt seit SignalBot 0.9.30 auch dann offen, wenn dort „HTTP-Endpunkt für Loxone annehmen“ aus ist; jede Klingel-Nachricht kam dann mit „HTTP 403 ENDPUNKT_AUS“ zurück, und die Zeile zeigte trotzdem „antwortet, das Token stimmt“. Jetzt fragt sie zusätzlich die Statuszeile von SignalBot (löst dort nichts aus) und nennt in diesem Fall den Haken in SignalBot. Mit einer älteren SignalBot-Fassung ohne diesen Haken bleibt alles wie bisher. Die Klingel über die Sprachsteuerung war nicht betroffen: dort weist schon der Selbsttest ab.
+- Geprüft auf dem Arbeitsplatz unter PHP 7.4, 8.4 und 8.5 mit einem Prüfstand (Speichern, Datei ohne Konfiguration, `postupgrade.sh` unter Git Bash) und gegen den echten Endpunkt von SignalBot 0.9.38 und 0.9.29; am LoxBerry selbst noch nicht gemessen. Am LoxBerry dieser Anlage trägt `data.json` kein leeres Objekt und keine leere Liste (gemessen 12.11.2026).
 
 ## Neu in 2.2.32
 
