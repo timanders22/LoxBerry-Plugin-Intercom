@@ -399,33 +399,13 @@ if ($ic_wollte && $ic_darf && isset($_POST['vorlage'])) {
  * kaeme trotzdem nicht an die Stationen; die Datei waere wertlos. Damit
  * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das.
  *
- * Der lesbare Kopf (_plugin, _fassung, _erzeugt) sagt beim Wiederfinden,
- * woher die Datei stammt; ic_sicherung_lesen() uebergeht jeden Schluessel
- * mit fuehrendem Unterstrich. */
+ * Seit 2.2.35 baut Kopf und Inhalt das gemeinsame Sicherungsmodul
+ * (sicherung_bauen()): _hinweis, _plugin = LoxBerry-Plugin-Intercom, _fassung,
+ * _stand, und _warnung, wenn das Zurueckspielen diese Datei abwiese. Die
+ * Sprechtoken und der Vermerk ansage_token_herkunft gehen nie in eine Sicherung. */
 if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
-    $ic_kopf = array(
-        '_plugin'  => 'Intercom (LoxBerry)',
-        '_fassung' => ic_fassung(),
-        '_erzeugt' => date('Y-m-d H:i:s'),
-        '_hinweis' => 'Diese Datei enthaelt das Zugriffstoken und die '
-                    . 'Zugangsdaten der Tuerstationen, gegebenenfalls auch die Token '
-                    . 'fuer SignalBot und Sprachsteuerung. Wie ein Passwort behandeln. '
-                    . 'Die Sprechtoken der Sprachausgabe sind nie enthalten.',
-    );
-    /* Nr. 36 b: die Sprechtoken der Sprachausgabe gehen nie in eine Sicherung. */
-    $ic_sich = ic_config();
-    /* 2.2.30: der Vermerk, welches Sprechtoken vom Nachbarn uebernommen ist, geht nie in eine Sicherung (Stamm;
-     * ic_sicherung_lesen() uebergeht ihn ohnehin). Bis 2.2.29 stand er darin (gemessen 07.11.2026). */
-    unset($ic_sich['ansage_token_herkunft']);
-    /* 2.2.23 (E6): MQTT ist ab Werk an - die Sicherung traegt den geltenden Wert ausdruecklich, damit das
-     * Zurueckspielen ihn nicht fuer eine alte Sicherung (ohne Schluessel = aus) haelt. */
-    if (!array_key_exists('mqtt_enable', $ic_sich)) { $ic_sich['mqtt_enable'] = ic_mqtt_an() ? '1' : '0'; }
-    if (isset($ic_sich['tts']) && is_array($ic_sich['tts'])) {
-        $ic_sich['tts'] = ansage_sicherung_bereinigen($ic_sich['tts']);
-    }
-    $ic_js = json_encode($ic_kopf + $ic_sich,
-        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($ic_js !== false) {
+    $ic_js = sicherung_json(sicherung_bauen(ic_sicherung_beschreibung(), ic_sicherung_stand()));
+    if ($ic_js !== '') {
         while (ob_get_level() > 0) { @ob_end_clean(); }
         header('Content-Type: application/json; charset=utf-8');
         header('Content-Disposition: attachment; filename="intercom_einstellungen_'
@@ -438,72 +418,46 @@ if ($ic_wollte && $ic_darf && isset($_POST['ic_sichern'])) {
 
 /* ---------------- Einstellungen zurueckspielen ----------------
  *
- * is_uploaded_file() ZUERST: ohne diese Pruefung liesse sich jede Datei
- * des Servers unterschieben. Dann die Groessengrenze - eine Sicherung
- * dieses Plugins ist wenige Kilobyte gross; alles darueber wird gar
- * nicht erst gelesen. */
+ * Seit 2.2.35 ueber das gemeinsame Sicherungsmodul. sicherung_eingang() prueft
+ * den Haken zurueck_ok (ohne ihn wird nichts gelesen und nichts geaendert),
+ * is_uploaded_file() ZUERST (ohne diese Pruefung liesse sich jede Datei des
+ * Servers unterschieben) und die Groessengrenze des Moduls (256 KB wie bisher).
+ * sicherung_zurueckspielen() liest, prueft, verwirft Unbekanntes mit Namen,
+ * laesst einen leeren Wert den bisherigen stehen, nennt, was die Datei nicht
+ * mitbrachte, und aendert bei einer Beanstandung gar nichts. Danach wie bis
+ * 2.2.34 den Speicherort (Symlink) und den Archivschutz nachziehen - beide stehen
+ * in der Sicherung. Die Saetze des Moduls sind maskiert; die Kaesten dieser
+ * Seite geben sie roh aus. */
 if ($ic_wollte && $ic_darf && isset($_POST['ic_zurueck'])) {
-    if (!isset($_FILES['ic_sicherung']) || !is_array($_FILES['ic_sicherung'])
-        || !isset($_FILES['ic_sicherung']['tmp_name'])
-        || !@is_uploaded_file($_FILES['ic_sicherung']['tmp_name'])) {
-        $ic_fehler[] = ic_txt('UI.SICH_KEINE_DATEI');
-    } elseif ((int) $_FILES['ic_sicherung']['size'] > 262144) {
-        $ic_fehler[] = ic_txt('UI.SICH_ZU_GROSS');
-    } else {
-        $ic_erg = ic_sicherung_lesen(
-            (string) @file_get_contents($_FILES['ic_sicherung']['tmp_name']));
-        list($ic_neu_s, $ic_mangel, $ic_n) = $ic_erg;
-        /* isset statt fester Stelle: eine aeltere Bibliothek neben einer
-         * neueren Oberflaeche gibt drei Werte zurueck, und dann darf hier
-         * keine Meldung ueber einen Wert entstehen, den es nicht gibt. */
-        $ic_uebergangen = (isset($ic_erg[3]) && is_array($ic_erg[3]))
-                        ? $ic_erg[3] : array();
-        /* Ein LEERES Aktionstoken in der Datei heisst "kein Token
-         * gesichert" (Regeln/05) - das laufende bleibt in Kraft, und der
-         * Anwender erfaehrt es. Derselbe isset-Vorbehalt wie eine Zeile
-         * darueber: eine aeltere Bibliothek gibt vier Werte zurueck. */
-        $ic_tokleer = (isset($ic_erg[4]) && $ic_erg[4]);
-        if ($ic_neu_s === null) {
-            /* ALLE Beanstandungen, nicht nur die erste - und geaendert
-             * wird nichts. */
-            /* ic_roh, nicht ic_txt: der Wert traegt <b>, und ic_txt()
-             * maskiert selbst. Ausgegeben wird die Zeile im Kasten roh. */
-            $ic_fehler[] = ic_roh('UI.SICH_ABGELEHNT') . ' '
-                         . implode(' ', $ic_mangel);
-        } elseif (ic_config_ablegen($ic_neu_s)) {
-            $ic_cfg = $ic_neu_s;
-            $ic_meldungen[] = sprintf(ic_txt('UI.SICH_UEBERNOMMEN'), $ic_n);
-            /* "n Werte zurueckgespielt" sieht nach Vollstaendigkeit aus.
-             * Was die Datei nicht mitbrachte, wird deshalb benannt. */
-            if ($ic_uebergangen) {
-                $ic_meldungen[] = sprintf(ic_txt('UI.SICH_UEBERGANGEN'),
-                    count($ic_uebergangen),
-                    ic_e(implode(', ', $ic_uebergangen)));
-            }
-            if ($ic_tokleer) {
-                $ic_meldungen[] = ic_txt('UI.SICH_TOKEN_LEER');
-            }
-            /* Den Dienst nachziehen und sagen, was mit ihm geschah. Das
-             * Plugin fuehrt keinen Dauerlaeufer; nachzuziehen sind der
-             * Speicherort (Symlink) und der Archivschutz - beide stehen in
-             * der Sicherung. Bis 2.2.5 geschah das nur beim Speichern, und
-             * der Reiter Test meldete danach A_SPEICHER_FALSCH, ohne dass
-             * jemand verstand, warum. */
-            list($ic_sok2, $ic_smeldung2) = ic_speicherort_anwenden();
-            if (!$ic_sok2) {
-                $ic_fehler[] = ic_speicher_meldung($ic_smeldung2);
-            } elseif ($ic_smeldung2 === 'verschoben') {
-                $ic_meldungen[] = ic_txt('UI.M_SPEICHER_UMGEZOGEN');
+    $ic_sb = ic_sicherung_beschreibung();
+    list($ic_sroh, $ic_sr) = sicherung_eingang($ic_sb, $_POST, $_FILES, 'ic_sicherung');
+    if ($ic_sr === null) {
+        $ic_sb['speichern'] = function ($neu) { return ic_config_ablegen($neu); };
+        $ic_sb['zweitschrift'] = function () {
+            return array(ic_paths()['config'] . '/data.json', ic_zweitschrift());
+        };
+        $ic_sb['nachziehen'] = function ($neu) use (&$ic_fehler) {
+            $saetze = array();
+            list($ok, $was) = ic_speicherort_anwenden();
+            if (!$ok) {
+                $ic_fehler[] = ic_speicher_meldung($was);
+            } elseif ($was === 'verschoben') {
+                $saetze[] = ic_txt('UI.M_SPEICHER_UMGEZOGEN');
             }
             // O5: der Rueckgabewert wird gelesen, nicht verworfen.
-            $ic_schutz_soll2 = ic_archivschutz_soll($ic_neu_s); // 2.2.28 (IC-1)
-            if (!ic_archiv_schutz_anwenden() && $ic_schutz_soll2) {
+            if (!ic_archiv_schutz_anwenden() && ic_archivschutz_soll($neu)) { // 2.2.28 (IC-1)
                 $ic_fehler[] = ic_txtf('UI.M_SCHUTZ_NICHT', ic_e(ic_archiv_schutzdatei()));
             }
-        } else {
-            $ic_fehler[] = ic_txt('UI.SICH_SCHREIBFEHLER');
-        }
+            $saetze[] = ic_txt('UI.SICH_DIENST');
+            return $saetze;
+        };
+        $ic_sb['log'] = 'ic_log';
+        $ic_sr = sicherung_zurueckspielen($ic_sb, $ic_sroh);
+        if (!empty($ic_sr['gespeichert'])) { $ic_cfg = ic_config(); }
     }
+    $ic_sm = sicherung_meldungen($ic_sb, $ic_sr);
+    foreach ($ic_sm['hinweise'] as $ic_sx) { $ic_meldungen[] = $ic_sx; }
+    foreach ($ic_sm['fehler'] as $ic_sx) { $ic_fehler[] = $ic_sx; }
 }
 
 /* ---------------- Neues Token ---------------- */
@@ -1533,6 +1487,7 @@ if ($ic_sich_mangel) { ?>
          Knopf neben einem Dateifeld, der wie eine Rueckkehr zur Startseite
          beschriftet ist und die gesamte Konfiguration samt Token
          ueberschreibt. -->
+    <?= sicherung_haken_zeile(ic_sicherung_beschreibung()) ?>
     <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ic_zurueck" value="1"
         onclick="return confirm(this.getAttribute('data-frage'));"
         data-frage="<?= ic_txt('UI.SICH_FRAGE') ?>"><?= ic_txt('UI.K_ZURUECKSPIELEN') ?></button>

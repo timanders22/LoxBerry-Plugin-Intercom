@@ -2,9 +2,25 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.34 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.35 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.35
+
+- **Verhalten geändert – Einstellungen sichern und zurückspielen über das gemeinsame Sicherungsmodul (Fassung 1.2.3):** Die Knöpfe im Reiter *Einstellungen* arbeiten jetzt mit dem gemeinsamen Sicherungsmodul. Für den Anwender ändert sich:
+  - Die Sicherungsdatei trägt im Kopf das Kennzeichen `_plugin` = `LoxBerry-Plugin-Intercom` und die Fassung (`_fassung`). Sicherungen von 2.2.6 bis 2.2.34 mit dem bisherigen Kennzeichen „Intercom (LoxBerry)“ werden weiter angenommen. Eine Datei eines anderen Plugins und eine Datei ohne Kennzeichen werden als Ganzes abgewiesen; bis 2.2.34 wurden sie gelesen wie eine eigene. Sicherungen von 2.2.3 bis 2.2.5 hatten keinen Kopf; sie lassen sich von einer fremden Datei nicht sicher unterscheiden und werden seit dieser Fassung abgewiesen.
+  - Eine Einstellung, die diese Fassung nicht kennt, wird nicht übernommen und mit ihrem Namen gemeldet, nie mit ihrem Wert – oben in der Datei, in der Sprachausgabe, in den Ansageregeln und in den Einträgen der Türstationen. Die übrigen Einstellungen werden zurückgespielt. Bis 2.2.34 wies ein unbekannter Name die ganze Datei ab.
+  - Ein leerer Wert in der Sicherung überschreibt keinen bestehenden; der bisherige Wert bleibt, und die Meldung nennt den Namen. Bis 2.2.34 galt das nur für das Zugriffstoken.
+  - Wie bisher behält eine Einstellung, die in der Datei fehlt, ihren geltenden Wert, und die Meldung nennt sie. Eine Sicherung einer Fassung vor 2.2.23 ohne `mqtt_enable` stammt von einer Anlage, deren MQTT aus war; dann gilt wie bisher „aus“, und die Meldung nennt es als nach einer Übergangsregel abgeleitet.
+  - Die Sicherung trägt jetzt den geltenden Stand: für eine Einstellung, die in `data.json` noch fehlt, den Wert, der für sie gilt (wie beim Vervollständigen der Konfiguration). Einträge in `data.json`, die dieses Plugin nicht kennt, bleiben beim Zurückspielen nicht mehr stehen.
+  - Zwischen dem Feld für die Sicherungsdatei und dem Knopf „Einstellungen zurückspielen“ steht ein Haken „Ja, die geltenden Einstellungen durch die Sicherung ersetzen“, ab Werk aus. Ohne ihn wird die Datei nicht gelesen und nichts geändert, und die Meldung sagt es. Die Rückfrage beim Klick bleibt.
+  - Nach dem Zurückspielen sagt die Meldung, dass die Einstellungen ab dem nächsten Aufruf gelten und die Befehlsbrücke vom Wächter im Minutentakt nach dem Haken „Befehle über MQTT annehmen“ gestartet oder angehalten wird.
+  - Unverändert: Jeder Wert und jede Türstation werden geprüft wie bisher; eine Datei mit einem unzulässigen Wert ändert gar nichts, und alle Beanstandungen werden genannt. Zugriffstoken, Zugangsdaten der Türstationen und die Token für SignalBot und Sprachsteuerung gehören in die Datei, die Sprechtoken nicht; eine Datei mit Sprechtoken wird abgewiesen. Die Datei darf höchstens 256 KB groß sein. Die Zweitschrift zieht mit, Speicherort und Archivschutz werden nachgezogen.
+- **Der Datenordner übersteht ein Update:** Bei jedem Update löscht LoxBerry den Datenordner des Plugins (`data/plugins/intercom/`, darin unter anderem die Merker des Zeitraffers und der Bereinigung, die befristeten Bildadressen und das letzte Bild). Jetzt sichert `preupgrade.sh` über den gemeinsamen Baustein `upgrade_daten.sh` (Fassung 1.0.0) den ganzen Datenordner mit Unterordnern, Rechten und Zeitstempeln neben den Ordner (`data/plugins/intercom.upgrade_daten/`, Ordner 0700) – ohne Sperr- und PID-Dateien und Sockets – und zählt die Kopie Datei für Datei gegen. `postinstall.sh` spielt als Erstes jede Datei zurück, die nach dem Update fehlt; was die neue Fassung schon angelegt hat, wird nicht überschrieben, und was davon nicht aus dem Archiv stammt, nennt das Installationsprotokoll mit Namen. Danach wird die Sicherung entfernt. Eine Sicherung, die älter als eine Stunde ist, wird nicht eingespielt und bleibt liegen; die Deinstallation räumt sie mit ab.
+- **Verhalten geändert – lieber kein Update als ein leerer Datenordner:** Lässt sich der Datenordner nicht vollständig sichern (zu wenig Platz, fehlende Rechte, eine unlesbare Datei), meldet `preupgrade.sh` das mit `<FAIL>` und bricht die Aktualisierung ab; die bisherige Fassung bleibt mit ihrem Datenordner installiert.
+- Im ausgepackten Archiv (Prüfstand) gilt für den Ordnernamen ein gesetztes `LBPPLUGINDIR`; installiert bleibt es beim Ordner der Datei.
+- Am Gerät nicht gemessen; geprüft mit einem Prüfstand unter PHP 7.4 und 8.4 auf dem Arbeitsrechner, der über einen Webserver die echten Knöpfe drückt.
 
 ## Neu in 2.2.34
 

@@ -18,6 +18,7 @@
  * Ausgabezielen, ic_mit_zielen(), Welle Mehrfach-Ziele).
  * Liegt neben dieser Datei; die Datei schuetzt sich selbst gegen doppeltes Laden. */
 require_once __DIR__ . '/sprachausgabe.php';
+require_once __DIR__ . '/sicherung.php';     // gemeinsames Sicherungsmodul (seit 2.2.35)
 
 /* ==================================================================
  * Pfade
@@ -65,7 +66,15 @@ if (!function_exists('lb_wurzel_ermitteln')) {
 function ic_plugin_ordner()
 {
     // .../webfrontend/htmlauth/plugins/<ordner>/ic_lib.php
-    return basename(dirname(__FILE__));
+    $hier = basename(dirname(__FILE__));
+    if (basename(dirname(dirname(__FILE__))) === 'plugins') { return $hier; }     // installiert: wie bisher
+    /* 2.2.35: ausgepacktes Archiv (Pruefstand): ein ausdruecklich gesetztes LBPPLUGINDIR gilt (Bauart
+     * ACTiKamera cam_paths(), Creality2Lox cr_plugin_ordner()); ohne es wie bisher der Ordner der Datei. */
+    $lbp = basename(rtrim((string) getenv('LBPPLUGINDIR'), '/'));
+    if ($lbp !== '' && !in_array($lbp, array('.', '..', 'html', 'htmlauth', 'plugins', 'bin', 'webfrontend'), true)) {
+        return $lbp;
+    }
+    return $hier;
 }
 
 function ic_paths()
@@ -4058,164 +4067,180 @@ function ic_sicherungsschluessel()
 }
 
 /**
- * Eine Sicherungsdatei einlesen - und dabei NICHTS durchgehen lassen.
+ * 2.2.35: Die Beschreibung dieser Linie fuer das gemeinsame Sicherungsmodul
+ * (Werkzeuge/gemeinsam/sicherung.php, Auftrag des Hausherrn 12.11.2026, Welle 1,
+ * Gruppe 5a). Lesen, Pruefen und Zurueckspielen macht das Modul; bis 2.2.34 stand
+ * hier eine eigene Schleife (ic_sicherung_lesen()). Gemessen 15.11.2026 mit
+ * Werkzeuge/sicherung_pruefstand.py --profil ist an 2.2.34: ein unbekannter
+ * Schluessel oben wies die ganze Datei ab, eine Datei ohne Kennzeichen oder mit
+ * dem eines anderen Plugins wurde gelesen wie eine eigene, und der Knopf
+ * "Einstellungen zurueckspielen" wirkte ohne Haken.
  *
- * Grundlage ist der AKTUELLE Stand, nicht eine Vorgabenliste: Vorgabewerte
- * gibt es hier nicht zu messen, und geraten werden sie nicht. Ein
- * Schluessel, der in der Sicherung fehlt, behaelt damit seinen jetzigen
- * Wert - das ist der einzige Unterschied zu den uebrigen Linien, und er
- * ist gewollt.
+ * Kennzeichen: seit 2.2.6 schrieb der Knopf _plugin = "Intercom (LoxBerry)" (gemessen
+ * an allen Fassungen 2.2.3 bis 2.2.34) - mit Leerzeichen und Klammern keine
+ * Namensform, die das Modul annimmt. Seit 2.2.35 traegt die Datei den Namen des
+ * Repositorys (Regeln/05, Punkt 1); das alte Kennzeichen steht in
+ * 'kennzeichen_frueher' und wird weiter angenommen. 2.2.3 bis 2.2.5 schrieben keinen
+ * Kopf; eine solche Datei ist nicht sicher von einer fremden zu unterscheiden und
+ * wird abgewiesen (Entscheidung des Hausherrn 12.11.2026).
  *
- * Der Rest ist wie ueberall: eine halb gueltige Datei ueberschreibt GAR
- * NICHTS. Eine zur Haelfte uebernommene Konfiguration ist schlimmer als
- * die alte, und man sieht es ihr nicht an.
- *
- * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte,
- * uebergangene Schluessel[], Token der Datei war leer).
- *
- * Der VIERTE Wert kam am 07.09.2026 dazu. Bis dahin quittierte die
- * Oberflaeche nur "n Werte zurueckgespielt" - eine Zahl, die nach
- * Vollstaendigkeit aussieht, obwohl fehlende Schluessel stillschweigend
- * ihren jetzigen Wert behielten. Beim UMZUG auf einen zweiten LoxBerry -
- * dem ausdruecklichen Zweck einer Sicherung - ist "der jetzige Wert" die
- * frische Konfiguration; der Schluessel blieb also auf dem Anfangswert,
- * ohne ein Wort. Pumpenwacht und Midea2Lox, die dieselbe Grundlage
- * benutzen, nennen die uebergangenen Schluessel seit jeher.
+ * Wie bisher (Regeln/05 Punkt 7): bekannt ist jeder Schluessel aus
+ * ic_sicherungsschluessel() und ansage_regeln; ein Schluessel, der in der Datei
+ * fehlt, behaelt seinen geltenden Wert und wird genannt ('fehlt' => 'behalten'
+ * fuer alle, aus dem geltenden Stand ic_sicherung_stand()); jeder Wert geht durch
+ * ic_wert_pruefen() bzw. ic_stationen_mangel(), die Sprachausgabe durch
+ * ansage_wert_pruefen(); eine Datei mit Sprechtoken wird abgewiesen; ein leeres
+ * Token laesst das geltende stehen (Regel 3 des Moduls); eine halb gueltige Datei
+ * aendert nichts. Der Vermerk ansage_token_herkunft kommt nie aus einer Datei.
+ * Uebergangsregel (E6, seit 2.2.23): fehlt mqtt_enable in einer Sicherung einer
+ * Fassung vor 2.2.23 (oder ohne _fassung), gilt "0" wie beim Update
+ * (ic_sicherung_vorbehandeln()).
  */
-function ic_sicherung_lesen($roh)
+function ic_sicherung_beschreibung()
 {
-    $mangel = array();
-    $leertoken = false;
-    $daten = json_decode((string) $roh, true);
-    if (!is_array($daten)) {
-        return array(null, array(ic_txt('UI.SICH_KEIN_JSON')), 0);
+    $p = ic_paths();
+    $v = ic_vorgaben();
+    $vorgaben = array();
+    foreach (ic_sicherungsschluessel() as $k) {
+        $vorgaben[$k] = array_key_exists($k, $v) ? $v[$k] : array();     // stationen: keine Vorgabe, leere Liste
     }
-    $neu = ic_config();
-    $bekannt = ic_sicherungsschluessel();
-    $anzahl = 0;
-    $ic_tsspaet = array();     // Welle Mehrfach-Ziele (2.2.24): tts.ziele, wenn die Sicherung die Liste nicht kannte
-    foreach ($daten as $k => $w) {
-        /* Der lesbare Kopf wird UEBERGANGEN, nicht beanstandet. Seit 2.2.6
-         * schreibt die Sicherung einen: _plugin, _fassung, _erzeugt. Wer
-         * eine alte Datei von Hand um eine Zeile ergaenzt, soll sie nicht
-         * zurueckgewiesen bekommen. */
-        if ((string) $k !== '' && substr((string) $k, 0, 1) === '_') {
-            continue;
-        }
-        if ($k === 'ansage_token_herkunft') { continue; }     // S2: nie aus einer Datei
-        if ($k === 'ansage_regeln') {     // S2: ungueltig = abgewiesen, gueltig = uebernommen
-            $s2_g = '';
-            $s2_r = ansage_regeln_wert($w, $s2_g);
-            if ($s2_r === null) { $mangel[] = ic_txt('UI.ANSAGE_NAME'); continue; }
-            $neu['ansage_regeln'] = $s2_r;
-            $anzahl++;
-            continue;
-        }
-        if (!in_array($k, $bekannt, true)) {
-            $mangel[] = sprintf(ic_txt('UI.SICH_FREMD'),
-                                 htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8'));
-            continue;
-        }
-        /* BERICHTIGT 04.09.2026 (2.2.6): auch der WERT wird geprueft, nicht
-         * nur der Schluessel. Gemessen ueber HTTP: bis 2.2.5 wurde aus dem
-         * Aktionstoken die Zahl 12345, aus storage_path ein Feld und aus
-         * mqtt_praefix eine Zeichenkette mit Zeilenumbruch. Fail closed -
-         * eine Beanstandung heisst, dass GAR NICHTS geschrieben wird. */
-        /* NEU 2.2.13 (C8): je Station und Feld eine Beanstandung - "Station 1:
-         * ip" sagt mehr als "stationen". Gesammelt wird weiter ALLES, und bei
-         * einer Beanstandung wird nichts geschrieben. */
-        if ($k === 'stationen') {
-            $sm = ic_stationen_mangel($w);
-            if ($sm) {
-                foreach ($sm as $sp) {
-                    $mangel[] = sprintf(ic_txt('UI.SICH_STATION'), (int) $sp[0],
-                                        htmlspecialchars((string) $sp[1], ENT_QUOTES, 'UTF-8'));
+    $vorgaben['ansage_regeln'] = ansage_regeln_vorgaben();
+    $tts = array_merge(array_keys(ansage_werk_block()), ansage_geheim());
+    $schluessel = array(
+        'tts' => sicherung_block($tts, array('ziele' => sicherung_liste(array('art', 'wo', 'laut', 'sprache', 'ein'))
+                                                        + array('fehlt' => 'behalten')))
+                 + array(
+                     'sichern' => 'ansage_sicherung_bereinigen',
+                     'pruefen' => function ($w, $k = '', $neu = null, $roh = null) {
+                         /* Nr. 36 b: eine Sicherung dieses Plugins traegt nie ein Sprechtoken - traegt die Datei eines,
+                          * wird sie abgewiesen. Gemessen am Block der DATEI, denn Regel 3 des Moduls setzt ein leeres
+                          * Feld vorher auf den geltenden Wert. */
+                         $tm = ansage_sicherung_mangel($roh);
+                         if ($tm) {
+                             return sprintf(ic_sicherung_t('UI.SICH_TTS_TOKEN'), ic_e(implode(', ', $tm)));
+                         }
+                         $tg = '';
+                         if (ansage_wert_pruefen(ansage_sicherung_bereinigen($w), $tg, ic_ansage_modi()) === null) {
+                             return sprintf(ic_sicherung_t('UI.SICH_TTS'), ic_e(ansage_kennung_text($tg, ic_ansage_k())));
+                         }
+                         return '';
+                     },
+                     'wandeln' => function ($w) {
+                         $g = '';
+                         return ansage_wert_pruefen(ansage_sicherung_bereinigen($w), $g, ic_ansage_modi());
+                     }),
+        'ansage_regeln' => sicherung_block(array_keys(ansage_regeln_vorgaben())) + array(
+            'pruefen' => function ($w) {
+                $g = '';
+                return ansage_regeln_wert($w, $g) === null ? ic_e(ic_sicherung_t('UI.ANSAGE_NAME')) : '';
+            },
+            'wandeln' => function ($w) {
+                $g = '';
+                return ansage_regeln_wert($w, $g);
+            }),
+        /* Ohne Zuordnungsschluessel: eine Station hat am Ziel kein sicher bestimmbares Gegenstueck (Regeln/05, Regel 3
+         * greift in der Liste nicht) - wie bis 2.2.34 wird die Liste als Ganzes uebernommen. */
+        'stationen' => sicherung_liste(array('name', 'ip', 'user', 'pass', 'ms', 'standbild')) + array(
+            'pruefen' => function ($w) {
+                $t = array();
+                foreach (ic_stationen_mangel($w) as $sp) {
+                    $t[] = sprintf(ic_sicherung_t('UI.SICH_STATION'), (int) $sp[0], ic_e((string) $sp[1]));
                 }
-                continue;
-            }
-        }
-        if ($k === 'tts') {
-            /* Nr. 36 b (Stufe 2): eine Sicherung dieses Plugins traegt nie ein Sprechtoken -
-             * traegt die Datei eines, stammt sie nicht aus "Einstellungen sichern" und wird
-             * abgewiesen. Die geltenden Sprechtoken bleiben. Ausgabeart, Adresse und Vorlage
-             * werden wie im Formular geprueft (Heimnetz, Entwurf F1). */
-            $tm = ansage_sicherung_mangel($w);
-            if ($tm) {
-                $mangel[] = sprintf(ic_txt('UI.SICH_TTS_TOKEN'),
-                                    htmlspecialchars(implode(', ', $tm), ENT_QUOTES, 'UTF-8'));
-                continue;
-            }
-            $tg = '';
-            $tp = ansage_wert_pruefen($w, $tg, ic_ansage_modi());
-            if ($tp === null) {
-                $mangel[] = sprintf(ic_txt('UI.SICH_TTS'),
-                    htmlspecialchars(ansage_kennung_text($tg, ic_ansage_k()), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
-                continue;
-            }
-            $tj = (isset($neu['tts']) && is_array($neu['tts'])) ? $neu['tts'] : array();
-            /* Welle Mehrfach-Ziele (2.2.24): "$tp + $tj" behielt die geltenden weiteren Ziele einer Sicherung ohne
-             * Liste schon bisher - still. Jetzt geht der Block vorher durch die Spaetliste, und die Liste der
-             * uebergangenen Schluessel (UI.SICH_UEBERGANGEN) nennt sie. */
-            $ic_tsneu = array('tts' => $tp);
-            $ic_tsjetzt = array('tts' => $tj);
-            /* Welle Mehrfach-Ziele (Sprachmodul 1.2.1, Spaetliste): fehlt die Liste der weiteren Ziele in der Sicherung (Datei einer
-             * aelteren Fassung), gelten die jetzigen weiteren Ziele weiter - genannt im Hinweis. Eine Sicherung MIT leerer Liste
-             * heisst "keine weiteren Ziele" und wird so uebernommen. */
-            $ic_spaete = array();
-            if (is_array($ic_tsneu['tts']) && function_exists('ansage_sicherung_spaet')) {
-                list($ic_tsneu['tts'], $ic_spaete) = ansage_sicherung_spaet($ic_tsneu['tts'],
-                    (isset($ic_tsjetzt['tts']) && is_array($ic_tsjetzt['tts'])) ? $ic_tsjetzt['tts'] : null);
-            }
-            foreach ($ic_spaete as $ic_sn) { $ic_tsspaet[] = $ic_sn; }     // Welle Mehrfach-Ziele: tts.ziele (Spaetliste)
-            list($tv) = ansage_vervollstaendigen($ic_tsneu['tts'] + $tj);
-            $neu['tts'] = ansage_sicherung_tokens_behalten($tv, $tj);
-            $anzahl++;
-            continue;
-        }
-        if (!ic_wert_pruefen($k, $w)) {
-            $mangel[] = sprintf(ic_txt('UI.SICH_WERT'),
-                                 htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8'));
-            continue;
-        }
-        /* NEU 17.09.2026: ein LEERES Aktionstoken heisst "kein Token
-         * gesichert" und ist kein unzulaessiger Wert (Regeln/05, an
-         * VolkswagenID 0.9.12 entschieden) - es darf aber auch das
-         * laufende nicht ersetzen. An jedem Zugriffstoken haengt jede
-         * Adresse im Miniserver; ein leeres macht sie alle stumm
-         * ungueltig, und seit dieser Fassung erzeugt die Oberflaeche
-         * kein neues mehr an seiner Stelle. Der Schluessel behaelt
-         * deshalb seinen jetzigen Wert - wie jeder, der in der Datei
-         * fehlt -, und die Oberflaeche sagt es (UI.SICH_TOKEN_LEER).
-         * Beanstandet wird nichts: eine Sicherung ohne Token ist keine
-         * halb gueltige Datei. */
-        if ((string) $k === 'aktionstoken' && (string) $w === '') {
-            $leertoken = true;
-            continue;
-        }
-        $neu[$k] = $w;
-        $anzahl++;
+                return $t;
+            }),
+    );
+    foreach (array_keys($vorgaben) as $k) {
+        if (!isset($schluessel[$k])) { $schluessel[$k] = array(); }
+        $schluessel[$k]['fehlt'] = 'behalten';
     }
-    /* E6 (seit 2.2.23): MQTT ist ab Werk an - eine Sicherung aus einer Fassung vor 2.2.23 ohne mqtt_enable stammt
-     * von einer Anlage, deren MQTT aus war (alte Vorgabe "0"). Dann "0", wie beim Update (postupgrade.sh). */
+    return array(
+        'kennzeichen' => 'LoxBerry-Plugin-Intercom',
+        'kennzeichen_frueher' => array('Intercom (LoxBerry)'),
+        /* Der Kopftext wie bis 2.2.34. */
+        'hinweis' => 'Diese Datei enthaelt das Zugriffstoken und die '
+                   . 'Zugangsdaten der Tuerstationen, gegebenenfalls auch die Token '
+                   . 'fuer SignalBot und Sprachsteuerung. Wie ein Passwort behandeln. '
+                   . 'Die Sprechtoken der Sprachausgabe sind nie enthalten.',
+        /* _fassung aus der Plugin-Datenbank bzw. plugin.cfg (sicherung_fassung_lesen()). */
+        'home' => (string) $p['home'], 'ordner' => (string) $p['plugin'],
+        'plugin_cfg' => dirname(dirname(__DIR__)) . '/plugin.cfg',
+        'vorgaben' => $vorgaben,
+        'schluessel' => $schluessel,
+        'nie_aus_datei' => array('ansage_token_herkunft'),
+        'pruefen' => function ($k, $w) {
+            return ic_wert_pruefen((string) $k, $w) ? '' : sprintf(ic_sicherung_t('UI.SICH_WERT'), ic_e((string) $k));
+        },
+        'vorbehandeln' => 'ic_sicherung_vorbehandeln',
+        'vorbereiten' => 'ic_sicherung_vorbereiten',
+        'jetzt' => 'ic_sicherung_stand',
+        't' => 'ic_sicherung_t',
+    );
+}
+
+/** 2.2.35: Ein Text der Sprachdatei roh (wie ic_roh() der Oberflaeche); das Modul maskiert nur Namen. */
+function ic_sicherung_t($schluessel)
+{
+    global $L;
+    return isset($L[$schluessel]) ? (string) $L[$schluessel] : (string) $schluessel;
+}
+
+/**
+ * 2.2.35: Die Uebergangsregel E6 (seit 2.2.23, bis 2.2.34 in ic_sicherung_lesen()),
+ * Rueckruf 'vorbehandeln' des Moduls: MQTT ist ab Werk an - eine Sicherung aus
+ * einer Fassung vor 2.2.23 ohne mqtt_enable stammt von einer Anlage, deren MQTT
+ * aus war (alte Vorgabe "0"). Dann "0", wie beim Update (postupgrade.sh). Die
+ * Meldung nennt den Schluessel als nach einer Uebergangsregel abgeleitet.
+ */
+function ic_sicherung_vorbehandeln($bereit, $jetzt, $daten)
+{
     if (!array_key_exists('mqtt_enable', $daten)
         && (!isset($daten['_fassung']) || !is_string($daten['_fassung'])
             || version_compare($daten['_fassung'], '2.2.23', '<'))) {
-        $neu['mqtt_enable'] = '0';
+        $bereit['mqtt_enable'] = '0';
     }
-    if ($anzahl === 0) {
-        $mangel[] = ic_txt('UI.SICH_LEER');
+    return $bereit;
+}
+
+/**
+ * 2.2.35: Vor dem Speichern (Rueckruf 'vorbereiten' des Moduls), wie bis 2.2.34:
+ *  - der Block tts wird mit dem geltenden ergaenzt und vervollstaendigt, und die
+ *    geltenden Sprechtoken bleiben (die Sicherung traegt keine); kam er nicht aus
+ *    der Datei, steht dort schon der geltende;
+ *  - mqtt_enable und timelapse_time stehen im geltenden Stand ausdruecklich
+ *    (ic_sicherung_stand()); das Modul setzt fuer sie deshalb nie seine Vorgabe
+ *    ein, die etwas anderes hiesse als ihr Fehlen.
+ */
+function ic_sicherung_vorbereiten($neu, $jetzt, $r)
+{
+    $jt = (is_array($jetzt) && isset($jetzt['tts']) && is_array($jetzt['tts'])) ? $jetzt['tts'] : array();
+    if (!in_array('tts', $r['fehlt_behalten'], true) && isset($neu['tts']) && is_array($neu['tts'])) {
+        list($tv) = ansage_vervollstaendigen($neu['tts'] + $jt);
+        $neu['tts'] = ansage_sicherung_tokens_behalten($tv, $jt);
     }
-    /* Was NICHT in der Datei stand, behaelt seinen jetzigen Wert - und der
-     * Anwender erfaehrt, welche das waren. Der lesbare Kopf zaehlt nicht
-     * mit: er gehoert nicht zur Konfiguration. */
-    $uebergangen = array();
-    foreach ($bekannt as $bk) {
-        if (!array_key_exists($bk, $daten)) {
-            $uebergangen[] = $bk;
-        }
+    return $neu;
+}
+
+/**
+ * 2.2.35: Der geltende Stand - fuer "Einstellungen sichern" und als Ziel beim
+ * Zurueckspielen ('jetzt'): data.json, und fuer jeden fehlenden Schluessel aus
+ * ic_vorgaben() der Wert, der fuer ihn gilt - wie ic_config_vervollstaendigen()
+ * ihn eintraegt (bild_oeffentlich und archiv_schutz nach ic_schutz_wert(), die
+ * uebrigen die Vorgabe). mqtt_enable traegt wie bis 2.2.34 den geltenden Wert
+ * ausdruecklich (E6, seit 2.2.23: sonst hielte das Zurueckspielen die Sicherung
+ * fuer eine alte, ohne Schluessel = aus); timelapse_time fehlend heisst "keine
+ * Uhrzeit" und steht dann als "" darin - der Zeitraffer liest beides gleich
+ * (isset() ... : ''), die Vorgabe "12:00" kaeme sonst beim Zurueckspielen hinein.
+ */
+function ic_sicherung_stand()
+{
+    $c = ic_config();
+    if (!array_key_exists('mqtt_enable', $c)) { $c['mqtt_enable'] = ic_mqtt_an() ? '1' : '0'; }
+    foreach (ic_vorgaben() as $k => $w) {
+        if (array_key_exists($k, $c)) { continue; }
+        $c[$k] = ($k === 'bild_oeffentlich' || $k === 'archiv_schutz') ? ic_schutz_wert($c, $k)
+               : ($k === 'timelapse_time' ? '' : $w);
     }
-    foreach ($ic_tsspaet as $ic_sn2) { $uebergangen[] = $ic_sn2; }     // Welle Mehrfach-Ziele (2.2.24): tts.ziele
-    return array($mangel ? null : $neu, $mangel, $anzahl, $uebergangen, $leertoken);
+    return $c;
 }
 
 /**
@@ -5441,13 +5466,11 @@ function ic_pruefe_ansage($mit_netz = false)
  */
 function ic_sicherung_selbstpruefung()
 {
-    $c = ic_config();
-    if (isset($c['tts']) && is_array($c['tts'])) { $c['tts'] = ansage_sicherung_bereinigen($c['tts']); }
-    unset($c['ansage_token_herkunft']);     // 2.2.25
-    $js = json_encode($c, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($js === false) { return array(ic_txt('UI.SICH_KEIN_JSON')); }
-    $erg = ic_sicherung_lesen($js);
-    return ($erg[0] === null && isset($erg[1]) && is_array($erg[1])) ? $erg[1] : array();
+    /* 2.2.35: ueber das gemeinsame Sicherungsmodul - die Datei, die der Knopf liefert, gegen dieselbe Pruefung wie
+     * das Zurueckspielen. Rueckgabe: ein Satz mit den Namen der beanstandeten Einstellungen (maskiert), nie Werte. */
+    $b = ic_sicherung_beschreibung();
+    $n = sicherung_selbstpruefung($b, sicherung_bauen($b, ic_sicherung_stand()), ic_sicherung_stand());
+    return $n ? array(ic_e(implode(', ', $n))) : array();
 }
 
 /* ==================================================================
