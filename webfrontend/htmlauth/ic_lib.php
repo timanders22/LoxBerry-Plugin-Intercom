@@ -4105,7 +4105,7 @@ function ic_sicherung_beschreibung()
         $vorgaben[$k] = array_key_exists($k, $v) ? $v[$k] : array();     // stationen: keine Vorgabe, leere Liste
     }
     $vorgaben['ansage_regeln'] = ansage_regeln_vorgaben();
-    $tts = array_merge(array_keys(ansage_werk_block()), ansage_geheim());
+    $tts = ic_sicherung_tts_namen();
     $schluessel = array(
         'tts' => sicherung_block($tts, array('ziele' => sicherung_liste(array('art', 'wo', 'laut', 'sprache', 'ein'))
                                                         + array('fehlt' => 'behalten')))
@@ -4177,6 +4177,12 @@ function ic_sicherung_beschreibung()
     );
 }
 
+/** Modul 1.2.9: die Werte des Blocks tts, die die Sicherungsbeschreibung kennt (ohne die Liste ziele), an einer Stelle. */
+function ic_sicherung_tts_namen()
+{
+    return array_merge(array_keys(ansage_werk_block()), ansage_geheim());
+}
+
 /** 2.2.35: Ein Text der Sprachdatei roh (wie ic_roh() der Oberflaeche); das Modul maskiert nur Namen. */
 function ic_sicherung_t($schluessel)
 {
@@ -4213,6 +4219,10 @@ function ic_sicherung_vorbehandeln($bereit, $jetzt, $daten)
 function ic_sicherung_vorbereiten($neu, $jetzt, $r)
 {
     $jt = (is_array($jetzt) && isset($jetzt['tts']) && is_array($jetzt['tts'])) ? $jetzt['tts'] : array();
+    /* Modul 1.2.9 (Bauform des Hausherrn 15.11.2026): aus dem geltenden Block kommt nur, was der Knoten tts nennt. Bis
+     * 2.2.36 blieb ein Schluessel, den diese Fassung nicht kennt, stehen, ohne genannt zu werden; jetzt faellt er weg,
+     * und das Modul nennt ihn. */
+    $jt = array_intersect_key($jt, array_flip(array_merge(ic_sicherung_tts_namen(), array('ziele'))));
     if (!in_array('tts', $r['fehlt_behalten'], true) && isset($neu['tts']) && is_array($neu['tts'])) {
         list($tv) = ansage_vervollstaendigen($neu['tts'] + $jt);
         $neu['tts'] = ansage_sicherung_tokens_behalten($tv, $jt);
