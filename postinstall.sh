@@ -139,6 +139,8 @@ verloren() {
 #     <WARNING> statt <OK>,
 #   * nach jeder Rueckholung 0600 auf beide Zweitschriftnamen (I7).
 MARKE="$BASE/data/plugins/$PDIR.upgrade_laeuft"
+# Frage 73 (18.11.2026): die Marke faellt auch bei einem Abbruch (trap); das rm unten bleibt fuer die Meldung.
+trap 'rm -f "$MARKE" 2>/dev/null' EXIT
 ZWEIT="$BASE/config/plugins/$PDIR.backup.json"
 ZWEIT_ALT="$BASE/config/plugins/$PDIR.backup.data.json"
 KAPUTT="$BASE/config/plugins/$PDIR.data.json.kaputt"

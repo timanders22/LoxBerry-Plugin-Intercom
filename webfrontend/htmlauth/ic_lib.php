@@ -412,8 +412,8 @@ function ic_upgrade_laeuft()
     $roh = trim((string) $roh);
     if (!preg_match('/^[0-9]{1,12}$/', $roh)) { return false; }
     $alter = time() - (int) $roh;
-    // Ein paar Minuten "Zukunft" sind eine nachgestellte Uhr, keine Luege.
-    return $alter > -300 && $alter < 3600;
+    // Frage 73/74 (18.11.2026): eine Marke aus der Zukunft gilt nicht (Hausregel Regeln/06, wie der Takt).
+    return $alter >= 0 && $alter < 3600;
 }
 
 /** Liegt die Marke ueberhaupt - gleich wie alt? (seit 2.2.13, siehe oben) */

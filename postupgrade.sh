@@ -61,6 +61,8 @@ esac
 
 CF="$BASE/config/plugins/$PDIR/data.json"
 MARKE="$BASE/data/plugins/$PDIR.upgrade_laeuft"
+# Frage 73 (18.11.2026): die Marke faellt auch bei einem Abbruch (trap); das rm unten bleibt fuer die Meldung.
+trap 'rm -f "$MARKE" 2>/dev/null' EXIT
 
 mkdir -p "$BASE/config/plugins/$PDIR" 2>/dev/null
 
