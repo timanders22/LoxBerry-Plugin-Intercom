@@ -289,7 +289,8 @@ if (!$ic_upgrade) {
 $ic_cfg = ic_config();
 
 if ($ic_upgrade) {
-    LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
+    require_once __DIR__ . '/fassung.php';   // Fassung im Titel: gemeinsames Stueck fassung.php (21.11.2026)
+    LBWeb::lbheader(plugin_kopftitel(ic_titel(), __DIR__), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
     require_once __DIR__ . "/ic_stil.php";
     echo '<div class="smw">' . "\n"
        . '<h1>' . ic_txt('UI.TITEL') . '</h1>' . "\n"
@@ -1182,7 +1183,8 @@ function ic_pz_text(array $z)
 }
 
 
-LBWeb::lbheader(ic_titel(), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
+require_once __DIR__ . '/fassung.php';   // Fassung im Titel: gemeinsames Stueck fassung.php (21.11.2026)
+LBWeb::lbheader(plugin_kopftitel(ic_titel(), __DIR__), 'https://github.com/timanders22/LoxBerry-Plugin-Intercom/', 'help.html');
 
 /* Erst hier - die Datei gibt aus. Ihre eigene Kopfzeile sagt es seit jeher. */
 require_once __DIR__ . "/ic_stil.php";
