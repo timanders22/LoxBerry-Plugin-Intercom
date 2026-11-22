@@ -2,9 +2,14 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.39 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.40 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.40
+
+- Gemeinsames Sprachmodul 1.5.0 (Entscheidung des Hausherrn 22.11.2026): Die Nachtruhe der Ansagen kann an Nicht-Schultagen (Samstag, Sonntag, Feiertage, Ferien) später enden. Neues Feld „Nachtruhe an Nicht-Schultagen bis“ bei „Wann gesprochen wird“, ab Werk leer: Dann gilt die Zeit, die im Plugin Ferien und Feiertage eingestellt ist (MQTT-Thema `haus/ansage/nachtruhe_frei_bis`); ohne sie endet die Nachtruhe wie an Schultagen. Ob heute ein Schultag ist, sagt `haus/kalender/heute/frei` (nur bei `haus/kalender/datum` = heute); ohne diese Aussage zählen nur Samstag und Sonntag. Dringende Ansagen übergehen die Nachtruhe wie bisher. Ohne Vorgabe und ohne eigene Zeit ändert sich nichts.
+- Reiter Test: neue Zeile zum Ende der Nachtruhe an Nicht-Schultagen (Quelle der Zeit, Art des heutigen Tages).
 
 ## Neu in 2.2.39
 
