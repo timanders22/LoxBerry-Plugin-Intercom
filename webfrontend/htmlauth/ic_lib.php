@@ -18,7 +18,9 @@
  * Ausgabezielen, ic_mit_zielen(), Welle Mehrfach-Ziele).
  * Liegt neben dieser Datei; die Datei schuetzt sich selbst gegen doppeltes Laden. */
 require_once __DIR__ . '/sprachausgabe.php';
+require_once __DIR__ . '/meldung.php';     // Statusmeldungen an SignalBot (seit 2.2.41)
 require_once __DIR__ . '/sicherung.php';     // gemeinsames Sicherungsmodul (seit 2.2.35)
+require_once __DIR__ . '/haus_bereiche.php';     // gemeinsame Bereiche unter haus/ (seit 2.2.41, Regeln/07)
 
 /* ==================================================================
  * Pfade
@@ -1511,6 +1513,7 @@ function ic_mqtt_senden($unterthema, $wert, $retain = null)
     /* BERICHTIGT 2.2.23 (Pruefbericht, eigener Fund 8; Entscheidung Zusatz): stream_socket_client statt
      * socket_create (ic_udp_senden()). Bis 2.2.22 sendete Intercom ohne die PHP-Erweiterung sockets still nichts. */
     $thema = ic_mqtt_praefix();
+    ic_praefix_haus_melden(ic_config());   // 2.2.41: Praefix im gemeinsamen Bereich? melden, nicht anhalten
     $unterthema = ic_mqtt_thema($unterthema);
     if ($unterthema !== '') { $thema .= '/' . $unterthema; }
     $msg = ($retain ? 'retain ' : 'publish ') . $thema . ' ' . ic_mqtt_nutzlast($wert);
@@ -2690,6 +2693,11 @@ function ic_selbsttest($mit_netz = false, $am_endpunkt = false)
      * dauerhaft false (code-Pruefer, Befund 5). */
     $cfg = ic_config();
     $z = array();
+
+    /* -------- 2.2.41: faellt das Themen-Praefix auf einen gemeinsamen Bereich unter haus/ (Regeln/07)? -------- */
+    $ic_hb = ic_pruef_praefix_haus($cfg);
+    $z[] = ic_pz($ic_hb[0] === 1 ? 'ok' : ($ic_hb[0] === 0 ? 'fehl' : 'hinweis'),
+                 ic_sicherung_t('HAUSBEREICH.F_TEST'), $ic_hb[1]);
 
     /* -------- Ist die Konfiguration heil? (NEU 2.2.13, O6) -------- */
     list($ic_klage, $ic_kpfad) = ic_config_lage();
@@ -4020,6 +4028,8 @@ function ic_vorgaben()
         'klingel_nur_erkannt' => '',
         // Nr. 36 b (Stufe 2, F10): eigene Ansage ueber die gemeinsame Sprachausgabe; seit 2.2.25 ab Werk EIN (gilt nur fuer einen nie gespeicherten Block).
         'tts' => ansage_werk_block(),
+        // 2.2.41: Meldungen an SignalBot ueber das gemeinsame Modul, ab Werk aus (der Weg klingel_signal bleibt daneben).
+        'meldung' => meld_vorgaben(ic_meld_haken_vorgabe(), ic_meld_haken_vorgabe()),
     );
 }
 
@@ -4105,6 +4115,7 @@ function ic_sicherung_beschreibung()
         $vorgaben[$k] = array_key_exists($k, $v) ? $v[$k] : array();     // stationen: keine Vorgabe, leere Liste
     }
     $vorgaben['ansage_regeln'] = ansage_regeln_vorgaben();
+    $vorgaben['meldung'] = $v['meldung'];     // 2.2.41: aeltere Sicherungen kennen den Block nicht - er behaelt den geltenden Wert
     $tts = ic_sicherung_tts_namen();
     $schluessel = array(
         'tts' => sicherung_block($tts, array('ziele' => sicherung_liste(array('art', 'wo', 'laut', 'sprache', 'ein'))
@@ -4129,6 +4140,7 @@ function ic_sicherung_beschreibung()
                          $g = '';
                          return ansage_wert_pruefen(ansage_sicherung_bereinigen($w), $g, ic_ansage_modi());
                      }),
+        'meldung' => meld_sicherung_knoten(ic_meld_anlaesse(), ic_meld_k()),     // 2.2.41
         'ansage_regeln' => sicherung_block(array_keys(ansage_regeln_vorgaben())) + array(
             'pruefen' => function ($w) {
                 $g = '';
@@ -4168,6 +4180,11 @@ function ic_sicherung_beschreibung()
         'schluessel' => $schluessel,
         'nie_aus_datei' => array('ansage_token_herkunft'),
         'pruefen' => function ($k, $w) {
+            /* 2.2.41: kein Praefix auf einem gemeinsamen Bereich unter haus/ (Regeln/07) - wie im Formular. */
+            if ($k === 'mqtt_praefix' && is_string($w) && hb_bereich(trim($w)) !== '') {
+                return sprintf(ic_sicherung_t('UI.SICH_WERT'), ic_e((string) $k)) . ' '
+                    . ic_e(sprintf(ic_sicherung_t('HAUSBEREICH.SICH_W'), hb_bereich(trim($w))));
+            }
             return ic_wert_pruefen((string) $k, $w) ? '' : sprintf(ic_sicherung_t('UI.SICH_WERT'), ic_e((string) $k));
         },
         'vorbehandeln' => 'ic_sicherung_vorbehandeln',
@@ -4990,7 +5007,7 @@ function ic_klingel_ausloeser()
 /** Wird bei diesem Aufruf gemeldet? Eingeschaltet UND Ausloeser in der Liste. */
 function ic_klingel_gefragt($trigger)
 {
-    if (!ic_klingel_an('signal') && !ic_klingel_an('sprache') && !ic_ansage_an()) { return false; }
+    if (!ic_klingel_an('signal') && !ic_klingel_an('sprache') && !ic_ansage_an() && !ic_meld_aktiv()) { return false; }     // 2.2.41: auch fuer die Meldung an SignalBot
     return $trigger !== '' && in_array(strtolower((string) $trigger), ic_klingel_ausloeser(), true);
 }
 
@@ -5120,13 +5137,15 @@ function ic_klingel_melden($station, $trigger, $mehrere, $bildquelle, $basis, $a
                                                   $ok ? '' : ic_klingel_grund($c, $r, $f));
         }
     }
-    if (ic_ansage_an()) {
+    if (ic_ansage_an() || ic_meld_aktiv()) {     // 2.2.41: der Eintrag geht auch an SignalBot (gemeinsames Modul)
         /* Nr. 36 b (Stufe 2, F10): Intercom spricht selbst ueber die gemeinsame Sprachausgabe - derselbe Satz,
          * dieselben Ausloeser und dieselbe 60-s-Bremse. Ins Protokoll kommt nur das Ergebnis, nie der Text.
          * 2.2.25: dringend ohne Sperre (Entscheidung 01.11.2026), Nachtruhe gilt nicht, der Schalter "Ansagen aus" schon. Das Klingeln wartet nicht auf Lautsprecher. */
         $ar = ic_ansage_legen(array(array('schluessel' => 'klingel', 'text' => $text, 'dringend' => true, 'sperre_min' => 0)));
-        $aus['ansage'] = ic_klingel_ergebnis('ansage', ic_uebersetzt('UI.ANSAGE_NAME', array(), 'Sprachausgabe'),
-            $ar === 'gestartet', $ar === 'gestartet' ? '' : (string) $ar);
+        if (ic_ansage_an()) {     // 2.2.41: die Zeile der Ansage nur, wenn die Ansage an ist (sonst legte nur die Meldung)
+            $aus['ansage'] = ic_klingel_ergebnis('ansage', ic_uebersetzt('UI.ANSAGE_NAME', array(), 'Sprachausgabe'),
+                $ar === 'gestartet', $ar === 'gestartet' ? '' : (string) $ar);
+        }
     }
     return $aus;
 }
@@ -5388,6 +5407,8 @@ function ic_ansage_senden($jetzt = null)
         $conf = ic_config();
         ic_ansage_token_pflegen($conf);
         $conf = ic_config();
+        ic_meld_senden($frisch, $conf);     // 2.2.41: dieselben Anlaesse an SignalBot (eigene Haken)
+        $frisch = ic_meld_nur_ansage($frisch, $conf);     // die Ansage nur mit ihrem eigenen Haken
         $a = ansage_regel_sprechen($frisch, ic_tts($conf), ic_ansage_regeln($conf), ic_ansage_k());
         $erg = $a['regel'] !== '' ? $a['regel'] : 'gesprochen';
         if ($a['r'] !== null) {
@@ -6811,4 +6832,158 @@ function ic_pruefe_nur_erkannt()
     return ic_ki_an()
         ? ic_pz('ok', 'TEST.F_NUR_ERKANNT', 'TEST.A_NUR_ERKANNT_AN')
         : ic_pz('unklar', 'TEST.F_NUR_ERKANNT', 'TEST.A_NUR_ERKANNT_OHNE_KI', 'TEST.R_NUR_ERKANNT');
+}
+
+/**
+ * 2.2.41 (Entscheidung des Hausherrn 23.11.2026 "Nur gemeinsame Bereiche", Regeln/07): Zeile im Reiter Test -
+ * faellt das gespeicherte Themen-Praefix auf einen gemeinsamen Bereich unter haus/? Speichern und Zurueckspielen
+ * weisen ein solches Praefix ab; ein schon gespeichertes bleibt in Betrieb und ist hier rot, grau bei ausgeschaltetem MQTT.
+ * Liste und Pruefung aus dem gemeinsamen Modul haus_bereiche.php. Rueckgabe array(stand, html).
+ */
+function ic_pruef_praefix_haus($cfg)
+{
+    $p = ic_mqtt_thema(isset($cfg['mqtt_praefix']) && trim((string) $cfg['mqtt_praefix']) !== '' ? trim((string) $cfg['mqtt_praefix']) : ic_plugin_ordner());
+    $b = hb_bereich($p);
+    if ($b !== '') {
+        if (!(!empty($cfg['mqtt_enable']))) {
+            return array(-1, sprintf(ic_sicherung_t('HAUSBEREICH.A_AUS'), strval($p), strval($b)));
+        }
+        return array(0, sprintf(ic_sicherung_t('HAUSBEREICH.A_NEIN'), strval($p), strval($b)));
+    }
+    return array(1, sprintf(ic_sicherung_t('HAUSBEREICH.A_JA'), strval($p)));
+}
+
+/**
+ * 2.2.41: einmal je Aenderung eine Protokollzeile, solange das Praefix auf einen gemeinsamen Bereich faellt; der
+ * Versand bleibt, wie er ist. Gemerkt in praefix_haus_gemeldet.txt im Datenordner. Rueckgabe der Bereich oder ''.
+ */
+function ic_praefix_haus_melden($cfg, $merk = null)
+{
+    $p = ic_mqtt_thema(isset($cfg['mqtt_praefix']) && trim((string) $cfg['mqtt_praefix']) !== '' ? trim((string) $cfg['mqtt_praefix']) : ic_plugin_ordner());
+    if ($merk === null) {
+        $merk = ic_paths()['datadir'] . '/praefix_haus_gemeldet.txt';
+    }
+    $b = hb_melden_faellig($p, $merk);
+    if ($b !== '') {
+        ic_log(hb_logtext($p, $b));
+    }
+    return $b;
+}
+
+if (!function_exists('ic_meld_block')) {
+
+/* ---------------- Statusmeldungen an SignalBot (2.2.41, gemeinsames Modul meldung.php) ----------------
+ *
+ * Auftrag des Hausherrn 23.11.2026, Entscheidungen 23./24.11.2026: dieselben Anlaesse wie die Ansage, eigener Haken je
+ * Anlass, ab Werk aus; Sperre, Bremse und Versand im Modul. Die Erkennung laeuft auch ohne Ausgabeart, wenn eine Meldung
+ * eingeschaltet ist (ic_meld_aktiv()), und legt einen Anlass hin, wenn Ansage ODER Meldung ihn will
+ * (ic_meld_will()); der Sender trennt die Wege wieder (ic_meld_nur_ansage()).
+ */
+
+/** Die meldbaren Anlaesse: Name => Beschriftung (dieselben wie die Ansage). */
+function ic_meld_anlaesse()
+{
+    return array('klingel' => ic_uebersetzt('UI.KLINGEL_M_KLINGEL', array(), 'Es hat geklingelt'));
+}
+
+/** Die ab-Werk-Haken der Ansage dieser Linie: so stehen auch die Haken der Meldung, solange der Block nie gespeichert ist. */
+function ic_meld_haken_vorgabe()
+{
+    return array('klingel' => 1);
+}
+
+/** Ist der Haken dieses Anlasses fuer die ANSAGE gesetzt? */
+function ic_ansage_anlass_sprache($a, $cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    return $a === 'klingel' && ic_ansage_an();     // die Ansage hat keinen Haken je Anlass: sie spricht, wenn sie an ist
+}
+
+/** Der wirksame Block 'meldung' fuer den Betrieb (ungueltig gespeichert gilt als aus und wird im Formular genannt). */
+function ic_meld_block($cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    list($b) = meld_block(is_array($cfg) && array_key_exists('meldung', $cfg) ? $cfg['meldung'] : null, ic_meld_anlaesse(), ic_meld_haken_vorgabe());
+    return $b;
+}
+
+/** Die Beanstandungen eines gespeicherten Blocks (leer = gueltig). */
+function ic_meld_bean($cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    list(, $f) = meld_block(is_array($cfg) && array_key_exists('meldung', $cfg) ? $cfg['meldung'] : null, ic_meld_anlaesse(), ic_meld_haken_vorgabe());
+    return $f;
+}
+
+/** Ist irgendein Anlass zur Meldung eingeschaltet? Dann laeuft die Erkennung auch ohne Ausgabeart. */
+function ic_meld_aktiv($cfg = null)
+{
+    return meld_irgendein_an(ic_meld_block($cfg));
+}
+
+/** Will die Ansage ODER die Meldung diesen Anlass? */
+function ic_meld_will($a, $cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    return ic_ansage_anlass_sprache($a, $cfg) || meld_anlass_an(ic_meld_block($cfg), (string) $a);
+}
+
+/** Der Kontext des Moduls: Datenordner (data/plugins/<ordner>, daraus der Absender) und Texte - wie bei der Ansage. */
+function ic_meld_k()
+{
+    return ic_ansage_k();
+}
+
+/** Fuer die Ansage nur Eintraege, deren Ansage-Haken gesetzt ist; ein Eintrag ohne bekannten Anlass bleibt wie bisher. */
+function ic_meld_nur_ansage(array $l, $cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    $anl = ic_meld_anlaesse();
+    $aus = array();
+    foreach ($l as $e) {
+        if (is_array($e) && array_key_exists(meld_anlass_von($e), $anl) && !ic_ansage_anlass_sprache(meld_anlass_von($e), $cfg)) { continue; }
+        $aus[] = $e;
+    }
+    return $aus;
+}
+
+/** Die Eintraege an SignalBot melden. Protokoll: eine Zeile, wenn gesendet oder gescheitert (nie der Text). */
+function ic_meld_senden(array $l, $cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    $b = ic_meld_block($cfg);
+    if (empty($b['ein']) || !$l) { return null; }
+    $a = meld_regel_senden($l, $b, ic_meld_k());
+    if ($a['regel'] === '' || in_array($a['regel'], array('BREMSE', 'STAND', 'ORDNER'), true)) {
+        ic_log(meld_regel_kurz($a));
+    }
+    return $a;
+}
+
+/** Der Knopf "Testmeldung senden": array(angenommen, Satz). Geht an Haken, Sperre und Bremse vorbei. */
+function ic_meld_test()
+{
+    $r = meld_testmeldung(ic_meld_k());
+    ic_log('Testmeldung an SignalBot: ' . ($r[0] ? 'angenommen' : 'nicht angenommen'));
+    return $r;
+}
+
+/** Der Block im Einstellungsformular (unter den Ansage-Regeln, im selben Formular), mit Lage und Knopf. */
+function ic_meld_form_html($cfg = null)
+{
+    if ($cfg === null) { $cfg = ic_config(); }
+    $e = function ($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); };
+    $k = ic_meld_k();
+    $o = array();
+    /* 2.2.41: unsichtbarer Doppel des Speicherknopfs VOR dem Knopf Testmeldung - die Eingabetaste in einem Textfeld
+     * loest den ersten Absendeknopf des Formulars aus; sie soll speichern wie bisher, nicht die Testmeldung senden. */
+    $o[] = '<button data-role="none" type="submit" name="speichern" value="1" tabindex="-1" aria-hidden="true" style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden"></button>';
+    $o[] = '<h3>' . $e(meld_t('TITEL', $k)) . '</h3>';
+    $o[] = meld_formular_html(ic_meld_block($cfg), ic_meld_anlaesse(), array(), $k);
+    list(, $lage) = meld_pruefzeile(ic_meld_block($cfg), ic_meld_bean($cfg), $k);
+    $o[] = '<div class="sm-hilfe">' . $e(meld_t('F_TEST', $k) . ' ' . $lage) . '</div>';
+    $o[] = '<div class="sm-knopfreihe"><button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="meld_test" value="1">'
+         . $e(meld_t('K_TEST', $k)) . '</button></div>';
+    return implode("\n", $o) . "\n";
+}
 }

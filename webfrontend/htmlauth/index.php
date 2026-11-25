@@ -683,6 +683,8 @@ if ($ic_wollte && $ic_darf && isset($_POST['speichern'])) {
     $ic_thinw = array();     // Welle Mehrfach-Ziele (Sprachmodul 1.2.1): Hinweise des Moduls, die das Speichern nicht verhindern
     $ic_neu['tts'] = ansage_formular_lesen($_POST, ic_tts(), $ic_tmangel, $ic_tbean,
                                            ic_ansage_opt() + array('ziele' => ic_mit_zielen(), 'token_vor_ort' => true, 'aus_gewinnt' => true), ic_ansage_k(), $ic_thinw);
+    // 2.2.41: der Block 'Meldungen an SignalBot' (eine Beanstandung haelt das Speichern an, wie die Ansage)
+    $ic_neu['meldung'] = meld_formular_lesen($_POST, isset($ic_cfg['meldung']) ? $ic_cfg['meldung'] : null, ic_meld_anlaesse(), $ic_tmangel, $ic_tbean, ic_meld_k(), ic_meld_haken_vorgabe());
     list($ic_neu['ansage_regeln']) = ansage_regeln_formular($_POST, ic_ansage_regeln(ic_config()), array(), $ic_tmangel, $ic_tbean, ic_ansage_k());     // S2: Wann gesprochen wird (Stamm)
     // 2.2.28: ein eingetipptes oder geloeschtes Sprechtoken ist nicht mehr vom Nachbarn; bis 2.2.27 ueberschrieb es der naechste Abgleich.
     $ic_neu['ansage_token_herkunft'] = ansage_token_herkunft_formular($_POST, isset($ic_neu['ansage_token_herkunft']) ? $ic_neu['ansage_token_herkunft'] : array());
@@ -820,6 +822,14 @@ if ($ic_wollte && $ic_darf && isset($_POST['mqtt_speichern'])) {
     if ($ic_p === null || !ic_praefix_gueltig($ic_p)) {
         $ic_fehler[] = ic_txtf('UI.M_PRAEFIX', ic_e((string) $ic_p));
         $ic_eingaben = ic_eingaben_sammeln('mqtt', array('mqtt_praefix'));   // X-2
+    } elseif (hb_bereich($ic_p) !== ''
+              && $ic_p !== (isset(ic_config()['mqtt_praefix']) ? trim((string) ic_config()['mqtt_praefix']) : '')) {   // nur NEUE Eingaben: ein schon gespeichertes Praefix sperrt das Speichern
+        // des Reiters nicht (Regeln/07; Bauart Einspeisebremse 0.9.25)
+        /* 2.2.41 (Entscheidung des Hausherrn 23.11.2026 "Nur gemeinsame Bereiche", Regeln/07): kein Praefix auf einem
+         * gemeinsamen Bereich unter haus/ - nur hier und beim Zurueckspielen, nicht in der Pruefung beim Lesen der
+         * Konfiguration: ein schon gespeichertes bleibt in Betrieb, der Reiter Test meldet es. */
+        $ic_fehler[] = sprintf(ic_txt('HAUSBEREICH.FEHLER'), ic_e($ic_p), ic_e(hb_bereich($ic_p)));
+        $ic_eingaben = ic_eingaben_sammeln('mqtt', array('mqtt_praefix'));   // X-2
     } else {
         $ic_alt_an = ic_mqtt_an();
         $ic_alt_p = ic_mqtt_praefix();
@@ -918,6 +928,11 @@ if ($ic_wollte && $ic_darf && isset($_POST['tat'])) {
 
 /* Welle Mehrfach-Ziele (Sprachmodul 1.2.1): die Knoepfe "Testansage an Ziel n" schicken ansage_test_ziel=n - es spricht
  * nur dieses Ziel; der bisherige Knopf spricht an alle Ziele gleichzeitig. Eine unbrauchbare Nummer spricht nichts. */
+/* 2.2.41: Testmeldung an SignalBot (Knopf unter den Ansage-Regeln, im Formular der Einstellungen). */
+if ($ic_wollte && $ic_darf && isset($_POST['meld_test'])) {
+    list($meld_ok, $meld_satz) = ic_meld_test();
+    if ($meld_ok) { $ic_meldungen[] = ic_e($meld_satz); } else { $ic_fehler[] = ic_e($meld_satz); }
+}
 if ($ic_wollte && $ic_darf && (isset($_POST['ansage_test']) || isset($_POST['ansage_test_ziel']))) {
     $ic_tk = ic_ansage_k();
     $ic_tnur = (isset($_POST['ansage_test_ziel']) && ic_mit_zielen()) ? ansage_test_ziel($_POST) : 0;
@@ -1438,6 +1453,7 @@ $ic_schutz_ist = ic_archiv_geschuetzt();
     'm' => function ($n) { return ic_fk('settings', $n); },
     'c' => function ($n, $g) { return ic_fh('settings', $n, $g); },
     'token_vor_ort' => true), ic_ansage_k()) ?>
+<?= ic_meld_form_html(ic_config()) ?>
 <p class="sm-klein"><?= ic_txtf('UI.ANSAGE_TEST_HINWEIS', ic_fett(ic_roh('UI.REITER_TEST'))) ?></p>
 
 <div class="sm-knopfreihe">

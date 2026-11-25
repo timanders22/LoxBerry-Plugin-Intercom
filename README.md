@@ -2,9 +2,15 @@
 
 # LoxBerry-Plugin Intercom
 
-Version 2.2.40 · LoxBerry ab 3.0 · PHP 7.4
+Version 2.2.41 · LoxBerry ab 3.0 · PHP 7.4
 
 Dieses Loxberry Plugin greift Fotos der Loxone Intercom ab um sie für andere Anwendungen vorzuhalten. Das Plugin kann über einen Virtuellen Ausgang aus der Loxone Config heraus aufgerufen werden. Anschließend werden die Bilder über eine URL bereitgestellt und es besteht die möglichkeit einen weitern Webhook aufzurufen um die Bild URL an andere Programme / Scripte weiterzugeben.
+
+## Neu in 2.2.41
+
+- **Themen-Präfix auf einem gemeinsamen Bereich (Entscheidung des Hausherrn 23.11.2026 „Nur gemeinsame Bereiche“):** Ein MQTT-Präfix, das einer der gemeinsamen Bereiche unter `haus/` ist oder darin beginnt (`haus/<bereich>` bzw. `haus/<bereich>/…` für abfahrt, abfuhr, alarm, ansage, anwesenheit, energie, fahrzeug, kalender, klima, pv, raumklima, sonne, speicher, strompreis, szene, tag, tuer, usv, wetter), weisen Speichern im Reiter *MQTT* und das Zurückspielen einer Sicherung jetzt mit Namen ab: Dort liefern die Plugins einander Zustände ohne eigenes Präfix. `haus` allein und andere Präfixe unter `haus/` (etwa `haus/fenster`) bleiben erlaubt; Groß und Klein zählen wie bei MQTT. Ist ein solches Präfix schon gespeichert, ändert sich am Betrieb nichts – das Plugin sendet weiter darunter, nennt es einmal im Protokoll, und der Reiter *Test* zeigt die Zeile „Liegt das Themen-Präfix außerhalb der gemeinsamen Bereiche unter haus/?“ rot. Liste und Texte kommen aus dem gemeinsamen Modul `haus_bereiche.php`.
+- **Statusmeldungen an SignalBot über das gemeinsame Modul (Entscheidung des Hausherrn 24.11.2026):** Das Klingeln kann zusätzlich als Nachricht an das Plugin SignalBot gehen, ab Werk aus (Reiter Einstellungen, Block „Meldungen an SignalBot“, mit Knopf „Testmeldung senden“). Thema `haus/meldung/intercom`, nie retained; jedes Klingeln, hinter der bisherigen Bremse von 60 s je Station, insgesamt höchstens 10 je Stunde. Nötig ist SignalBot ab 0.9.44 mit „Meldungen unter haus/meldung annehmen“. Der bisherige Weg „Beim Klingeln eine Meldung über SignalBot senden“ (Text und befristeter Bildlink, wahlweise an eine Rufnummer) bleibt unverändert daneben bestehen; sind beide an, kommen zwei Nachrichten.
+- Gemeinsames Sicherungsmodul auf 1.3.0 nachgezogen (Einheitlichkeit, wie in der Welle Lade-Beanstandungen); am Verhalten von „Einstellungen sichern“ und „Einstellungen zurückspielen“ ändert sich nichts.
 
 ## Neu in 2.2.40
 
